@@ -9,8 +9,8 @@ import cv2
 from PIL import Image
 import tempfile
 
-# Add backend directory to path
-sys.path.insert(0, os.path.dirname(__file__))
+# Add parent directory to path to import backend modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from image_processing import (
     validate_image_file,

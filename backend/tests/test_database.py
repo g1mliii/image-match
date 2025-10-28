@@ -5,6 +5,10 @@ Tests CRUD operations, feature storage/retrieval, and numpy serialization
 import os
 import sys
 import numpy as np
+
+# Add parent directory to path to import backend modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from database import (
     init_db, 
     insert_product, 

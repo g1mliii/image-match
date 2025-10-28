@@ -8,9 +8,7 @@ from datetime import datetime
 
 from database import (
     init_db, insert_product, get_product_by_id, get_features_by_product_id,
-    insert_features, get_historical_products as db_get_historical_products, 
-    count_products, validate_sku_format, normalize_sku, check_sku_exists,
-    search_products
+    insert_features, validate_sku_format, normalize_sku, check_sku_exists
 )
 from image_processing import (
     extract_all_features, validate_image_file,
@@ -18,7 +16,7 @@ from image_processing import (
     ImageTooSmallError, ImageProcessingFailedError
 )
 from product_matching import (
-    find_matches, batch_find_matches,
+    find_matches,
     MatchingError, ProductNotFoundError, MissingFeaturesError,
     EmptyCatalogError, AllMatchesFailedError
 )
@@ -492,8 +490,9 @@ def match_products():
             status_code=500
         )
 
-@app.route('/api/products/historical', methods=['GET'])
-def get_historical_products():
+# UNUSED - Folder workflow doesn't need pagination/filtering endpoint
+# @app.route('/api/products/historical', methods=['GET'])
+# def get_historical_products():
     """
     Get historical products with pagination and filtering.
     
@@ -655,8 +654,9 @@ def get_historical_products():
             status_code=500
         )
 
-@app.route('/api/products/historical', methods=['POST'])
-def add_historical_product():
+# UNUSED - Use regular /api/products/upload with is_historical=true instead
+# @app.route('/api/products/historical', methods=['POST'])
+# def add_historical_product():
     """
     Add a new historical product to the catalog.
     
@@ -946,8 +946,9 @@ def get_product(product_id):
             status_code=500
         )
 
-@app.route('/api/batch/match', methods=['POST'])
-def batch_match():
+# UNUSED - Frontend does individual matches in a loop
+# @app.route('/api/batch/match', methods=['POST'])
+# def batch_match():
     """
     Batch match multiple products.
     
