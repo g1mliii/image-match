@@ -10,16 +10,17 @@
   - Set up development scripts for running frontend and backend concurrently
   - _Requirements: 9.2_
 
-- [-] 2. Implement database layer and models
-
-
+- [x] 2. Implement database layer and models
   - Create SQLite database initialization script with products, features, and matches tables
   - Implement Python data access layer with CRUD operations for products
   - Implement feature storage and retrieval functions with numpy array serialization
   - Add database indexes for category and is_historical fields
   - _Requirements: 8.4, 3.1_
 
-- [ ] 3. Implement image preprocessing and feature extraction
+- [-] 3. Implement image preprocessing and feature extraction dont assume all images are vaild we may have unopenable images, random format for some reason again its real world data, have some error handilng in the ui to maybe tell user what was wrong and how to reupload image as well. we havent made ui yet but just plan ahead with this idea and maybe update the ui task with this as well
+
+
+
   - Create image preprocessing function to normalize size, remove background, and enhance contrast
   - Implement color feature extraction using HSV histograms (256-dimensional)
   - Implement shape feature extraction using Hu moments (7-dimensional)
