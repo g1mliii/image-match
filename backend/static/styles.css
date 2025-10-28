@@ -427,6 +427,14 @@ h2 {
     background: #2ecc71;
 }
 
+.toast.warning {
+    background: #f39c12;
+}
+
+.toast.info {
+    background: #3498db;
+}
+
 .modal {
     position: fixed;
     top: 0;

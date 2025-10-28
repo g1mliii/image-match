@@ -105,6 +105,7 @@ async function uploadProduct() {
     const sku = document.getElementById('productSku').value.trim();
     const category = document.getElementById('productCategory').value;
     
+    // Only append if not empty - backend handles NULL/missing fields
     if (name) formData.append('product_name', name);
     if (sku) formData.append('sku', sku);
     if (category) formData.append('category', category);
@@ -121,13 +122,29 @@ async function uploadProduct() {
         const data = await response.json();
         
         if (!response.ok) {
-            throw new Error(data.error || 'Upload failed');
+            // Show detailed error with suggestion if available
+            const errorMsg = data.suggestion 
+                ? `${data.error}\n\nSuggestion: ${data.suggestion}`
+                : data.error || 'Upload failed';
+            throw new Error(errorMsg);
+        }
+        
+        // Show warnings if any (e.g., feature extraction failed, duplicate SKU)
+        if (data.warning) {
+            showToast(data.warning, 'warning');
+        }
+        if (data.warning_sku) {
+            showToast(data.warning_sku, 'warning');
         }
         
         showToast('Product uploaded successfully!', 'success');
         
-        // Find matches
-        await findMatches(data.product_id);
+        // Find matches (handle case where product has no features)
+        if (data.feature_extraction_status === 'success') {
+            await findMatches(data.product_id);
+        } else {
+            showToast('Feature extraction failed - cannot find matches. Try re-uploading.', 'error');
+        }
         
     } catch (error) {
         showToast(error.message, 'error');
@@ -148,11 +165,29 @@ async function findMatches(productId) {
         const data = await response.json();
         
         if (!response.ok) {
-            throw new Error(data.error || 'Match failed');
+            // Show detailed error with suggestion
+            const errorMsg = data.suggestion 
+                ? `${data.error}\n\nSuggestion: ${data.suggestion}`
+                : data.error || 'Match failed';
+            throw new Error(errorMsg);
+        }
+        
+        // Show warnings if any (e.g., empty catalog, partial failures)
+        if (data.warnings && data.warnings.length > 0) {
+            data.warnings.forEach(w => showToast(w, 'warning'));
+        }
+        
+        if (data.note) {
+            showToast(data.note, 'info');
         }
         
         currentMatches = data.matches || [];
         displayResults();
+        
+        // Show message if no matches found
+        if (currentMatches.length === 0 && data.message) {
+            showToast(data.message, 'info');
+        }
         
     } catch (error) {
         showToast(error.message, 'error');
@@ -188,23 +223,32 @@ function filterResults() {
         return;
     }
     
-    resultsList.innerHTML = filtered.map(match => `
-        <div class="result-card" onclick="viewDetails(${match.product_id})">
-            <img src="/api/products/${match.product_id}/image" class="result-thumbnail" 
-                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23ecf0f1%22 width=%22100%22 height=%22100%22/></svg>'">
-            <div class="result-info">
-                <h4>${match.product_name || 'Unnamed Product'}</h4>
-                <div class="result-meta">
-                    ${match.sku ? `SKU: ${match.sku} | ` : ''}
-                    ${match.category || 'Uncategorized'}
+    resultsList.innerHTML = filtered.map(match => {
+        // Safely handle missing fields
+        const productName = match.product_name || 'Unnamed Product';
+        const sku = match.sku || null;
+        const category = match.category || 'Uncategorized';
+        const score = match.similarity_score || 0;
+        
+        return `
+            <div class="result-card" onclick="viewDetails(${match.product_id})">
+                <img src="/api/products/${match.product_id}/image" class="result-thumbnail" 
+                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23ecf0f1%22 width=%22100%22 height=%22100%22/></svg>'"
+                     alt="${productName}">
+                <div class="result-info">
+                    <h4>${escapeHtml(productName)}</h4>
+                    <div class="result-meta">
+                        ${sku ? `SKU: ${escapeHtml(sku)} | ` : ''}
+                        ${escapeHtml(category)}
+                    </div>
+                    <span class="similarity-score ${getScoreClass(score)}">
+                        ${score.toFixed(1)}% Match
+                    </span>
+                    ${score > 90 ? '<span class="duplicate-badge">POTENTIAL DUPLICATE</span>' : ''}
                 </div>
-                <span class="similarity-score ${getScoreClass(match.similarity_score)}">
-                    ${match.similarity_score.toFixed(1)}% Match
-                </span>
-                ${match.similarity_score > 90 ? '<span class="duplicate-badge">POTENTIAL DUPLICATE</span>' : ''}
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function getScoreClass(score) {
@@ -252,17 +296,27 @@ function displayCatalog(products) {
         return;
     }
     
-    catalogList.innerHTML = products.map(product => `
-        <div class="catalog-card">
-            <img src="/api/products/${product.id}/image" 
-                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22150%22><rect fill=%22%23ecf0f1%22 width=%22200%22 height=%22150%22/></svg>'">
-            <div class="catalog-card-info">
-                <h4>${product.product_name || 'Unnamed Product'}</h4>
-                <p>${product.sku ? `SKU: ${product.sku}` : 'No SKU'}</p>
-                <p>${product.category || 'Uncategorized'}</p>
+    catalogList.innerHTML = products.map(product => {
+        // Safely handle missing fields
+        const productName = product.product_name || 'Unnamed Product';
+        const sku = product.sku || null;
+        const category = product.category || 'Uncategorized';
+        const hasFeatures = product.has_features !== false; // Default to true if not specified
+        
+        return `
+            <div class="catalog-card">
+                <img src="/api/products/${product.id}/image" 
+                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22150%22><rect fill=%22%23ecf0f1%22 width=%22200%22 height=%22150%22/></svg>'"
+                     alt="${productName}">
+                <div class="catalog-card-info">
+                    <h4>${escapeHtml(productName)}</h4>
+                    <p>${sku ? `SKU: ${escapeHtml(sku)}` : 'No SKU'}</p>
+                    <p>${escapeHtml(category)}</p>
+                    ${!hasFeatures ? '<p style="color: #e74c3c; font-size: 11px;">⚠ Missing features</p>' : ''}
+                </div>
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function displayStats(products) {
@@ -270,11 +324,15 @@ function displayStats(products) {
     const total = products.length;
     const withSku = products.filter(p => p.sku).length;
     const categorized = products.filter(p => p.category).length;
+    const withFeatures = products.filter(p => p.has_features !== false).length;
+    const missingData = total - withSku;
     
     stats.innerHTML = `
         <strong>Total Products:</strong> ${total} | 
         <strong>With SKU:</strong> ${withSku} | 
-        <strong>Categorized:</strong> ${categorized}
+        <strong>Categorized:</strong> ${categorized} | 
+        <strong>With Features:</strong> ${withFeatures}
+        ${missingData > 0 ? ` | <span style="color: #e67e22;">⚠ ${missingData} missing SKU</span>` : ''}
     `;
 }
 
@@ -394,16 +452,30 @@ function displayBatchResults(results) {
     const resultsSection = document.getElementById('batchResults');
     const successful = results.filter(r => r.success).length;
     const failed = results.length - successful;
+    const withWarnings = results.filter(r => r.success && r.data && (r.data.warning || r.data.warning_sku)).length;
     
     resultsSection.innerHTML = `
         <h3>Batch Complete</h3>
-        <p><strong>Successful:</strong> ${successful} | <strong>Failed:</strong> ${failed}</p>
+        <p>
+            <strong>Successful:</strong> ${successful} | 
+            <strong>Failed:</strong> ${failed}
+            ${withWarnings > 0 ? ` | <strong style="color: #f39c12;">Warnings:</strong> ${withWarnings}` : ''}
+        </p>
         <div style="margin-top: 20px;">
-            ${results.map(r => `
-                <div style="padding: 10px; margin-bottom: 5px; background: ${r.success ? '#d4edda' : '#f8d7da'}; border-radius: 5px;">
-                    ${r.file}: ${r.success ? '✓ Success' : '✗ ' + (r.error || 'Failed')}
-                </div>
-            `).join('')}
+            ${results.map(r => {
+                const bgColor = r.success ? '#d4edda' : '#f8d7da';
+                const hasWarning = r.success && r.data && (r.data.warning || r.data.warning_sku);
+                const warningMsg = hasWarning 
+                    ? `<br><small style="color: #856404;">${r.data.warning || r.data.warning_sku}</small>`
+                    : '';
+                
+                return `
+                    <div style="padding: 10px; margin-bottom: 5px; background: ${bgColor}; border-radius: 5px;">
+                        ${escapeHtml(r.file)}: ${r.success ? '✓ Success' : '✗ ' + escapeHtml(r.error || 'Failed')}
+                        ${warningMsg}
+                    </div>
+                `;
+            }).join('')}
         </div>
     `;
 }
@@ -415,7 +487,13 @@ async function loadCategories() {
         const data = await response.json();
         
         if (response.ok && data.products) {
-            const uniqueCategories = [...new Set(data.products.map(p => p.category).filter(Boolean))];
+            // Filter out null/undefined categories and get unique values
+            const uniqueCategories = [...new Set(
+                data.products
+                    .map(p => p.category)
+                    .filter(c => c && c.trim())
+            )].sort();
+            
             categories = uniqueCategories;
             
             const selects = [
@@ -425,29 +503,41 @@ async function loadCategories() {
             ];
             
             selects.forEach(select => {
+                if (!select) return; // Handle missing elements
+                
                 if (select.id === 'categoryFilter') {
                     select.innerHTML = '<option value="">All Categories</option>' +
-                        categories.map(c => `<option value="${c}">${c}</option>`).join('');
+                        (categories.length > 0 
+                            ? categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
+                            : '<option disabled>No categories yet</option>');
                 } else {
-                    select.innerHTML = '<option value="">Select category...</option>' +
-                        categories.map(c => `<option value="${c}">${c}</option>`).join('');
+                    select.innerHTML = '<option value="">No category (optional)</option>' +
+                        (categories.length > 0 
+                            ? categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
+                            : '');
                 }
             });
         }
     } catch (error) {
         console.error('Failed to load categories:', error);
+        // Don't show error to user - categories are optional
     }
 }
 
 // Utilities
 function showToast(message, type = 'info') {
+    if (!message) return;
+    
     const toast = document.getElementById('toast');
     toast.textContent = message;
     toast.className = `toast ${type} show`;
     
+    // Longer timeout for errors and warnings
+    const timeout = (type === 'error' || type === 'warning') ? 5000 : 3000;
+    
     setTimeout(() => {
         toast.classList.remove('show');
-    }, 3000);
+    }, timeout);
 }
 
 function debounce(func, wait) {
@@ -464,4 +554,12 @@ function debounce(func, wait) {
 
 function viewDetails(productId) {
     showToast('Detailed view coming soon', 'info');
+}
+
+// Utility to escape HTML and prevent XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
