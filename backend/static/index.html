@@ -34,9 +34,9 @@
                     <div class="file-info" id="historicalInfo"></div>
                     
                     <div class="csv-upload">
-                        <label>Optional: Upload CSV with categories (filename, category)</label>
+                        <label>Optional: Upload CSV with metadata (filename, category, ...)</label>
                         <input type="file" id="historicalCsvInput" accept=".csv">
-                        <small>CSV format: filename,category (e.g., "product1.jpg,placemats")</small>
+                        <small>CSV format: filename,category,sku,name,... (e.g., "product1.jpg,placemats,SKU-001,Blue Placemat")</small>
                     </div>
                     
                     <button class="btn btn-primary" id="processHistoricalBtn" disabled>Process Historical Catalog</button>
@@ -65,9 +65,9 @@
                     <div class="file-info" id="newInfo"></div>
                     
                     <div class="csv-upload">
-                        <label>Optional: Upload CSV with categories (filename, category)</label>
+                        <label>Optional: Upload CSV with metadata (filename, category, ...)</label>
                         <input type="file" id="newCsvInput" accept=".csv">
-                        <small>CSV format: filename,category (e.g., "product1.jpg,placemats")</small>
+                        <small>CSV format: filename,category,sku,name,... (e.g., "product1.jpg,placemats,SKU-001,Blue Placemat")</small>
                     </div>
                     
                     <button class="btn btn-primary" id="processNewBtn" disabled>Process New Products</button>

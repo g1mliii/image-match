@@ -104,13 +104,15 @@ async function processHistoricalCatalog() {
     
     for (let i = 0; i < historicalFiles.length; i++) {
         const file = historicalFiles[i];
-        const category = categoryMap[file.name] || null;
+        const metadata = categoryMap[file.name] || {};
         
         try {
             const formData = new FormData();
             formData.append('image', file);
-            if (category) formData.append('category', category);
-            formData.append('product_name', file.name);
+            if (metadata.category) formData.append('category', metadata.category);
+            if (metadata.sku) formData.append('sku', metadata.sku);
+            if (metadata.name) formData.append('product_name', metadata.name);
+            else formData.append('product_name', file.name); // Fallback to filename
             formData.append('is_historical', 'true');
             
             const response = await fetch('/api/products/upload', {
@@ -124,7 +126,9 @@ async function processHistoricalCatalog() {
                 historicalProducts.push({
                     id: data.product_id,
                     filename: file.name,
-                    category: category,
+                    category: metadata.category,
+                    sku: metadata.sku,
+                    name: metadata.name,
                     hasFeatures: data.feature_extraction_status === 'success'
                 });
             }
@@ -236,13 +240,15 @@ async function processNewProducts() {
     
     for (let i = 0; i < newFiles.length; i++) {
         const file = newFiles[i];
-        const category = categoryMap[file.name] || null;
+        const metadata = categoryMap[file.name] || {};
         
         try {
             const formData = new FormData();
             formData.append('image', file);
-            if (category) formData.append('category', category);
-            formData.append('product_name', file.name);
+            if (metadata.category) formData.append('category', metadata.category);
+            if (metadata.sku) formData.append('sku', metadata.sku);
+            if (metadata.name) formData.append('product_name', metadata.name);
+            else formData.append('product_name', file.name); // Fallback to filename
             formData.append('is_historical', 'false');
             
             const response = await fetch('/api/products/upload', {
@@ -256,7 +262,9 @@ async function processNewProducts() {
                 newProducts.push({
                     id: data.product_id,
                     filename: file.name,
-                    category: category,
+                    category: metadata.category,
+                    sku: metadata.sku,
+                    name: metadata.name,
                     hasFeatures: data.feature_extraction_status === 'success'
                 });
             }
@@ -576,13 +584,32 @@ async function parseCsv(file) {
         const reader = new FileReader();
         reader.onload = (e) => {
             const text = e.target.result;
-            const lines = text.split('\n');
+            const lines = text.split('\n').filter(line => line.trim());
             const map = {};
             
-            lines.forEach(line => {
-                const [filename, category] = line.split(',').map(s => s.trim());
-                if (filename && category) {
-                    map[filename] = category;
+            // Check if first line is a header
+            const firstLine = lines[0];
+            const hasHeader = firstLine.toLowerCase().includes('filename') || 
+                             firstLine.toLowerCase().includes('category');
+            
+            const dataLines = hasHeader ? lines.slice(1) : lines;
+            
+            dataLines.forEach(line => {
+                const parts = line.split(',').map(s => s.trim().replace(/^"|"$/g, '')); // Remove quotes
+                
+                if (parts.length >= 2) {
+                    const filename = parts[0];
+                    const category = parts[1] || null;
+                    const sku = parts[2] || null;
+                    const name = parts[3] || null;
+                    
+                    if (filename) {
+                        map[filename] = {
+                            category: category,
+                            sku: sku,
+                            name: name
+                        };
+                    }
                 }
             });
             
