@@ -1,50 +1,34 @@
 // State
-let currentFile = null;
-let batchFiles = [];
-let categories = [];
-let currentMatches = [];
+let historicalFiles = [];
+let newFiles = [];
+let historicalCsv = null;
+let newCsv = null;
+let historicalProducts = [];
+let newProducts = [];
+let matchResults = [];
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    initNavigation();
-    initUploadView();
-    initCatalogView();
-    initBatchView();
-    loadCategories();
+    initHistoricalUpload();
+    initNewUpload();
+    initMatching();
+    initResults();
 });
 
-// Navigation
-function initNavigation() {
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.addEventListener('click', (e) => {
-            e.preventDefault();
-            const viewName = link.dataset.view;
-            switchView(viewName);
-        });
+// Historical Catalog Upload
+function initHistoricalUpload() {
+    const dropZone = document.getElementById('historicalDropZone');
+    const input = document.getElementById('historicalInput');
+    const browseBtn = document.getElementById('historicalBrowseBtn');
+    const csvInput = document.getElementById('historicalCsvInput');
+    const processBtn = document.getElementById('processHistoricalBtn');
+    
+    browseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        input.click();
     });
-}
-
-function switchView(viewName) {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     
-    document.getElementById(`${viewName}-view`).classList.add('active');
-    document.querySelector(`[data-view="${viewName}"]`).classList.add('active');
-    
-    if (viewName === 'catalog') {
-        loadCatalog();
-    }
-}
-
-// Upload View
-function initUploadView() {
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const thresholdSlider = document.getElementById('thresholdSlider');
-    const thresholdValue = document.getElementById('thresholdValue');
-    
-    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('click', () => input.click());
     
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -58,194 +42,397 @@ function initUploadView() {
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
-        if (e.dataTransfer.files.length) {
-            handleFileSelect(e.dataTransfer.files[0]);
-        }
+        handleHistoricalFiles(Array.from(e.dataTransfer.files));
     });
     
-    fileInput.addEventListener('change', (e) => {
+    input.addEventListener('change', (e) => {
+        handleHistoricalFiles(Array.from(e.target.files));
+    });
+    
+    csvInput.addEventListener('change', (e) => {
         if (e.target.files.length) {
-            handleFileSelect(e.target.files[0]);
+            historicalCsv = e.target.files[0];
+            showToast('CSV loaded for historical products', 'success');
         }
     });
     
-    uploadBtn.addEventListener('click', uploadProduct);
+    processBtn.addEventListener('click', processHistoricalCatalog);
+}
+
+function handleHistoricalFiles(files) {
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    
+    if (imageFiles.length === 0) {
+        showToast('No image files found in folder', 'error');
+        return;
+    }
+    
+    historicalFiles = imageFiles;
+    
+    const info = document.getElementById('historicalInfo');
+    info.innerHTML = `
+        <h4>✓ ${imageFiles.length} images loaded</h4>
+        <div class="file-list">
+            ${imageFiles.slice(0, 10).map(f => `<div>${escapeHtml(f.name)}</div>`).join('')}
+            ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
+        </div>
+    `;
+    info.classList.add('show');
+    
+    document.getElementById('processHistoricalBtn').disabled = false;
+    showToast(`${imageFiles.length} historical images loaded`, 'success');
+}
+
+async function processHistoricalCatalog() {
+    const statusDiv = document.getElementById('historicalStatus');
+    const processBtn = document.getElementById('processHistoricalBtn');
+    
+    statusDiv.classList.add('show');
+    processBtn.disabled = true;
+    
+    // Parse CSV if provided
+    let categoryMap = {};
+    if (historicalCsv) {
+        categoryMap = await parseCsv(historicalCsv);
+    }
+    
+    statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + historicalFiles.length + ' processed</p>';
+    
+    historicalProducts = [];
+    const progressFill = document.getElementById('historicalProgress');
+    const progressText = document.getElementById('historicalProgressText');
+    
+    for (let i = 0; i < historicalFiles.length; i++) {
+        const file = historicalFiles[i];
+        const category = categoryMap[file.name] || null;
+        
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            if (category) formData.append('category', category);
+            formData.append('product_name', file.name);
+            formData.append('is_historical', 'true');
+            
+            const response = await fetch('/api/products/upload', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                historicalProducts.push({
+                    id: data.product_id,
+                    filename: file.name,
+                    category: category,
+                    hasFeatures: data.feature_extraction_status === 'success'
+                });
+            }
+        } catch (error) {
+            console.error(`Failed to process ${file.name}:`, error);
+        }
+        
+        const progress = ((i + 1) / historicalFiles.length) * 100;
+        progressFill.style.width = `${progress}%`;
+        progressText.textContent = `${i + 1} of ${historicalFiles.length} processed`;
+    }
+    
+    const successful = historicalProducts.filter(p => p.hasFeatures).length;
+    statusDiv.innerHTML = `<h4>✓ Historical catalog processed</h4><p>${successful} products ready for matching</p>`;
+    
+    showToast(`Historical catalog ready: ${successful} products`, 'success');
+    
+    // Show next step
+    document.getElementById('newSection').style.display = 'block';
+    document.getElementById('newSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// New Products Upload
+function initNewUpload() {
+    const dropZone = document.getElementById('newDropZone');
+    const input = document.getElementById('newInput');
+    const browseBtn = document.getElementById('newBrowseBtn');
+    const csvInput = document.getElementById('newCsvInput');
+    const processBtn = document.getElementById('processNewBtn');
+    
+    browseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        input.click();
+    });
+    
+    dropZone.addEventListener('click', () => input.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        handleNewFiles(Array.from(e.dataTransfer.files));
+    });
+    
+    input.addEventListener('change', (e) => {
+        handleNewFiles(Array.from(e.target.files));
+    });
+    
+    csvInput.addEventListener('change', (e) => {
+        if (e.target.files.length) {
+            newCsv = e.target.files[0];
+            showToast('CSV loaded for new products', 'success');
+        }
+    });
+    
+    processBtn.addEventListener('click', processNewProducts);
+}
+
+function handleNewFiles(files) {
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    
+    if (imageFiles.length === 0) {
+        showToast('No image files found in folder', 'error');
+        return;
+    }
+    
+    newFiles = imageFiles;
+    
+    const info = document.getElementById('newInfo');
+    info.innerHTML = `
+        <h4>✓ ${imageFiles.length} images loaded</h4>
+        <div class="file-list">
+            ${imageFiles.slice(0, 10).map(f => `<div>${escapeHtml(f.name)}</div>`).join('')}
+            ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
+        </div>
+    `;
+    info.classList.add('show');
+    
+    document.getElementById('processNewBtn').disabled = false;
+    showToast(`${imageFiles.length} new product images loaded`, 'success');
+}
+
+async function processNewProducts() {
+    const statusDiv = document.getElementById('newStatus');
+    const processBtn = document.getElementById('processNewBtn');
+    
+    statusDiv.classList.add('show');
+    processBtn.disabled = true;
+    
+    // Parse CSV if provided
+    let categoryMap = {};
+    if (newCsv) {
+        categoryMap = await parseCsv(newCsv);
+    }
+    
+    statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + newFiles.length + ' processed</p>';
+    
+    newProducts = [];
+    const progressFill = document.getElementById('newProgress');
+    const progressText = document.getElementById('newProgressText');
+    
+    for (let i = 0; i < newFiles.length; i++) {
+        const file = newFiles[i];
+        const category = categoryMap[file.name] || null;
+        
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            if (category) formData.append('category', category);
+            formData.append('product_name', file.name);
+            formData.append('is_historical', 'false');
+            
+            const response = await fetch('/api/products/upload', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                newProducts.push({
+                    id: data.product_id,
+                    filename: file.name,
+                    category: category,
+                    hasFeatures: data.feature_extraction_status === 'success'
+                });
+            }
+        } catch (error) {
+            console.error(`Failed to process ${file.name}:`, error);
+        }
+        
+        const progress = ((i + 1) / newFiles.length) * 100;
+        progressFill.style.width = `${progress}%`;
+        progressText.textContent = `${i + 1} of ${newFiles.length} processed`;
+    }
+    
+    const successful = newProducts.filter(p => p.hasFeatures).length;
+    statusDiv.innerHTML = `<h4>✓ New products processed</h4><p>${successful} products ready for matching</p>`;
+    
+    showToast(`New products ready: ${successful} products`, 'success');
+    
+    // Show matching section
+    document.getElementById('matchSection').style.display = 'block';
+    document.getElementById('matchSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// Matching
+function initMatching() {
+    const thresholdSlider = document.getElementById('thresholdSlider');
+    const thresholdValue = document.getElementById('thresholdValue');
+    const matchBtn = document.getElementById('matchBtn');
     
     thresholdSlider.addEventListener('input', (e) => {
         thresholdValue.textContent = e.target.value;
-        filterResults();
     });
     
-    document.getElementById('limitSelect').addEventListener('change', filterResults);
+    matchBtn.addEventListener('click', startMatching);
 }
 
-function handleFileSelect(file) {
-    if (!file.type.startsWith('image/')) {
-        showToast('Please select an image file', 'error');
-        return;
+async function startMatching() {
+    const threshold = parseInt(document.getElementById('thresholdSlider').value);
+    const limit = parseInt(document.getElementById('limitSelect').value);
+    const progressDiv = document.getElementById('matchProgress');
+    const matchBtn = document.getElementById('matchBtn');
+    
+    progressDiv.classList.add('show');
+    matchBtn.disabled = true;
+    
+    progressDiv.innerHTML = '<h4>Finding matches...</h4><div class="progress-bar"><div class="progress-fill" id="matchProgressFill"></div></div><p id="matchProgressText">0 of ' + newProducts.length + ' products matched</p>';
+    
+    matchResults = [];
+    const progressFill = document.getElementById('matchProgressFill');
+    const progressText = document.getElementById('matchProgressText');
+    
+    for (let i = 0; i < newProducts.length; i++) {
+        const product = newProducts[i];
+        
+        if (!product.hasFeatures) {
+            matchResults.push({
+                product: product,
+                matches: [],
+                error: 'No features extracted'
+            });
+            continue;
+        }
+        
+        try {
+            const response = await fetch('/api/products/match', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_id: product.id,
+                    threshold: threshold,
+                    limit: limit
+                })
+            });
+            
+            const data = await response.json();
+            
+            matchResults.push({
+                product: product,
+                matches: data.matches || [],
+                error: response.ok ? null : data.error
+            });
+        } catch (error) {
+            matchResults.push({
+                product: product,
+                matches: [],
+                error: error.message
+            });
+        }
+        
+        const progress = ((i + 1) / newProducts.length) * 100;
+        progressFill.style.width = `${progress}%`;
+        progressText.textContent = `${i + 1} of ${newProducts.length} products matched`;
     }
     
-    currentFile = file;
-    document.getElementById('uploadBtn').disabled = false;
+    progressDiv.innerHTML = '<h4>✓ Matching complete!</h4>';
+    showToast('Matching complete!', 'success');
     
-    const dropZone = document.getElementById('dropZone');
-    dropZone.innerHTML = `
-        <img src="${URL.createObjectURL(file)}" style="max-width: 200px; max-height: 200px; border-radius: 5px;">
-        <p>${file.name}</p>
-    `;
+    // Show results
+    displayResults();
+    document.getElementById('resultsSection').style.display = 'block';
+    document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
 }
 
-async function uploadProduct() {
-    if (!currentFile) return;
-    
-    const formData = new FormData();
-    formData.append('image', currentFile);
-    
-    const name = document.getElementById('productName').value.trim();
-    const sku = document.getElementById('productSku').value.trim();
-    const category = document.getElementById('productCategory').value;
-    
-    // Only append if not empty - backend handles NULL/missing fields
-    if (name) formData.append('product_name', name);
-    if (sku) formData.append('sku', sku);
-    if (category) formData.append('category', category);
-    
-    try {
-        document.getElementById('uploadBtn').disabled = true;
-        document.getElementById('uploadBtn').textContent = 'Uploading...';
-        
-        const response = await fetch('/api/products/upload', {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-            // Show detailed error with suggestion if available
-            const errorMsg = data.suggestion 
-                ? `${data.error}\n\nSuggestion: ${data.suggestion}`
-                : data.error || 'Upload failed';
-            throw new Error(errorMsg);
-        }
-        
-        // Show warnings if any (e.g., feature extraction failed, duplicate SKU)
-        if (data.warning) {
-            showToast(data.warning, 'warning');
-        }
-        if (data.warning_sku) {
-            showToast(data.warning_sku, 'warning');
-        }
-        
-        showToast('Product uploaded successfully!', 'success');
-        
-        // Find matches (handle case where product has no features)
-        if (data.feature_extraction_status === 'success') {
-            await findMatches(data.product_id);
-        } else {
-            showToast('Feature extraction failed - cannot find matches. Try re-uploading.', 'error');
-        }
-        
-    } catch (error) {
-        showToast(error.message, 'error');
-    } finally {
-        document.getElementById('uploadBtn').disabled = false;
-        document.getElementById('uploadBtn').textContent = 'Upload & Find Matches';
-    }
-}
-
-async function findMatches(productId) {
-    try {
-        const response = await fetch('/api/products/match', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ product_id: productId })
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-            // Show detailed error with suggestion
-            const errorMsg = data.suggestion 
-                ? `${data.error}\n\nSuggestion: ${data.suggestion}`
-                : data.error || 'Match failed';
-            throw new Error(errorMsg);
-        }
-        
-        // Show warnings if any (e.g., empty catalog, partial failures)
-        if (data.warnings && data.warnings.length > 0) {
-            data.warnings.forEach(w => showToast(w, 'warning'));
-        }
-        
-        if (data.note) {
-            showToast(data.note, 'info');
-        }
-        
-        currentMatches = data.matches || [];
-        displayResults();
-        
-        // Show message if no matches found
-        if (currentMatches.length === 0 && data.message) {
-            showToast(data.message, 'info');
-        }
-        
-    } catch (error) {
-        showToast(error.message, 'error');
-    }
+// Results
+function initResults() {
+    document.getElementById('exportBtn').addEventListener('click', exportResults);
+    document.getElementById('resetBtn').addEventListener('click', resetApp);
+    document.getElementById('modalClose').addEventListener('click', closeModal);
 }
 
 function displayResults() {
-    const resultsSection = document.getElementById('matchResults');
-    const resultsList = document.getElementById('resultsList');
+    const summaryDiv = document.getElementById('resultsSummary');
+    const listDiv = document.getElementById('resultsList');
     
-    if (currentMatches.length === 0) {
-        resultsList.innerHTML = '<p class="loading">No matches found</p>';
-        resultsSection.classList.remove('hidden');
-        return;
-    }
+    const totalProducts = matchResults.length;
+    const totalMatches = matchResults.reduce((sum, r) => sum + r.matches.length, 0);
+    const productsWithMatches = matchResults.filter(r => r.matches.length > 0).length;
+    const avgMatches = productsWithMatches > 0 ? (totalMatches / productsWithMatches).toFixed(1) : 0;
     
-    resultsSection.classList.remove('hidden');
-    filterResults();
-}
-
-function filterResults() {
-    const threshold = parseInt(document.getElementById('thresholdSlider').value);
-    const limit = parseInt(document.getElementById('limitSelect').value);
+    summaryDiv.innerHTML = `
+        <h3>Match Results Summary</h3>
+        <div class="summary-stats">
+            <div class="stat-item">
+                <span class="stat-value">${totalProducts}</span>
+                <span class="stat-label">New Products</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value">${productsWithMatches}</span>
+                <span class="stat-label">With Matches</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value">${totalMatches}</span>
+                <span class="stat-label">Total Matches</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value">${avgMatches}</span>
+                <span class="stat-label">Avg Matches/Product</span>
+            </div>
+        </div>
+    `;
     
-    const filtered = currentMatches
-        .filter(m => m.similarity_score >= threshold)
-        .slice(0, limit);
-    
-    const resultsList = document.getElementById('resultsList');
-    
-    if (filtered.length === 0) {
-        resultsList.innerHTML = '<p class="loading">No matches above threshold</p>';
-        return;
-    }
-    
-    resultsList.innerHTML = filtered.map(match => {
-        // Safely handle missing fields
-        const productName = match.product_name || 'Unnamed Product';
-        const sku = match.sku || null;
-        const category = match.category || 'Uncategorized';
-        const score = match.similarity_score || 0;
+    listDiv.innerHTML = matchResults.map((result, index) => {
+        const product = result.product;
+        const matches = result.matches;
         
         return `
-            <div class="result-card" onclick="viewDetails(${match.product_id})">
-                <img src="/api/products/${match.product_id}/image" class="result-thumbnail" 
-                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23ecf0f1%22 width=%22100%22 height=%22100%22/></svg>'"
-                     alt="${productName}">
-                <div class="result-info">
-                    <h4>${escapeHtml(productName)}</h4>
-                    <div class="result-meta">
-                        ${sku ? `SKU: ${escapeHtml(sku)} | ` : ''}
-                        ${escapeHtml(category)}
+            <div class="result-item">
+                <div class="result-header">
+                    <img src="/api/products/${product.id}/image" class="result-image" 
+                         onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22120%22 height=%22120%22/></svg>'"
+                         alt="${product.filename}">
+                    <div class="result-info">
+                        <h3>${escapeHtml(product.filename)}</h3>
+                        <div class="result-meta">
+                            Category: ${product.category || 'Uncategorized'} | 
+                            ${matches.length} match${matches.length !== 1 ? 'es' : ''} found
+                        </div>
                     </div>
-                    <span class="similarity-score ${getScoreClass(score)}">
-                        ${score.toFixed(1)}% Match
-                    </span>
-                    ${score > 90 ? '<span class="duplicate-badge">POTENTIAL DUPLICATE</span>' : ''}
                 </div>
+                ${matches.length > 0 ? `
+                    <div class="matches-grid">
+                        ${matches.map(match => `
+                            <div class="match-card" onclick="showDetailedComparison(${product.id}, ${match.product_id})">
+                                <img src="/api/products/${match.product_id}/image" class="match-image"
+                                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22180%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22180%22 height=%22120%22/></svg>'"
+                                     alt="Match">
+                                <div class="match-score ${getScoreClass(match.similarity_score)}">
+                                    ${match.similarity_score.toFixed(1)}%
+                                </div>
+                                ${match.similarity_score > 90 ? '<span class="duplicate-badge">DUPLICATE?</span>' : ''}
+                                <div class="match-info">
+                                    ${escapeHtml(match.product_name || 'Unknown')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : '<div class="no-matches">No matches found</div>'}
             </div>
         `;
     }).join('');
@@ -257,274 +444,154 @@ function getScoreClass(score) {
     return 'score-low';
 }
 
-// Catalog View
-function initCatalogView() {
-    document.getElementById('searchInput').addEventListener('input', debounce(loadCatalog, 300));
-    document.getElementById('categoryFilter').addEventListener('change', loadCatalog);
-    document.getElementById('addHistoricalBtn').addEventListener('click', showAddHistoricalModal);
-}
-
-async function loadCatalog() {
-    const search = document.getElementById('searchInput').value;
-    const category = document.getElementById('categoryFilter').value;
+async function showDetailedComparison(newProductId, matchedProductId) {
+    const modal = document.getElementById('detailModal');
+    const modalBody = document.getElementById('modalBody');
     
     try {
-        let url = '/api/products/historical?';
-        if (search) url += `search=${encodeURIComponent(search)}&`;
-        if (category) url += `category=${encodeURIComponent(category)}&`;
+        // Fetch both products
+        const [newResp, matchResp] = await Promise.all([
+            fetch(`/api/products/${newProductId}`),
+            fetch(`/api/products/${matchedProductId}`)
+        ]);
         
-        const response = await fetch(url);
-        const data = await response.json();
+        const newData = await newResp.json();
+        const matchData = await matchResp.json();
         
-        if (!response.ok) {
-            throw new Error(data.error || 'Failed to load catalog');
-        }
+        // Find the match details
+        const matchResult = matchResults.find(r => r.product.id === newProductId);
+        const matchDetails = matchResult?.matches.find(m => m.product_id === matchedProductId);
         
-        displayCatalog(data.products || []);
-        displayStats(data.products || []);
-        
-    } catch (error) {
-        showToast(error.message, 'error');
-    }
-}
-
-function displayCatalog(products) {
-    const catalogList = document.getElementById('catalogList');
-    
-    if (products.length === 0) {
-        catalogList.innerHTML = '<p class="loading">No products found</p>';
-        return;
-    }
-    
-    catalogList.innerHTML = products.map(product => {
-        // Safely handle missing fields
-        const productName = product.product_name || 'Unnamed Product';
-        const sku = product.sku || null;
-        const category = product.category || 'Uncategorized';
-        const hasFeatures = product.has_features !== false; // Default to true if not specified
-        
-        return `
-            <div class="catalog-card">
-                <img src="/api/products/${product.id}/image" 
-                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22150%22><rect fill=%22%23ecf0f1%22 width=%22200%22 height=%22150%22/></svg>'"
-                     alt="${productName}">
-                <div class="catalog-card-info">
-                    <h4>${escapeHtml(productName)}</h4>
-                    <p>${sku ? `SKU: ${escapeHtml(sku)}` : 'No SKU'}</p>
-                    <p>${escapeHtml(category)}</p>
-                    ${!hasFeatures ? '<p style="color: #e74c3c; font-size: 11px;">⚠ Missing features</p>' : ''}
+        modalBody.innerHTML = `
+            <h2>Detailed Comparison</h2>
+            <div class="comparison-view">
+                <div class="comparison-item">
+                    <h3>New Product</h3>
+                    <img src="/api/products/${newProductId}/image" alt="New Product">
+                    <div class="comparison-details">
+                        <p><strong>Filename:</strong> ${escapeHtml(newData.product.product_name || 'Unknown')}</p>
+                        <p><strong>Category:</strong> ${escapeHtml(newData.product.category || 'Uncategorized')}</p>
+                    </div>
+                </div>
+                <div class="comparison-item">
+                    <h3>Matched Product</h3>
+                    <img src="/api/products/${matchedProductId}/image" alt="Matched Product">
+                    <div class="comparison-details">
+                        <p><strong>Filename:</strong> ${escapeHtml(matchData.product.product_name || 'Unknown')}</p>
+                        <p><strong>Category:</strong> ${escapeHtml(matchData.product.category || 'Uncategorized')}</p>
+                    </div>
                 </div>
             </div>
-        `;
-    }).join('');
-}
-
-function displayStats(products) {
-    const stats = document.getElementById('catalogStats');
-    const total = products.length;
-    const withSku = products.filter(p => p.sku).length;
-    const categorized = products.filter(p => p.category).length;
-    const withFeatures = products.filter(p => p.has_features !== false).length;
-    const missingData = total - withSku;
-    
-    stats.innerHTML = `
-        <strong>Total Products:</strong> ${total} | 
-        <strong>With SKU:</strong> ${withSku} | 
-        <strong>Categorized:</strong> ${categorized} | 
-        <strong>With Features:</strong> ${withFeatures}
-        ${missingData > 0 ? ` | <span style="color: #e67e22;">⚠ ${missingData} missing SKU</span>` : ''}
-    `;
-}
-
-function showAddHistoricalModal() {
-    // Simple implementation - reuse upload form
-    showToast('Use the Upload tab and mark as historical', 'info');
-}
-
-// Batch View
-function initBatchView() {
-    const batchDropZone = document.getElementById('batchDropZone');
-    const batchFileInput = document.getElementById('batchFileInput');
-    const batchUploadBtn = document.getElementById('batchUploadBtn');
-    
-    batchDropZone.addEventListener('click', () => batchFileInput.click());
-    
-    batchDropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        batchDropZone.classList.add('drag-over');
-    });
-    
-    batchDropZone.addEventListener('dragleave', () => {
-        batchDropZone.classList.remove('drag-over');
-    });
-    
-    batchDropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        batchDropZone.classList.remove('drag-over');
-        handleBatchFiles(Array.from(e.dataTransfer.files));
-    });
-    
-    batchFileInput.addEventListener('change', (e) => {
-        handleBatchFiles(Array.from(e.target.files));
-    });
-    
-    batchUploadBtn.addEventListener('click', processBatch);
-}
-
-function handleBatchFiles(files) {
-    const imageFiles = files.filter(f => f.type.startsWith('image/'));
-    batchFiles = [...batchFiles, ...imageFiles];
-    displayBatchFiles();
-    document.getElementById('batchUploadBtn').disabled = batchFiles.length === 0;
-}
-
-function displayBatchFiles() {
-    const list = document.getElementById('batchFileList');
-    
-    if (batchFiles.length === 0) {
-        list.innerHTML = '';
-        return;
-    }
-    
-    list.innerHTML = batchFiles.map((file, index) => `
-        <div class="batch-file-item">
-            <img src="${URL.createObjectURL(file)}">
-            <span class="file-name">${file.name}</span>
-            <button class="remove-btn" onclick="removeBatchFile(${index})">Remove</button>
-        </div>
-    `).join('');
-}
-
-function removeBatchFile(index) {
-    batchFiles.splice(index, 1);
-    displayBatchFiles();
-    document.getElementById('batchUploadBtn').disabled = batchFiles.length === 0;
-}
-
-async function processBatch() {
-    const category = document.getElementById('batchCategory').value;
-    const progressSection = document.getElementById('batchProgress');
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
-    const resultsSection = document.getElementById('batchResults');
-    
-    progressSection.classList.remove('hidden');
-    resultsSection.classList.add('hidden');
-    document.getElementById('batchUploadBtn').disabled = true;
-    
-    const results = [];
-    
-    for (let i = 0; i < batchFiles.length; i++) {
-        const file = batchFiles[i];
-        const formData = new FormData();
-        formData.append('image', file);
-        if (category) formData.append('category', category);
-        formData.append('is_historical', 'true');
-        
-        try {
-            const response = await fetch('/api/products/upload', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            results.push({ file: file.name, success: response.ok, data });
-            
-        } catch (error) {
-            results.push({ file: file.name, success: false, error: error.message });
-        }
-        
-        const progress = ((i + 1) / batchFiles.length) * 100;
-        progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${i + 1} of ${batchFiles.length} files processed`;
-    }
-    
-    displayBatchResults(results);
-    progressSection.classList.add('hidden');
-    resultsSection.classList.remove('hidden');
-    
-    batchFiles = [];
-    displayBatchFiles();
-    document.getElementById('batchUploadBtn').disabled = true;
-}
-
-function displayBatchResults(results) {
-    const resultsSection = document.getElementById('batchResults');
-    const successful = results.filter(r => r.success).length;
-    const failed = results.length - successful;
-    const withWarnings = results.filter(r => r.success && r.data && (r.data.warning || r.data.warning_sku)).length;
-    
-    resultsSection.innerHTML = `
-        <h3>Batch Complete</h3>
-        <p>
-            <strong>Successful:</strong> ${successful} | 
-            <strong>Failed:</strong> ${failed}
-            ${withWarnings > 0 ? ` | <strong style="color: #f39c12;">Warnings:</strong> ${withWarnings}` : ''}
-        </p>
-        <div style="margin-top: 20px;">
-            ${results.map(r => {
-                const bgColor = r.success ? '#d4edda' : '#f8d7da';
-                const hasWarning = r.success && r.data && (r.data.warning || r.data.warning_sku);
-                const warningMsg = hasWarning 
-                    ? `<br><small style="color: #856404;">${r.data.warning || r.data.warning_sku}</small>`
-                    : '';
-                
-                return `
-                    <div style="padding: 10px; margin-bottom: 5px; background: ${bgColor}; border-radius: 5px;">
-                        ${escapeHtml(r.file)}: ${r.success ? '✓ Success' : '✗ ' + escapeHtml(r.error || 'Failed')}
-                        ${warningMsg}
+            ${matchDetails ? `
+                <div class="score-breakdown">
+                    <h4>Similarity Breakdown</h4>
+                    <div class="score-bar">
+                        <div class="score-bar-label">
+                            <span>Overall Similarity</span>
+                            <span>${matchDetails.similarity_score.toFixed(1)}%</span>
+                        </div>
+                        <div class="score-bar-fill">
+                            <div style="width: ${matchDetails.similarity_score}%"></div>
+                        </div>
                     </div>
-                `;
-            }).join('')}
-        </div>
-    `;
+                    <div class="score-bar">
+                        <div class="score-bar-label">
+                            <span>Color Similarity</span>
+                            <span>${matchDetails.color_score?.toFixed(1) || 'N/A'}%</span>
+                        </div>
+                        <div class="score-bar-fill">
+                            <div style="width: ${matchDetails.color_score || 0}%"></div>
+                        </div>
+                    </div>
+                    <div class="score-bar">
+                        <div class="score-bar-label">
+                            <span>Shape Similarity</span>
+                            <span>${matchDetails.shape_score?.toFixed(1) || 'N/A'}%</span>
+                        </div>
+                        <div class="score-bar-fill">
+                            <div style="width: ${matchDetails.shape_score || 0}%</div>
+                        </div>
+                    </div>
+                    <div class="score-bar">
+                        <div class="score-bar-label">
+                            <span>Texture Similarity</span>
+                            <span>${matchDetails.texture_score?.toFixed(1) || 'N/A'}%</span>
+                        </div>
+                        <div class="score-bar-fill">
+                            <div style="width: ${matchDetails.texture_score || 0}%"></div>
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+        `;
+        
+        modal.classList.add('show');
+    } catch (error) {
+        showToast('Failed to load comparison details', 'error');
+    }
 }
 
-// Categories
-async function loadCategories() {
-    try {
-        const response = await fetch('/api/products/historical');
-        const data = await response.json();
+function closeModal() {
+    document.getElementById('detailModal').classList.remove('show');
+}
+
+function exportResults() {
+    let csv = 'New Product,Category,Match Count,Top Match,Top Score\n';
+    
+    matchResults.forEach(result => {
+        const product = result.product;
+        const topMatch = result.matches[0];
         
-        if (response.ok && data.products) {
-            // Filter out null/undefined categories and get unique values
-            const uniqueCategories = [...new Set(
-                data.products
-                    .map(p => p.category)
-                    .filter(c => c && c.trim())
-            )].sort();
-            
-            categories = uniqueCategories;
-            
-            const selects = [
-                document.getElementById('productCategory'),
-                document.getElementById('batchCategory'),
-                document.getElementById('categoryFilter')
-            ];
-            
-            selects.forEach(select => {
-                if (!select) return; // Handle missing elements
-                
-                if (select.id === 'categoryFilter') {
-                    select.innerHTML = '<option value="">All Categories</option>' +
-                        (categories.length > 0 
-                            ? categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
-                            : '<option disabled>No categories yet</option>');
-                } else {
-                    select.innerHTML = '<option value="">No category (optional)</option>' +
-                        (categories.length > 0 
-                            ? categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
-                            : '');
-                }
-            });
+        csv += `"${product.filename}","${product.category || 'Uncategorized'}",${result.matches.length}`;
+        
+        if (topMatch) {
+            csv += `,"${topMatch.product_name || 'Unknown'}",${topMatch.similarity_score.toFixed(1)}`;
+        } else {
+            csv += ',"No matches",0';
         }
-    } catch (error) {
-        console.error('Failed to load categories:', error);
-        // Don't show error to user - categories are optional
+        
+        csv += '\n';
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `match_results_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showToast('Results exported to CSV', 'success');
+}
+
+function resetApp() {
+    if (confirm('Start over? This will clear all data.')) {
+        location.reload();
     }
 }
 
 // Utilities
+async function parseCsv(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target.result;
+            const lines = text.split('\n');
+            const map = {};
+            
+            lines.forEach(line => {
+                const [filename, category] = line.split(',').map(s => s.trim());
+                if (filename && category) {
+                    map[filename] = category;
+                }
+            });
+            
+            resolve(map);
+        };
+        reader.readAsText(file);
+    });
+}
+
 function showToast(message, type = 'info') {
     if (!message) return;
     
@@ -532,7 +599,6 @@ function showToast(message, type = 'info') {
     toast.textContent = message;
     toast.className = `toast ${type} show`;
     
-    // Longer timeout for errors and warnings
     const timeout = (type === 'error' || type === 'warning') ? 5000 : 3000;
     
     setTimeout(() => {
@@ -540,23 +606,6 @@ function showToast(message, type = 'info') {
     }, timeout);
 }
 
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-function viewDetails(productId) {
-    showToast('Detailed view coming soon', 'info');
-}
-
-// Utility to escape HTML and prevent XSS
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');

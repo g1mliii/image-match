@@ -8,124 +8,126 @@
 </head>
 <body>
     <div class="app-container">
-        <nav class="sidebar">
-            <h1>Product Matcher</h1>
-            <ul class="nav-menu">
-                <li><a href="#" data-view="upload" class="nav-link active">Upload Product</a></li>
-                <li><a href="#" data-view="catalog" class="nav-link">Catalog</a></li>
-                <li><a href="#" data-view="batch" class="nav-link">Batch Upload</a></li>
-            </ul>
-        </nav>
+        <header class="app-header">
+            <h1>Product Matching System</h1>
+            <p>Compare new products against historical catalog</p>
+        </header>
 
         <main class="main-content">
-            <!-- Upload View -->
-            <div id="upload-view" class="view active">
-                <h2>Upload New Product</h2>
-                <div class="upload-section">
-                    <div class="drop-zone" id="dropZone">
+            <!-- Step 1: Upload Historical Catalog -->
+            <section class="upload-section" id="historicalSection">
+                <div class="section-header">
+                    <span class="step-number">1</span>
+                    <h2>Upload Historical Catalog (Old Products)</h2>
+                </div>
+                
+                <div class="upload-area">
+                    <div class="drop-zone" id="historicalDropZone">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                         </svg>
-                        <p>Drag & drop image here or click to browse</p>
-                        <input type="file" id="fileInput" accept="image/*" hidden>
+                        <p>Drop folder with historical product images here</p>
+                        <button class="btn btn-secondary" id="historicalBrowseBtn">Browse Folder</button>
+                        <input type="file" id="historicalInput" webkitdirectory directory multiple hidden>
                     </div>
                     
-                    <div class="form-group">
-                        <label>Product Name (Optional)</label>
-                        <input type="text" id="productName" placeholder="Enter product name">
+                    <div class="file-info" id="historicalInfo"></div>
+                    
+                    <div class="csv-upload">
+                        <label>Optional: Upload CSV with categories (filename, category)</label>
+                        <input type="file" id="historicalCsvInput" accept=".csv">
+                        <small>CSV format: filename,category (e.g., "product1.jpg,placemats")</small>
                     </div>
                     
-                    <div class="form-group">
-                        <label>SKU (Optional)</label>
-                        <input type="text" id="productSku" placeholder="e.g., SKU-12345">
-                        <small>Alphanumeric, hyphens, underscores allowed</small>
+                    <button class="btn btn-primary" id="processHistoricalBtn" disabled>Process Historical Catalog</button>
+                </div>
+                
+                <div class="processing-status" id="historicalStatus"></div>
+            </section>
+
+            <!-- Step 2: Upload New Products -->
+            <section class="upload-section" id="newSection" style="display: none;">
+                <div class="section-header">
+                    <span class="step-number">2</span>
+                    <h2>Upload New Products to Match</h2>
+                </div>
+                
+                <div class="upload-area">
+                    <div class="drop-zone" id="newDropZone">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        <p>Drop folder with new product images here</p>
+                        <button class="btn btn-secondary" id="newBrowseBtn">Browse Folder</button>
+                        <input type="file" id="newInput" webkitdirectory directory multiple hidden>
                     </div>
                     
-                    <div class="form-group">
-                        <label>Category (Optional)</label>
-                        <select id="productCategory">
-                            <option value="">Select category...</option>
+                    <div class="file-info" id="newInfo"></div>
+                    
+                    <div class="csv-upload">
+                        <label>Optional: Upload CSV with categories (filename, category)</label>
+                        <input type="file" id="newCsvInput" accept=".csv">
+                        <small>CSV format: filename,category (e.g., "product1.jpg,placemats")</small>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="processNewBtn" disabled>Process New Products</button>
+                </div>
+                
+                <div class="processing-status" id="newStatus"></div>
+            </section>
+
+            <!-- Step 3: Match Products -->
+            <section class="match-section" id="matchSection" style="display: none;">
+                <div class="section-header">
+                    <span class="step-number">3</span>
+                    <h2>Find Matches</h2>
+                </div>
+                
+                <div class="match-controls">
+                    <div class="control-group">
+                        <label>Similarity Threshold: <span id="thresholdValue">50</span>%</label>
+                        <input type="range" id="thresholdSlider" min="0" max="100" value="50">
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>Max Matches per Product:</label>
+                        <select id="limitSelect">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="25">25</option>
+                            <option value="50">50</option>
                         </select>
                     </div>
                     
-                    <button id="uploadBtn" class="btn btn-primary" disabled>Upload & Find Matches</button>
-                </div>
-
-                <div id="matchResults" class="match-results hidden">
-                    <h3>Match Results</h3>
-                    <div class="results-controls">
-                        <label>
-                            Similarity Threshold: <span id="thresholdValue">50</span>%
-                            <input type="range" id="thresholdSlider" min="0" max="100" value="50">
-                        </label>
-                        <label>
-                            Show: 
-                            <select id="limitSelect">
-                                <option value="10">10</option>
-                                <option value="25" selected>25</option>
-                                <option value="50">50</option>
-                                <option value="100">100</option>
-                            </select>
-                            results
-                        </label>
-                    </div>
-                    <div id="resultsList" class="results-list"></div>
-                </div>
-            </div>
-
-            <!-- Catalog View -->
-            <div id="catalog-view" class="view">
-                <h2>Historical Products Catalog</h2>
-                <div class="catalog-controls">
-                    <input type="text" id="searchInput" placeholder="Search by name, SKU, or category...">
-                    <select id="categoryFilter">
-                        <option value="">All Categories</option>
-                    </select>
-                    <button id="addHistoricalBtn" class="btn btn-secondary">Add Historical Product</button>
-                </div>
-                <div id="catalogStats" class="stats"></div>
-                <div id="catalogList" class="catalog-grid"></div>
-            </div>
-
-            <!-- Batch Upload View -->
-            <div id="batch-view" class="view">
-                <h2>Batch Upload</h2>
-                <div class="batch-upload-section">
-                    <div class="drop-zone" id="batchDropZone">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-                        </svg>
-                        <p>Drag & drop multiple images here or click to browse</p>
-                        <input type="file" id="batchFileInput" accept="image/*" multiple hidden>
-                    </div>
-                    
-                    <div id="batchFileList" class="batch-file-list"></div>
-                    
-                    <div class="form-group">
-                        <label>Apply Category to All (Optional)</label>
-                        <select id="batchCategory">
-                            <option value="">No category</option>
-                        </select>
-                    </div>
-                    
-                    <button id="batchUploadBtn" class="btn btn-primary" disabled>Process Batch</button>
+                    <button class="btn btn-primary btn-large" id="matchBtn">Start Matching</button>
                 </div>
                 
-                <div id="batchProgress" class="batch-progress hidden">
-                    <h3>Processing...</h3>
-                    <div class="progress-bar">
-                        <div id="progressFill" class="progress-fill"></div>
-                    </div>
-                    <p id="progressText">0 of 0 files processed</p>
+                <div class="match-progress" id="matchProgress"></div>
+            </section>
+
+            <!-- Step 4: Results -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <div class="section-header">
+                    <h2>Match Results</h2>
+                    <button class="btn btn-secondary" id="exportBtn">Export to CSV</button>
+                    <button class="btn btn-secondary" id="resetBtn">Start Over</button>
                 </div>
                 
-                <div id="batchResults" class="batch-results hidden"></div>
-            </div>
+                <div class="results-summary" id="resultsSummary"></div>
+                
+                <div class="results-list" id="resultsList"></div>
+            </section>
         </main>
     </div>
 
     <div id="toast" class="toast"></div>
-    <div id="modal" class="modal hidden"></div>
+    
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" id="modalClose">&times;</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
