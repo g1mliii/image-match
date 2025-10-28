@@ -1,0 +1,59 @@
+{
+  "name": "product-matching-system",
+  "version": "1.0.0",
+  "description": "Desktop application for product image matching",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "start": "npm run start:backend & npm run start:frontend",
+    "start:frontend": "webpack serve --config webpack.config.js --mode development",
+    "start:backend": "python backend/app.py",
+    "build:frontend": "webpack --config webpack.config.js --mode production",
+    "build:electron": "tsc --project tsconfig.electron.json",
+    "build:backend": "pyinstaller backend/app.spec",
+    "build": "npm run build:frontend && npm run build:electron",
+    "electron": "electron .",
+    "electron:dev": "npm run build:electron && concurrently \"npm run start:backend\" \"wait-on http://localhost:5000 && electron .\"",
+    "package": "npm run build && electron-builder build --win"
+  },
+  "keywords": ["electron", "product-matching", "image-similarity"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "concurrently": "^8.2.0",
+    "css-loader": "^6.8.0",
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.0",
+    "html-webpack-plugin": "^5.5.0",
+    "style-loader": "^3.3.0",
+    "ts-loader": "^9.5.0",
+    "typescript": "^5.2.0",
+    "wait-on": "^7.2.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0",
+    "webpack-dev-server": "^4.15.0"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.16.0"
+  },
+  "build": {
+    "appId": "com.productmatching.app",
+    "productName": "Product Matching System",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "backend/dist/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    }
+  }
+}
