@@ -34,7 +34,7 @@
   - Normalize all similarity scores to 0-100 range
   - _Requirements: 2.3, 2.4_
 
-- [ ] 5. Implement matching service with category filtering and real-world data handling
+- [x] 5. Implement matching service with category filtering and real-world data handling
   - Create matching function that filters by category before computing similarities (handle NULL/missing categories)
   - Implement graceful handling for products with missing or corrupted features (skip and log errors)
   - Add fallback logic for products without category (use 'unknown' category or match against all)
@@ -47,7 +47,7 @@
   - Log warnings for data quality issues (missing metadata, corrupted features, etc.)
   - _Requirements: 3.1, 3.2, 4.1, 5.1, 5.2, 5.3_
 
-- [ ] 6. Implement Flask REST API endpoints with comprehensive validation
+- [-] 6. Implement Flask REST API endpoints with comprehensive validation
   - Create POST /api/products/upload endpoint for new product upload:
     - Validate image file (format, size, corruption)
     - Accept optional fields: category, product_name, sku (all can be NULL/missing)
@@ -107,7 +107,7 @@
 
 - [ ] 9. Implement product upload interface with robust error handling
   - Create drag-and-drop file upload component with visual feedback
-  - Implement client-side file validation for format (JPEG, PNG, WebP) and size (10MB limit)
+  - Implement client-side file validation for format (JPEG, PNG, WebP)no file size limit
   - Create category selection dropdown populated from database:
     - Handle empty category list (show message to add categories first)
     - Allow "No Category" or "Unknown" option for products without clear category

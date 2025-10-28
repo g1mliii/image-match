@@ -78,12 +78,11 @@ def validate_image_file(image_path: str) -> Tuple[bool, Optional[str], Optional[
     if not os.path.exists(image_path):
         return False, f"File not found: {image_path}", "FILE_NOT_FOUND"
     
-    # Check file size (max 10MB as per requirements)
+    # Check file size
     file_size = os.path.getsize(image_path)
     if file_size == 0:
         return False, "Image file is empty (0 bytes)", "EMPTY_FILE"
-    if file_size > 10 * 1024 * 1024:  # 10MB
-        return False, f"Image file too large ({file_size / (1024*1024):.1f}MB). Maximum size is 10MB.", "FILE_TOO_LARGE"
+    # No maximum file size limit - handle large images gracefully
     
     # Validate file format using PIL
     try:
