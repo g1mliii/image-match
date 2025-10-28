@@ -597,3 +597,322 @@ def bulk_update_category(product_ids: List[int], category: str) -> int:
         query = f"UPDATE products SET category = ? WHERE id IN ({placeholders})"
         cursor.execute(query, [category] + product_ids)
         return cursor.rowcount
+
+
+# SKU-specific utility functions for real-world data handling
+
+def get_products_by_sku(sku: str, case_sensitive: bool = False) -> List[sqlite3.Row]:
+    """Get all products with a specific SKU
+    
+    Args:
+        sku: SKU to search for
+        case_sensitive: If True, perform case-sensitive search
+    
+    Returns:
+        List of products with matching SKU (may be multiple if duplicates exist)
+    
+    Note: In real-world data, SKUs may be duplicated due to data entry errors
+    or intentional reuse. This function returns all matches.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if case_sensitive:
+            cursor.execute('''
+                SELECT * FROM products 
+                WHERE sku = ?
+                ORDER BY created_at DESC
+            ''', (sku,))
+        else:
+            cursor.execute('''
+                SELECT * FROM products 
+                WHERE LOWER(sku) = LOWER(?)
+                ORDER BY created_at DESC
+            ''', (sku,))
+        return cursor.fetchall()
+
+def check_sku_exists(sku: str, exclude_product_id: Optional[int] = None, 
+                     case_sensitive: bool = False) -> bool:
+    """Check if SKU already exists in database
+    
+    Args:
+        sku: SKU to check
+        exclude_product_id: Optional product ID to exclude from check (for updates)
+        case_sensitive: If True, perform case-sensitive check
+    
+    Returns:
+        True if SKU exists, False otherwise
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        if exclude_product_id:
+            if case_sensitive:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM products 
+                    WHERE sku = ? AND id != ?
+                ''', (sku, exclude_product_id))
+            else:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM products 
+                    WHERE LOWER(sku) = LOWER(?) AND id != ?
+                ''', (sku, exclude_product_id))
+        else:
+            if case_sensitive:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM products 
+                    WHERE sku = ?
+                ''', (sku,))
+            else:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM products 
+                    WHERE LOWER(sku) = LOWER(?)
+                ''', (sku,))
+        
+        return cursor.fetchone()[0] > 0
+
+def get_duplicate_skus() -> List[Dict[str, Any]]:
+    """Get all SKUs that appear multiple times in the database
+    
+    Returns:
+        List of dicts with 'sku' and 'count' keys, ordered by count descending
+    
+    Useful for data quality monitoring and identifying potential data issues.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT sku, COUNT(*) as count
+            FROM products
+            WHERE sku IS NOT NULL
+            GROUP BY LOWER(sku)
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, sku
+        ''')
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'sku': row['sku'],
+                'count': row['count']
+            })
+        
+        return results
+
+def get_products_without_sku(is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
+    """Get all products that are missing SKU information
+    
+    Args:
+        is_historical: Optional filter for historical vs new products
+    
+    Returns:
+        List of products without SKU
+    
+    Useful for identifying products that need SKU assignment.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if is_historical is not None:
+            cursor.execute('''
+                SELECT * FROM products 
+                WHERE sku IS NULL AND is_historical = ?
+                ORDER BY created_at DESC
+            ''', (is_historical,))
+        else:
+            cursor.execute('''
+                SELECT * FROM products 
+                WHERE sku IS NULL
+                ORDER BY created_at DESC
+            ''')
+        return cursor.fetchall()
+
+def search_products(query: str, search_fields: List[str] = None, 
+                   category: Optional[str] = None,
+                   is_historical: Optional[bool] = None,
+                   limit: int = 100) -> List[sqlite3.Row]:
+    """Search products across multiple fields
+    
+    Args:
+        query: Search query string
+        search_fields: Fields to search in (default: ['product_name', 'sku', 'category'])
+        category: Optional category filter
+        is_historical: Optional filter for historical vs new products
+        limit: Maximum number of results
+    
+    Returns:
+        List of matching products
+    
+    Note: Handles NULL values gracefully - NULL fields won't match but won't cause errors.
+    """
+    if search_fields is None:
+        search_fields = ['product_name', 'sku', 'category']
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build search conditions
+        search_conditions = []
+        for field in search_fields:
+            search_conditions.append(f"LOWER({field}) LIKE LOWER(?)")
+        
+        search_clause = " OR ".join(search_conditions)
+        
+        # Build WHERE clause
+        where_parts = [f"({search_clause})"]
+        params = [f"%{query}%"] * len(search_fields)
+        
+        if category is not None:
+            where_parts.append("category = ?")
+            params.append(category)
+        
+        if is_historical is not None:
+            where_parts.append("is_historical = ?")
+            params.append(is_historical)
+        
+        where_clause = " AND ".join(where_parts)
+        params.append(limit)
+        
+        query_sql = f'''
+            SELECT * FROM products 
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        '''
+        
+        cursor.execute(query_sql, params)
+        return cursor.fetchall()
+
+def get_data_quality_stats() -> Dict[str, Any]:
+    """Get comprehensive data quality statistics
+    
+    Returns:
+        Dictionary with various data quality metrics
+    
+    Useful for monitoring data completeness and identifying issues.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Total products
+        cursor.execute('SELECT COUNT(*) FROM products')
+        total_products = cursor.fetchone()[0]
+        
+        # Products with missing fields
+        cursor.execute('SELECT COUNT(*) FROM products WHERE product_name IS NULL')
+        missing_name = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM products WHERE sku IS NULL')
+        missing_sku = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM products WHERE category IS NULL')
+        missing_category = cursor.fetchone()[0]
+        
+        # Products without features
+        cursor.execute('''
+            SELECT COUNT(*) FROM products p
+            LEFT JOIN features f ON p.id = f.product_id
+            WHERE f.id IS NULL
+        ''')
+        missing_features = cursor.fetchone()[0]
+        
+        # Duplicate SKUs
+        cursor.execute('''
+            SELECT COUNT(DISTINCT LOWER(sku)) FROM products
+            WHERE sku IS NOT NULL
+            GROUP BY LOWER(sku)
+            HAVING COUNT(*) > 1
+        ''')
+        duplicate_sku_count = len(cursor.fetchall())
+        
+        # Historical vs new products
+        cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = 1')
+        historical_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = 0')
+        new_count = cursor.fetchone()[0]
+        
+        # Categories
+        cursor.execute('SELECT COUNT(DISTINCT category) FROM products WHERE category IS NOT NULL')
+        category_count = cursor.fetchone()[0]
+        
+        return {
+            'total_products': total_products,
+            'historical_products': historical_count,
+            'new_products': new_count,
+            'missing_name': missing_name,
+            'missing_sku': missing_sku,
+            'missing_category': missing_category,
+            'missing_features': missing_features,
+            'duplicate_skus': duplicate_sku_count,
+            'unique_categories': category_count,
+            'completeness': {
+                'name': round((total_products - missing_name) / total_products * 100, 1) if total_products > 0 else 0,
+                'sku': round((total_products - missing_sku) / total_products * 100, 1) if total_products > 0 else 0,
+                'category': round((total_products - missing_category) / total_products * 100, 1) if total_products > 0 else 0,
+                'features': round((total_products - missing_features) / total_products * 100, 1) if total_products > 0 else 0
+            }
+        }
+
+def validate_sku_format(sku: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """Validate SKU format according to real-world data handling rules
+    
+    Args:
+        sku: SKU string to validate (can be None)
+    
+    Returns:
+        Tuple of (is_valid, error_message)
+        - (True, None) if valid or None
+        - (False, error_message) if invalid
+    
+    Rules:
+        - NULL/None is valid (optional field)
+        - Empty string is treated as NULL
+        - Max length: 50 characters
+        - Allowed characters: alphanumeric, hyphens, underscores
+        - Whitespace is trimmed
+    """
+    import re
+    
+    # NULL/None is valid
+    if sku is None:
+        return True, None
+    
+    # Trim whitespace
+    sku = sku.strip()
+    
+    # Empty string is treated as NULL (valid)
+    if sku == '':
+        return True, None
+    
+    # Check length
+    if len(sku) > 50:
+        return False, "SKU too long (max 50 characters)"
+    
+    # Check format: alphanumeric, hyphens, underscores only
+    if not re.match(r'^[A-Za-z0-9\-_]+$', sku):
+        return False, "Invalid SKU format. Use only letters, numbers, hyphens, and underscores."
+    
+    return True, None
+
+def normalize_sku(sku: Optional[str]) -> Optional[str]:
+    """Normalize SKU for consistent storage
+    
+    Args:
+        sku: SKU string to normalize
+    
+    Returns:
+        Normalized SKU or None
+    
+    Normalization:
+        - Trim whitespace
+        - Convert to uppercase for consistency
+        - Empty string becomes None
+    """
+    if sku is None:
+        return None
+    
+    sku = sku.strip().upper()
+    
+    if sku == '':
+        return None
+    
+    return sku

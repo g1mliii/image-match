@@ -26,7 +26,7 @@
   - Add feature caching mechanism to avoid recomputation
   - _Requirements: 2.1, 2.2, 8.3_
 
-- [-] 4. Implement similarity computation engine
+- [x] 4. Implement similarity computation engine
   - Create color similarity function using histogram intersection
   - Create shape similarity function using Euclidean distance on Hu moments
   - Create texture similarity function using chi-square distance on LBP histograms
@@ -34,22 +34,57 @@
   - Normalize all similarity scores to 0-100 range
   - _Requirements: 2.3, 2.4_
 
-- [ ] 5. Implement matching service with category filtering
-  - Create matching function that filters by category before computing similarities
+- [ ] 5. Implement matching service with category filtering and real-world data handling
+  - Create matching function that filters by category before computing similarities (handle NULL/missing categories)
+  - Implement graceful handling for products with missing or corrupted features (skip and log errors)
+  - Add fallback logic for products without category (use 'unknown' category or match against all)
   - Implement ranking logic to sort matches by similarity score
   - Add threshold filtering to return only matches above configured threshold
   - Implement result limiting to return top N matches
   - Add duplicate detection flag for matches with score > 90
+  - Handle edge cases: empty historical catalog, all products filtered out, all similarity computations fail
+  - Return detailed error information for failed matches (error codes, suggestions)
+  - Log warnings for data quality issues (missing metadata, corrupted features, etc.)
   - _Requirements: 3.1, 3.2, 4.1, 5.1, 5.2, 5.3_
 
-- [ ] 6. Implement Flask REST API endpoints
-  - Create POST /api/products/upload endpoint for new product upload with image validation
-  - Create POST /api/products/match endpoint for finding matches
-  - Create GET /api/products/historical endpoint with pagination and filtering
-  - Create POST /api/products/historical endpoint for adding historical products
-  - Create GET /api/products/{product_id} endpoint for product details
-  - Create POST /api/batch/match endpoint for batch processing
-  - Implement error handling and validation for all endpoints
+- [ ] 6. Implement Flask REST API endpoints with comprehensive validation
+  - Create POST /api/products/upload endpoint for new product upload:
+    - Validate image file (format, size, corruption)
+    - Accept optional fields: category, product_name, sku (all can be NULL/missing)
+    - Sanitize and validate SKU format if provided (alphanumeric, hyphens, max length)
+    - Handle missing category (default to 'unknown' or NULL)
+    - Return structured error responses with error codes and suggestions
+    - Handle file upload errors gracefully (corrupted files, network issues)
+  - Create POST /api/products/match endpoint for finding matches:
+    - Validate product_id exists
+    - Handle products with missing/corrupted features (return error with suggestion to re-extract)
+    - Handle empty historical catalog (return empty results with message)
+    - Return partial results if some similarity computations fail
+    - Include error details for failed matches in response
+  - Create GET /api/products/historical endpoint with pagination and filtering:
+    - Handle NULL categories in filtering (include/exclude based on parameter)
+    - Validate pagination parameters (page, limit)
+    - Handle invalid filter values gracefully
+    - Return empty results for no matches (not error)
+  - Create POST /api/products/historical endpoint for adding historical products:
+    - Same validation as upload endpoint
+    - Mark product as historical in database
+    - Handle duplicate SKUs (warn but allow, or reject based on config)
+  - Create GET /api/products/{product_id} endpoint for product details:
+    - Handle non-existent product_id (404 with clear message)
+    - Return NULL fields as null in JSON (not omit them)
+    - Include feature extraction status (success, failed, pending)
+  - Create POST /api/batch/match endpoint for batch processing:
+    - Validate all product_ids before processing
+    - Process in batches with error isolation (one failure doesn't stop batch)
+    - Return summary with success/failure counts
+    - Include detailed error information for each failure
+  - Implement comprehensive error handling for all endpoints:
+    - Catch and format ImageProcessingError, InvalidFeatureError, FeatureDimensionError
+    - Return consistent error response format: {error, error_code, suggestion, details}
+    - Log all errors with context for debugging
+    - Handle database errors (connection failures, constraint violations)
+    - Validate all input parameters with clear error messages
   - _Requirements: 1.1, 1.2, 3.3, 4.4, 6.1, 6.4_
 
 - [ ] 7. Implement Electron main process and application lifecycle
@@ -70,56 +105,219 @@
   - Implement loading states and error boundaries
   - _Requirements: 9.1, 9.3, 10.2_
 
-- [ ] 9. Implement product upload interface
+- [ ] 9. Implement product upload interface with robust error handling
   - Create drag-and-drop file upload component with visual feedback
-  - Implement file validation for format (JPEG, PNG, WebP) and size (10MB limit)
-  - Create category selection dropdown populated from database
-  - Add optional product name and SKU input fields
-  - Implement upload progress indicator
-  - Display validation errors with clear messages
+  - Implement client-side file validation for format (JPEG, PNG, WebP) and size (10MB limit)
+  - Create category selection dropdown populated from database:
+    - Handle empty category list (show message to add categories first)
+    - Allow "No Category" or "Unknown" option for products without clear category
+    - Show category count in dropdown
+  - Add optional product name input field:
+    - Allow empty/NULL values
+    - Trim whitespace and validate max length
+    - Show character count
+  - Add optional SKU input field:
+    - Allow empty/NULL values
+    - Validate format: alphanumeric, hyphens, underscores (e.g., "SKU-12345", "PROD_ABC")
+    - Show format hint and validation feedback in real-time
+    - Warn if SKU already exists (but allow duplicate)
+    - Max length: 50 characters
+  - Implement upload progress indicator with stages:
+    - Uploading file
+    - Processing image
+    - Extracting features
+    - Saving to database
+  - Display validation errors with clear messages and recovery options
   - Implement comprehensive error handling for image processing failures:
     - Show specific error messages for corrupted images, unsupported formats, and file size issues
     - Display actionable suggestions (e.g., "Please re-save the image" or "Reduce file size to under 10MB")
     - Provide error codes for debugging (INVALID_FORMAT, CORRUPTED_IMAGE, IMAGE_TOO_SMALL, etc.)
     - Allow users to retry upload with a different image
     - Show image preview before upload when possible to help users verify the file
+    - Handle network errors (timeout, connection lost) with retry option
+  - Handle partial failures gracefully:
+    - If image uploads but feature extraction fails, save product and show warning
+    - Allow re-processing of failed feature extractions
+    - Show feature extraction status in UI
   - Call backend API to process and store uploaded product
+  - Show success message with product details and option to view matches immediately
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 10.1, 10.3_
 
-- [ ] 10. Implement match results display interface
-  - Create results list component with thumbnail images and similarity scores
+- [ ] 10. Implement match results display interface with error handling
+  - Create results list component with thumbnail images and similarity scores:
+    - Handle missing/broken thumbnail images (show placeholder)
+    - Display product metadata (name, SKU, category) with NULL handling (show "N/A" or "-")
+    - Show SKU prominently if available to help identify products
+    - Handle long product names and SKUs with truncation and tooltips
   - Implement color-coded similarity scores (green > 70, yellow 50-70, red < 50)
-  - Add similarity threshold slider control (0-100 range)
-  - Implement result limit selector (10, 25, 50 options)
-  - Display "potential duplicate" badge for matches with score > 90
+  - Add similarity threshold slider control (0-100 range):
+    - Show count of results at current threshold
+    - Persist threshold preference
+  - Implement result limit selector (10, 25, 50, 100 options):
+    - Show total available results vs displayed
+    - Persist limit preference
+  - Display "potential duplicate" badge for matches with score > 90:
+    - Highlight duplicate SKUs if both products have SKUs
+    - Show warning icon for potential duplicates
+  - Handle empty results gracefully:
+    - Show message when no matches found
+    - Suggest lowering threshold or checking category filter
+    - Show message when all matches filtered out by threshold
+  - Handle partial match failures:
+    - Show successful matches even if some failed
+    - Display error count and option to view error details
+    - Show warning icon for products with failed similarity computation
+  - Display match metadata:
+    - Show category for each match (handle NULL)
+    - Show date added for historical products
+    - Show feature extraction status (if failed, show warning)
   - Add click handler to navigate to detailed comparison view
-  - Implement CSV export functionality for match results
+  - Implement CSV export functionality for match results:
+    - Include all metadata (name, SKU, category, scores)
+    - Handle NULL values in export (use empty string or "N/A")
+    - Include error information for failed matches
+  - Show loading states during match computation
+  - Handle API errors with retry option
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4, 6.4, 10.2_
 
-- [ ] 11. Implement detailed comparison view
-  - Create side-by-side image comparison layout
-  - Display similarity score breakdown by feature type (color, shape, texture)
-  - Show historical product metadata (name, SKU, category, date added)
-  - Add navigation buttons to move between match results
+- [ ] 11. Implement detailed comparison view with comprehensive metadata display
+  - Create side-by-side image comparison layout:
+    - Handle missing/broken images (show placeholder with error message)
+    - Show image dimensions and file size
+    - Allow zoom and pan for detailed inspection
+  - Display similarity score breakdown by feature type (color, shape, texture):
+    - Show individual scores with visual bars
+    - Highlight which features contribute most to similarity
+    - Show error message if any feature similarity failed to compute
+  - Show product metadata for both new and historical product:
+    - Product name (show "Unnamed Product" if NULL)
+    - SKU (show "No SKU" if NULL, highlight if SKUs match/differ)
+    - Category (show "Uncategorized" if NULL, highlight if categories match/differ)
+    - Date added/uploaded
+    - Feature extraction status (success/failed with error details)
+  - Display additional metadata if available:
+    - Image format and size
+    - Processing timestamp
+    - Any custom metadata stored
+  - Handle comparison errors gracefully:
+    - Show partial information if some data is missing
+    - Display error messages for failed feature extractions
+    - Offer option to re-extract features if failed
+  - Add navigation buttons to move between match results:
+    - Show current position (e.g., "3 of 15")
+    - Disable buttons at boundaries
+    - Keyboard shortcuts (arrow keys)
   - Implement back button to return to results list
+  - Show warning if comparing products from different categories
   - _Requirements: 7.1, 7.2, 7.3, 7.4_
 
-- [ ] 12. Implement catalog management interface
-  - Create historical products list with search and filter controls
-  - Implement category filter dropdown
-  - Add search input with debounced query
-  - Create "Add Historical Product" form with image upload
-  - Implement pagination for large catalogs
-  - Display product count and category statistics
+- [ ] 12. Implement catalog management interface with data quality monitoring
+  - Create historical products list with search and filter controls:
+    - Display product cards with thumbnail, name, SKU, category
+    - Handle missing thumbnails (show placeholder)
+    - Show data quality indicators (missing metadata, failed features, etc.)
+    - Display SKU prominently for easy identification
+    - Show warning icons for products with issues
+  - Implement category filter dropdown:
+    - Include "Uncategorized" option for NULL categories
+    - Show product count per category
+    - Allow multi-select filtering
+    - Handle empty categories gracefully
+  - Add search input with debounced query:
+    - Search across name, SKU, and category
+    - Handle NULL values in search (don't crash)
+    - Show "no results" message with search term
+    - Clear search button
+  - Implement SKU filter/search:
+    - Quick lookup by SKU
+    - Show duplicate SKUs with warning
+    - Validate SKU format in search
+  - Create "Add Historical Product" form with image upload:
+    - Same validation as product upload (task 9)
+    - Optional fields: name, SKU, category
+    - SKU validation and duplicate warning
+    - Mark as historical automatically
+    - Show success message with product details
+  - Implement pagination for large catalogs:
+    - Show total count and current page
+    - Configurable page size (25, 50, 100)
+    - Handle empty pages gracefully
+  - Display product count and category statistics:
+    - Total products
+    - Products by category (including uncategorized)
+    - Products with missing metadata
+    - Products with failed feature extraction
+    - Duplicate SKUs count
+  - Add bulk operations:
+    - Select multiple products
+    - Bulk delete with confirmation
+    - Bulk re-extract features for failed products
+    - Bulk update category
+  - Show data quality dashboard:
+    - Products missing names
+    - Products missing SKUs
+    - Products missing categories
+    - Products with failed features
+    - Recommendations for data cleanup
+  - Handle catalog errors gracefully:
+    - Database connection errors
+    - Failed to load products (show retry)
+    - Corrupted product data (skip and log)
   - _Requirements: 3.4, 8.1, 8.4_
 
-- [ ] 13. Implement batch upload and processing
-  - Create batch upload interface accepting multiple files
-  - Implement batch validation for all files before processing
-  - Add batch progress indicator showing current file and overall progress
-  - Process batch uploads with parallel processing (limit to CPU count)
-  - Generate batch summary with total processed, matches found, and errors
-  - Display batch results in table format with expandable match details
+- [ ] 13. Implement batch upload and processing with comprehensive error handling
+  - Create batch upload interface accepting multiple files:
+    - Drag-and-drop multiple files
+    - File browser with multi-select
+    - Show file list with preview thumbnails
+    - Allow removing files before upload
+  - Implement batch validation for all files before processing:
+    - Validate each file (format, size, corruption)
+    - Show validation status per file (valid, invalid, warning)
+    - Allow proceeding with valid files only
+    - Show summary of validation results
+  - Add optional batch metadata input:
+    - Apply category to all files (or leave individual)
+    - CSV import for metadata (filename, name, SKU, category)
+    - Handle missing/invalid CSV data gracefully
+    - Validate SKU uniqueness across batch
+  - Add batch progress indicator showing current file and overall progress:
+    - Show current file being processed
+    - Overall progress bar (X of Y files)
+    - Estimated time remaining
+    - Pause/cancel batch option
+  - Process batch uploads with parallel processing (limit to CPU count):
+    - Process multiple files concurrently
+    - Isolate errors (one failure doesn't stop batch)
+    - Handle resource constraints (memory, disk space)
+    - Throttle if system resources low
+  - Generate comprehensive batch summary:
+    - Total files processed
+    - Successful uploads
+    - Failed uploads with error details
+    - Matches found per product
+    - Potential duplicates detected
+    - Data quality issues (missing metadata, etc.)
+  - Display batch results in table format with expandable match details:
+    - Show status per file (success, failed, warning)
+    - Display error messages for failures
+    - Show match count per product
+    - Highlight potential duplicates
+    - Show products with missing metadata
+    - Allow filtering results (success only, failures only, etc.)
+  - Handle batch errors gracefully:
+    - Network errors during batch (retry failed files)
+    - Disk space errors (stop and notify)
+    - Memory errors (reduce parallelism)
+    - Database errors (rollback and retry)
+  - Export batch results:
+    - CSV export with all details
+    - Include error information
+    - Include match summaries
+  - Allow retry of failed files:
+    - Select failed files to retry
+    - Retry with different settings
+    - Track retry attempts
   - _Requirements: 6.1, 6.2, 6.3_
 
 - [ ] 14. Implement performance optimizations
