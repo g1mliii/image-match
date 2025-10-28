@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Matching System</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <h1>Product Matcher</h1>
+            <ul class="nav-menu">
+                <li><a href="#" data-view="upload" class="nav-link active">Upload Product</a></li>
+                <li><a href="#" data-view="catalog" class="nav-link">Catalog</a></li>
+                <li><a href="#" data-view="batch" class="nav-link">Batch Upload</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <!-- Upload View -->
+            <div id="upload-view" class="view active">
+                <h2>Upload New Product</h2>
+                <div class="upload-section">
+                    <div class="drop-zone" id="dropZone">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                        </svg>
+                        <p>Drag & drop image here or click to browse</p>
+                        <input type="file" id="fileInput" accept="image/*" hidden>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Product Name (Optional)</label>
+                        <input type="text" id="productName" placeholder="Enter product name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>SKU (Optional)</label>
+                        <input type="text" id="productSku" placeholder="e.g., SKU-12345">
+                        <small>Alphanumeric, hyphens, underscores allowed</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Category (Optional)</label>
+                        <select id="productCategory">
+                            <option value="">Select category...</option>
+                        </select>
+                    </div>
+                    
+                    <button id="uploadBtn" class="btn btn-primary" disabled>Upload & Find Matches</button>
+                </div>
+
+                <div id="matchResults" class="match-results hidden">
+                    <h3>Match Results</h3>
+                    <div class="results-controls">
+                        <label>
+                            Similarity Threshold: <span id="thresholdValue">50</span>%
+                            <input type="range" id="thresholdSlider" min="0" max="100" value="50">
+                        </label>
+                        <label>
+                            Show: 
+                            <select id="limitSelect">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                            results
+                        </label>
+                    </div>
+                    <div id="resultsList" class="results-list"></div>
+                </div>
+            </div>
+
+            <!-- Catalog View -->
+            <div id="catalog-view" class="view">
+                <h2>Historical Products Catalog</h2>
+                <div class="catalog-controls">
+                    <input type="text" id="searchInput" placeholder="Search by name, SKU, or category...">
+                    <select id="categoryFilter">
+                        <option value="">All Categories</option>
+                    </select>
+                    <button id="addHistoricalBtn" class="btn btn-secondary">Add Historical Product</button>
+                </div>
+                <div id="catalogStats" class="stats"></div>
+                <div id="catalogList" class="catalog-grid"></div>
+            </div>
+
+            <!-- Batch Upload View -->
+            <div id="batch-view" class="view">
+                <h2>Batch Upload</h2>
+                <div class="batch-upload-section">
+                    <div class="drop-zone" id="batchDropZone">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                        </svg>
+                        <p>Drag & drop multiple images here or click to browse</p>
+                        <input type="file" id="batchFileInput" accept="image/*" multiple hidden>
+                    </div>
+                    
+                    <div id="batchFileList" class="batch-file-list"></div>
+                    
+                    <div class="form-group">
+                        <label>Apply Category to All (Optional)</label>
+                        <select id="batchCategory">
+                            <option value="">No category</option>
+                        </select>
+                    </div>
+                    
+                    <button id="batchUploadBtn" class="btn btn-primary" disabled>Process Batch</button>
+                </div>
+                
+                <div id="batchProgress" class="batch-progress hidden">
+                    <h3>Processing...</h3>
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                    <p id="progressText">0 of 0 files processed</p>
+                </div>
+                
+                <div id="batchResults" class="batch-results hidden"></div>
+            </div>
+        </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <div id="modal" class="modal hidden"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

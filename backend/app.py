@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import os
 import re
@@ -8,8 +8,9 @@ from datetime import datetime
 
 from database import (
     init_db, insert_product, get_product_by_id, get_features_by_product_id,
-    insert_features, get_historical_products, count_products,
-    validate_sku_format, normalize_sku, check_sku_exists
+    insert_features, get_historical_products as db_get_historical_products, 
+    count_products, validate_sku_format, normalize_sku, check_sku_exists,
+    search_products
 )
 from image_processing import (
     extract_all_features, validate_image_file,
@@ -29,7 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)
 
 # Configuration
@@ -63,10 +64,44 @@ def create_error_response(error_code, message, suggestion=None, details=None, st
     logger.error(f"Error {error_code}: {message}")
     return jsonify(response), status_code
 
+@app.route('/')
+def index():
+    """Serve the main application"""
+    return send_from_directory(app.static_folder, 'index.html')
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'message': 'Backend is running'})
+
+@app.route('/api/products/<int:product_id>/image', methods=['GET'])
+def get_product_image(product_id):
+    """Get product image by ID"""
+    try:
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        image_path = product['image_path']
+        if not os.path.exists(image_path):
+            return create_error_response(
+                'IMAGE_NOT_FOUND',
+                'Image file not found',
+                status_code=404
+            )
+        
+        return send_file(image_path, mimetype='image/jpeg')
+    except Exception as e:
+        logger.error(f"Error serving image for product {product_id}: {e}")
+        return create_error_response(
+            'IMAGE_ERROR',
+            'Failed to load image',
+            status_code=500
+        )
 
 @app.route('/api/products/upload', methods=['POST'])
 def upload_product():
@@ -528,7 +563,6 @@ def get_historical_products():
         try:
             if search:
                 # Use search function
-                from database import search_products
                 products = search_products(
                     query=search,
                     category=category,
@@ -538,7 +572,7 @@ def get_historical_products():
                 total_count = len(products)  # Approximate for search
             else:
                 # Use pagination function
-                products = get_historical_products(
+                products = db_get_historical_products(
                     category=category,
                     limit=limit,
                     offset=offset,

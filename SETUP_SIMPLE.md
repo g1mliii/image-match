@@ -1,23 +1,4 @@
-# Product Matching System
-
-Lightweight desktop application for comparing new products against a historical catalog using image-based similarity analysis.
-
-## Features
-
-- Upload product images with category classification
-- Visual similarity matching using color, shape, and texture features
-- Category-based filtering
-- Batch processing support
-- Historical product catalog management
-- Simple, fast, no complex build process
-
-## Technology Stack
-
-- **Frontend**: Vanilla HTML/CSS/JavaScript (no frameworks!)
-- **Backend**: Python + Flask
-- **Desktop**: pywebview (lightweight wrapper)
-- **Image Processing**: OpenCV, scikit-image
-- **Database**: SQLite
+# Simple Setup Guide
 
 ## Prerequisites
 
@@ -26,7 +7,7 @@ Lightweight desktop application for comparing new products against a historical 
 
 ## Installation
 
-Install Python dependencies:
+1. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
@@ -34,25 +15,17 @@ pip install -r requirements.txt
 ## Running the Application
 
 ### Development Mode (Browser)
+Run Flask server and open in your browser:
 ```bash
 python backend/app.py
 ```
 Then open http://127.0.0.1:5000 in your browser
 
 ### Desktop Mode
+Run as a desktop application:
 ```bash
 python main.py
 ```
-
-## Building Executable (Optional)
-
-Create a standalone executable:
-```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --add-data "backend/static;backend/static" main.py
-```
-
-The executable will be in the `dist/` folder.
 
 ## Project Structure
 
@@ -73,8 +46,22 @@ product-matching-system/
 └── requirements.txt        # Python dependencies
 ```
 
-See [SETUP_SIMPLE.md](SETUP_SIMPLE.md) for detailed setup instructions.
+## Features
 
-## License
+- Upload product images with optional metadata (name, SKU, category)
+- Find similar products using color, shape, and texture features
+- Manage historical product catalog
+- Batch upload multiple products
+- Filter results by similarity threshold
+- No complex build process - just Python!
 
-MIT
+## Building Executable (Optional)
+
+To create a standalone executable:
+
+```bash
+pip install pyinstaller
+pyinstaller --onefile --windowed --add-data "backend/static;backend/static" main.py
+```
+
+The executable will be in the `dist/` folder.
