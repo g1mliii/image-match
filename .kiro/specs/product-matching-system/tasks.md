@@ -17,9 +17,7 @@
   - Add database indexes for category and is_historical fields
   - _Requirements: 8.4, 3.1_
 
-- [-] 3. Implement image preprocessing and feature extraction dont assume all images are vaild we may have unopenable images, random format for some reason again its real world data, have some error handilng in the ui to maybe tell user what was wrong and how to reupload image as well. we havent made ui yet but just plan ahead with this idea and maybe update the ui task with this as well
-
-
+- [x] 3. Implement image preprocessing and feature extraction dont assume all images are vaild we may have unopenable images, random format for some reason again its real world data, have some error handilng in the ui to maybe tell user what was wrong and how to reupload image as well. we havent made ui yet but just plan ahead with this idea and maybe update the ui task with this as well
 
   - Create image preprocessing function to normalize size, remove background, and enhance contrast
   - Implement color feature extraction using HSV histograms (256-dimensional)
@@ -28,7 +26,7 @@
   - Add feature caching mechanism to avoid recomputation
   - _Requirements: 2.1, 2.2, 8.3_
 
-- [ ] 4. Implement similarity computation engine
+- [-] 4. Implement similarity computation engine
   - Create color similarity function using histogram intersection
   - Create shape similarity function using Euclidean distance on Hu moments
   - Create texture similarity function using chi-square distance on LBP histograms
@@ -79,6 +77,12 @@
   - Add optional product name and SKU input fields
   - Implement upload progress indicator
   - Display validation errors with clear messages
+  - Implement comprehensive error handling for image processing failures:
+    - Show specific error messages for corrupted images, unsupported formats, and file size issues
+    - Display actionable suggestions (e.g., "Please re-save the image" or "Reduce file size to under 10MB")
+    - Provide error codes for debugging (INVALID_FORMAT, CORRUPTED_IMAGE, IMAGE_TOO_SMALL, etc.)
+    - Allow users to retry upload with a different image
+    - Show image preview before upload when possible to help users verify the file
   - Call backend API to process and store uploaded product
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 10.1, 10.3_
 
