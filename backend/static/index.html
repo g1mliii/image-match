@@ -93,6 +93,7 @@
                     <div class="control-group">
                         <label>Similarity Threshold: <span id="thresholdValue">50</span>%</label>
                         <input type="range" id="thresholdSlider" min="0" max="100" value="50">
+                        <small class="help-text">Products with similarity below this threshold will be filtered out. Higher values (70-100) show only very similar products.</small>
                     </div>
                     
                     <div class="control-group">
@@ -103,6 +104,7 @@
                             <option value="25">25</option>
                             <option value="50">50</option>
                         </select>
+                        <small class="help-text">Limit the number of matches shown for each new product to focus on the best results.</small>
                     </div>
                     
                     <button class="btn btn-primary btn-large" id="matchBtn">Start Matching</button>

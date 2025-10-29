@@ -7,12 +7,21 @@ let historicalProducts = [];
 let newProducts = [];
 let matchResults = [];
 
+// Retry configuration
+const RETRY_CONFIG = {
+    maxRetries: 3,
+    initialDelay: 1000, // 1 second
+    maxDelay: 10000, // 10 seconds
+    backoffMultiplier: 2
+};
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initHistoricalUpload();
     initNewUpload();
     initMatching();
     initResults();
+    initTooltips();
 });
 
 // Historical Catalog Upload
@@ -39,9 +48,16 @@ function initHistoricalUpload() {
         dropZone.classList.remove('drag-over');
     });
 
+    dropZone.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
+        dropZone.classList.add('drop-success');
+        setTimeout(() => dropZone.classList.remove('drop-success'), 500);
         handleHistoricalFiles(Array.from(e.dataTransfer.files));
     });
 
@@ -89,14 +105,22 @@ async function processHistoricalCatalog() {
 
     statusDiv.classList.add('show');
     processBtn.disabled = true;
+    showLoadingSpinner(processBtn, true);
 
     // Parse CSV if provided
     let categoryMap = {};
     if (historicalCsv) {
-        categoryMap = await parseCsv(historicalCsv);
+        try {
+            categoryMap = await parseCsv(historicalCsv);
+        } catch (error) {
+            showToast('Failed to parse CSV file. Please check the format.', 'error');
+            processBtn.disabled = false;
+            showLoadingSpinner(processBtn, false);
+            return;
+        }
     }
 
-    statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + historicalFiles.length + ' processed</p>';
+    statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + historicalFiles.length + ' processed</p><div class="spinner-inline"></div>';
 
     historicalProducts = [];
     const progressFill = document.getElementById('historicalProgress');
@@ -115,7 +139,7 @@ async function processHistoricalCatalog() {
             else formData.append('product_name', file.name); // Fallback to filename
             formData.append('is_historical', 'true');
 
-            const response = await fetch('/api/products/upload', {
+            const response = await fetchWithRetry('/api/products/upload', {
                 method: 'POST',
                 body: formData
             });
@@ -144,14 +168,13 @@ async function processHistoricalCatalog() {
                 }
             } else {
                 // Show error from backend
-                const errorMsg = data.suggestion
-                    ? `${file.name}: ${data.error} - ${data.suggestion}`
-                    : `${file.name}: ${data.error}`;
-                showToast(errorMsg, 'error');
+                const errorMsg = getUserFriendlyError(data.error_code || 'UNKNOWN_ERROR', data.error, data.suggestion);
+                showToast(`${file.name}: ${errorMsg}`, 'error');
                 console.error(`Failed to process ${file.name}:`, data);
             }
         } catch (error) {
-            showToast(`${file.name}: Network error - ${error.message}`, 'error');
+            const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
+            showToast(`${file.name}: ${errorMsg}`, 'error');
             console.error(`Failed to process ${file.name}:`, error);
         }
 
@@ -171,6 +194,7 @@ async function processHistoricalCatalog() {
     statusDiv.innerHTML = statusMsg;
 
     showToast(`Historical catalog ready: ${successful} products`, 'success');
+    showLoadingSpinner(processBtn, false);
 
     // Show next step
     document.getElementById('newSection').style.display = 'block';
@@ -201,9 +225,16 @@ function initNewUpload() {
         dropZone.classList.remove('drag-over');
     });
 
+    dropZone.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
+        dropZone.classList.add('drop-success');
+        setTimeout(() => dropZone.classList.remove('drop-success'), 500);
         handleNewFiles(Array.from(e.dataTransfer.files));
     });
 
@@ -251,14 +282,22 @@ async function processNewProducts() {
 
     statusDiv.classList.add('show');
     processBtn.disabled = true;
+    showLoadingSpinner(processBtn, true);
 
     // Parse CSV if provided
     let categoryMap = {};
     if (newCsv) {
-        categoryMap = await parseCsv(newCsv);
+        try {
+            categoryMap = await parseCsv(newCsv);
+        } catch (error) {
+            showToast('Failed to parse CSV file. Please check the format.', 'error');
+            processBtn.disabled = false;
+            showLoadingSpinner(processBtn, false);
+            return;
+        }
     }
 
-    statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + newFiles.length + ' processed</p>';
+    statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + newFiles.length + ' processed</p><div class="spinner-inline"></div>';
 
     newProducts = [];
     const progressFill = document.getElementById('newProgress');
@@ -277,7 +316,7 @@ async function processNewProducts() {
             else formData.append('product_name', file.name); // Fallback to filename
             formData.append('is_historical', 'false');
 
-            const response = await fetch('/api/products/upload', {
+            const response = await fetchWithRetry('/api/products/upload', {
                 method: 'POST',
                 body: formData
             });
@@ -306,14 +345,13 @@ async function processNewProducts() {
                 }
             } else {
                 // Show error from backend
-                const errorMsg = data.suggestion
-                    ? `${file.name}: ${data.error} - ${data.suggestion}`
-                    : `${file.name}: ${data.error}`;
-                showToast(errorMsg, 'error');
+                const errorMsg = getUserFriendlyError(data.error_code || 'UNKNOWN_ERROR', data.error, data.suggestion);
+                showToast(`${file.name}: ${errorMsg}`, 'error');
                 console.error(`Failed to process ${file.name}:`, data);
             }
         } catch (error) {
-            showToast(`${file.name}: Network error - ${error.message}`, 'error');
+            const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
+            showToast(`${file.name}: ${errorMsg}`, 'error');
             console.error(`Failed to process ${file.name}:`, error);
         }
 
@@ -333,6 +371,7 @@ async function processNewProducts() {
     statusDiv.innerHTML = statusMsg;
 
     showToast(`New products ready: ${successful} products`, 'success');
+    showLoadingSpinner(processBtn, false);
 
     // Show matching section
     document.getElementById('matchSection').style.display = 'block';
@@ -360,8 +399,9 @@ async function startMatching() {
 
     progressDiv.classList.add('show');
     matchBtn.disabled = true;
+    showLoadingSpinner(matchBtn, true);
 
-    progressDiv.innerHTML = '<h4>Finding matches...</h4><div class="progress-bar"><div class="progress-fill" id="matchProgressFill"></div></div><p id="matchProgressText">0 of ' + newProducts.length + ' products matched</p>';
+    progressDiv.innerHTML = '<h4>Finding matches...</h4><div class="progress-bar"><div class="progress-fill" id="matchProgressFill"></div></div><p id="matchProgressText">0 of ' + newProducts.length + ' products matched</p><div class="spinner-inline"></div>';
 
     matchResults = [];
     const progressFill = document.getElementById('matchProgressFill');
@@ -380,7 +420,7 @@ async function startMatching() {
         }
 
         try {
-            const response = await fetch('/api/products/match', {
+            const response = await fetchWithRetry('/api/products/match', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -398,10 +438,11 @@ async function startMatching() {
                 error: response.ok ? null : data.error
             });
         } catch (error) {
+            const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
             matchResults.push({
                 product: product,
                 matches: [],
-                error: error.message
+                error: errorMsg
             });
         }
 
@@ -412,6 +453,7 @@ async function startMatching() {
 
     progressDiv.innerHTML = '<h4>✓ Matching complete!</h4>';
     showToast('Matching complete!', 'success');
+    showLoadingSpinner(matchBtn, false);
 
     // Show results
     displayResults();
@@ -513,12 +555,20 @@ async function showDetailedComparison(newProductId, matchedProductId) {
     const modal = document.getElementById('detailModal');
     const modalBody = document.getElementById('modalBody');
 
+    // Show loading state
+    modalBody.innerHTML = '<div class="modal-loading"><div class="spinner"></div><p>Loading comparison...</p></div>';
+    modal.classList.add('show');
+
     try {
-        // Fetch both products
+        // Fetch both products with retry logic
         const [newResp, matchResp] = await Promise.all([
-            fetch(`/api/products/${newProductId}`),
-            fetch(`/api/products/${matchedProductId}`)
+            fetchWithRetry(`/api/products/${newProductId}`),
+            fetchWithRetry(`/api/products/${matchedProductId}`)
         ]);
+
+        if (!newResp.ok || !matchResp.ok) {
+            throw new Error('Failed to load product details');
+        }
 
         const newData = await newResp.json();
         const matchData = await matchResp.json();
@@ -753,3 +803,178 @@ function initLazyLoading() {
 document.addEventListener('DOMContentLoaded', () => {
     initLazyLoading();
 });
+
+// Retry Logic with Exponential Backoff
+async function fetchWithRetry(url, options = {}, retryCount = 0) {
+    try {
+        const response = await fetch(url, options);
+        
+        // If server error (5xx) or rate limit (429), retry
+        if ((response.status >= 500 || response.status === 429) && retryCount < RETRY_CONFIG.maxRetries) {
+            const delay = Math.min(
+                RETRY_CONFIG.initialDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, retryCount),
+                RETRY_CONFIG.maxDelay
+            );
+            
+            showToast(`Request failed. Retrying in ${delay / 1000} seconds... (Attempt ${retryCount + 1}/${RETRY_CONFIG.maxRetries})`, 'warning');
+            
+            await sleep(delay);
+            return fetchWithRetry(url, options, retryCount + 1);
+        }
+        
+        return response;
+    } catch (error) {
+        // Network error - retry
+        if (retryCount < RETRY_CONFIG.maxRetries) {
+            const delay = Math.min(
+                RETRY_CONFIG.initialDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, retryCount),
+                RETRY_CONFIG.maxDelay
+            );
+            
+            showToast(`Network error. Retrying in ${delay / 1000} seconds... (Attempt ${retryCount + 1}/${RETRY_CONFIG.maxRetries})`, 'warning');
+            
+            await sleep(delay);
+            return fetchWithRetry(url, options, retryCount + 1);
+        }
+        
+        throw error;
+    }
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// User-Friendly Error Messages
+function getUserFriendlyError(errorCode, originalError, suggestion) {
+    const errorMessages = {
+        'NETWORK_ERROR': 'Unable to connect to the server. Please check your connection and try again.',
+        'INVALID_IMAGE': 'This image file is corrupted or in an unsupported format. Please use JPEG, PNG, or WebP.',
+        'FILE_TOO_LARGE': 'This image file is too large. Please use images under 10MB.',
+        'MISSING_FEATURES': 'Could not extract features from this image. The image may be corrupted or too simple.',
+        'NO_HISTORICAL_PRODUCTS': 'No historical products found in this category. Please add historical products first.',
+        'DATABASE_ERROR': 'A database error occurred. Please try again or restart the application.',
+        'PROCESSING_ERROR': 'Failed to process this image. Please try a different image.',
+        'UNKNOWN_ERROR': 'An unexpected error occurred. Please try again.'
+    };
+
+    let message = errorMessages[errorCode] || originalError || errorMessages['UNKNOWN_ERROR'];
+    
+    if (suggestion) {
+        message += ` Suggestion: ${suggestion}`;
+    }
+    
+    return message;
+}
+
+// Loading Spinner for Buttons
+function showLoadingSpinner(button, show) {
+    if (show) {
+        if (!button.querySelector('.btn-spinner')) {
+            const spinner = document.createElement('span');
+            spinner.className = 'btn-spinner';
+            button.appendChild(spinner);
+        }
+        button.classList.add('loading');
+    } else {
+        const spinner = button.querySelector('.btn-spinner');
+        if (spinner) {
+            spinner.remove();
+        }
+        button.classList.remove('loading');
+    }
+}
+
+// Tooltip Initialization
+function initTooltips() {
+    // Create tooltip element
+    const tooltip = document.createElement('div');
+    tooltip.className = 'tooltip-popup';
+    tooltip.style.display = 'none';
+    document.body.appendChild(tooltip);
+
+    // Add tooltips to key UI elements
+    const tooltipElements = [
+        { selector: '#thresholdSlider', text: 'Set the minimum similarity score (0-100) for matches. Higher values show only very similar products.' },
+        { selector: '#limitSelect', text: 'Maximum number of matches to show for each new product.' },
+        { selector: '#historicalBrowseBtn', text: 'Select a folder containing images of products you\'ve sold before.' },
+        { selector: '#newBrowseBtn', text: 'Select a folder containing images of new products to match.' },
+        { selector: '#matchBtn', text: 'Start comparing new products against your historical catalog.' },
+        { selector: '#exportBtn', text: 'Download all match results as a CSV file for further analysis.' },
+        { selector: '#resetBtn', text: 'Clear all data and start over with new products.' }
+    ];
+
+    tooltipElements.forEach(({ selector, text }) => {
+        const element = document.querySelector(selector);
+        if (element) {
+            element.setAttribute('data-tooltip', text);
+            
+            element.addEventListener('mouseenter', (e) => {
+                const tooltipText = e.target.getAttribute('data-tooltip');
+                if (tooltipText) {
+                    tooltip.textContent = tooltipText;
+                    tooltip.style.display = 'block';
+                    positionTooltip(e.target, tooltip);
+                }
+            });
+
+            element.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+
+            element.addEventListener('mousemove', (e) => {
+                if (tooltip.style.display === 'block') {
+                    positionTooltip(e.target, tooltip);
+                }
+            });
+        }
+    });
+}
+
+function positionTooltip(element, tooltip) {
+    const rect = element.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    
+    let top = rect.bottom + 10;
+    let left = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+    
+    // Adjust if tooltip goes off screen
+    if (left < 10) left = 10;
+    if (left + tooltipRect.width > window.innerWidth - 10) {
+        left = window.innerWidth - tooltipRect.width - 10;
+    }
+    
+    if (top + tooltipRect.height > window.innerHeight - 10) {
+        top = rect.top - tooltipRect.height - 10;
+    }
+    
+    tooltip.style.top = `${top}px`;
+    tooltip.style.left = `${left}px`;
+}
+
+// Enhanced Toast with Action Button
+function showToastWithAction(message, type, actionText, actionCallback) {
+    const toast = document.getElementById('toast');
+    
+    const messageSpan = document.createElement('span');
+    messageSpan.textContent = message;
+    
+    const actionBtn = document.createElement('button');
+    actionBtn.className = 'toast-action';
+    actionBtn.textContent = actionText;
+    actionBtn.onclick = () => {
+        toast.classList.remove('show');
+        actionCallback();
+    };
+    
+    toast.innerHTML = '';
+    toast.appendChild(messageSpan);
+    toast.appendChild(actionBtn);
+    toast.className = `toast ${type} show`;
+
+    const timeout = 10000; // Longer timeout for action toasts
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, timeout);
+}
