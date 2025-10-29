@@ -139,6 +139,9 @@ async function processHistoricalCatalog() {
                 if (data.warning_sku) {
                     showToast(`${file.name}: ${data.warning_sku}`, 'warning');
                 }
+                if (data.warning_category) {
+                    showToast(`${file.name}: ${data.warning_category}`, 'warning');
+                }
             } else {
                 // Show error from backend
                 const errorMsg = data.suggestion
@@ -297,6 +300,9 @@ async function processNewProducts() {
                 }
                 if (data.warning_sku) {
                     showToast(`${file.name}: ${data.warning_sku}`, 'warning');
+                }
+                if (data.warning_category) {
+                    showToast(`${file.name}: ${data.warning_category}`, 'warning');
                 }
             } else {
                 // Show error from backend
@@ -458,7 +464,8 @@ function displayResults() {
         return `
             <div class="result-item">
                 <div class="result-header">
-                    <img src="/api/products/${product.id}/image" class="result-image" 
+                    <img data-src="/api/products/${product.id}/image" class="result-image lazy-load" 
+                         src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><rect fill='%23e2e8f0' width='120' height='120'/></svg>"
                          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22120%22 height=%22120%22/></svg>'"
                          alt="${product.filename}">
                     <div class="result-info">
@@ -473,7 +480,8 @@ function displayResults() {
                     <div class="matches-grid">
                         ${matches.map(match => `
                             <div class="match-card" onclick="showDetailedComparison(${product.id}, ${match.product_id})">
-                                <img src="/api/products/${match.product_id}/image" class="match-image"
+                                <img data-src="/api/products/${match.product_id}/image" class="match-image lazy-load"
+                                     src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='120'><rect fill='%23e2e8f0' width='180' height='120'/></svg>"
                                      onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22180%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22180%22 height=%22120%22/></svg>'"
                                      alt="Match">
                                 <div class="match-score ${getScoreClass(match.similarity_score)}">
@@ -490,6 +498,9 @@ function displayResults() {
             </div>
         `;
     }).join('');
+    
+    // Initialize lazy loading for images
+    initLazyLoading();
 }
 
 function getScoreClass(score) {
@@ -521,7 +532,9 @@ async function showDetailedComparison(newProductId, matchedProductId) {
             <div class="comparison-view">
                 <div class="comparison-item">
                     <h3>New Product</h3>
-                    <img src="/api/products/${newProductId}/image" alt="New Product">
+                    <img data-src="/api/products/${newProductId}/image" class="lazy-load"
+                         src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect fill='%23e2e8f0' width='300' height='300'/></svg>"
+                         alt="New Product">
                     <div class="comparison-details">
                         <p><strong>Filename:</strong> ${escapeHtml(newData.product.product_name || 'Unknown')}</p>
                         <p><strong>Category:</strong> ${escapeHtml(newData.product.category || 'Uncategorized')}</p>
@@ -529,7 +542,9 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                 </div>
                 <div class="comparison-item">
                     <h3>Matched Product</h3>
-                    <img src="/api/products/${matchedProductId}/image" alt="Matched Product">
+                    <img data-src="/api/products/${matchedProductId}/image" class="lazy-load"
+                         src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect fill='%23e2e8f0' width='300' height='300'/></svg>"
+                         alt="Matched Product">
                     <div class="comparison-details">
                         <p><strong>Filename:</strong> ${escapeHtml(matchData.product.product_name || 'Unknown')}</p>
                         <p><strong>Category:</strong> ${escapeHtml(matchData.product.category || 'Uncategorized')}</p>
@@ -580,6 +595,9 @@ async function showDetailedComparison(newProductId, matchedProductId) {
         `;
 
         modal.classList.add('show');
+        
+        // Initialize lazy loading for modal images
+        initLazyLoading();
     } catch (error) {
         showToast('Failed to load comparison details', 'error');
     }
@@ -698,3 +716,40 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// Lazy Loading Implementation for Performance Optimization
+function initLazyLoading() {
+    // Use Intersection Observer API for efficient lazy loading
+    const imageObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                const src = img.getAttribute('data-src');
+                
+                if (src) {
+                    // Load the actual image
+                    img.src = src;
+                    img.removeAttribute('data-src');
+                    
+                    // Stop observing this image
+                    observer.unobserve(img);
+                }
+            }
+        });
+    }, {
+        // Load images slightly before they enter viewport
+        rootMargin: '50px 0px',
+        threshold: 0.01
+    });
+
+    // Observe all images with lazy-load class
+    const lazyImages = document.querySelectorAll('img.lazy-load');
+    lazyImages.forEach(img => {
+        imageObserver.observe(img);
+    });
+}
+
+// Call lazy loading on page load for any existing images
+document.addEventListener('DOMContentLoaded', () => {
+    initLazyLoading();
+});

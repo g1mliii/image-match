@@ -73,30 +73,44 @@ def init_db():
             )
         ''')
         
-        # Create indexes for performance
+        # Create indexes for performance optimization (Task 14)
+        # These indexes significantly improve query performance for large catalogs (1000+ products)
         # Note: Indexes on nullable columns still work, NULL values are indexed
+        
+        # Index for category filtering - speeds up category-based matching
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_products_category 
             ON products(category)
         ''')
         
+        # Index for historical/new product filtering
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_products_is_historical 
             ON products(is_historical)
         ''')
         
+        # Composite index for efficient category + historical filtering
+        # This is the most important index for matching performance
+        # Allows fast retrieval of historical products in a specific category
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_products_category_historical 
             ON products(category, is_historical)
         ''')
         
+        # Index for match result retrieval sorted by score
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_matches_new_product 
             ON matches(new_product_id, similarity_score DESC)
         ''')
         
+        # Index for feature lookups - speeds up feature retrieval during matching
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_features_product_id
+            ON features(product_id)
+        ''')
+        
         conn.commit()
-        print("Database initialized successfully")
+        print("Database initialized successfully with performance indexes")
 
 def get_product_by_id(product_id):
     """Get product by ID"""
@@ -389,6 +403,12 @@ def delete_features(product_id: int) -> bool:
 def get_all_features_by_category(category: Optional[str] = None, is_historical: bool = True,
                                 include_uncategorized: bool = False) -> List[Tuple[int, Dict[str, np.ndarray]]]:
     """Get all feature vectors for products in a category
+    
+    PERFORMANCE OPTIMIZED (Task 14):
+    - Uses composite index (category, is_historical) for fast filtering
+    - Filters at database level before loading features into memory
+    - Single JOIN query instead of multiple queries
+    - Critical for performance with large catalogs (1000+ products)
     
     Args:
         category: Category to filter by (None returns all products)

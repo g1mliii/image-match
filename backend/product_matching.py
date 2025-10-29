@@ -104,6 +104,12 @@ def normalize_category(category: Optional[str]) -> Optional[str]:
     """
     Normalize category string for consistent matching.
     
+    Handles:
+    - Case insensitivity (Placemats → placemats)
+    - Whitespace trimming
+    - Empty strings → None
+    - "Unknown" variations → None
+    
     Args:
         category: Category string (can be None)
     
@@ -125,6 +131,113 @@ def normalize_category(category: Optional[str]) -> Optional[str]:
         return None
     
     return category
+
+
+def fuzzy_match_category(input_category: str, available_categories: List[str], threshold: int = 2) -> Optional[str]:
+    """
+    Find the best matching category using fuzzy string matching.
+    
+    Handles common issues:
+    - Misspellings: "placemat" → "placemats", "dinerware" → "dinnerware"
+    - Capitalization: "PlaceMats" → "placemats"
+    - Pluralization: "placemat" → "placemats"
+    - Extra spaces: "place mats" → "placemats"
+    
+    Uses Levenshtein distance (edit distance) to find closest match.
+    
+    Args:
+        input_category: Category to match (already normalized)
+        available_categories: List of valid categories in database
+        threshold: Maximum edit distance to consider a match (default: 2)
+    
+    Returns:
+        Best matching category or None if no good match found
+    
+    Examples:
+        >>> fuzzy_match_category("placemat", ["placemats", "dinnerware"])
+        "placemats"
+        >>> fuzzy_match_category("dinerware", ["placemats", "dinnerware"])
+        "dinnerware"
+        >>> fuzzy_match_category("xyz", ["placemats", "dinnerware"], threshold=2)
+        None
+    """
+    if not input_category or not available_categories:
+        return None
+    
+    # Normalize input
+    input_normalized = input_category.lower().strip()
+    
+    # Remove spaces and hyphens for comparison (handles "place mats" vs "placemats")
+    input_compact = input_normalized.replace(' ', '').replace('-', '')
+    
+    best_match = None
+    best_distance = float('inf')
+    
+    for category in available_categories:
+        category_normalized = category.lower().strip()
+        category_compact = category_normalized.replace(' ', '').replace('-', '')
+        
+        # Exact match (after normalization)
+        if input_compact == category_compact:
+            return category
+        
+        # Calculate Levenshtein distance
+        distance = levenshtein_distance(input_compact, category_compact)
+        
+        if distance < best_distance:
+            best_distance = distance
+            best_match = category
+    
+    # Only return match if within threshold
+    if best_distance <= threshold:
+        logger.info(f"Fuzzy matched '{input_category}' to '{best_match}' (distance: {best_distance})")
+        return best_match
+    
+    return None
+
+
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """
+    Calculate Levenshtein distance (edit distance) between two strings.
+    
+    The Levenshtein distance is the minimum number of single-character edits
+    (insertions, deletions, or substitutions) required to change one string
+    into another.
+    
+    Args:
+        s1: First string
+        s2: Second string
+    
+    Returns:
+        Edit distance (0 = identical, higher = more different)
+    
+    Examples:
+        >>> levenshtein_distance("placemat", "placemats")
+        1  # One insertion
+        >>> levenshtein_distance("dinerware", "dinnerware")
+        1  # One insertion
+        >>> levenshtein_distance("cat", "dog")
+        3  # Three substitutions
+    """
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+    
+    if len(s2) == 0:
+        return len(s1)
+    
+    previous_row = range(len(s2) + 1)
+    
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            # Cost of insertions, deletions, or substitutions
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]
 
 
 def find_matches(
@@ -260,9 +373,34 @@ def find_matches(
         logger.error(f"Unexpected error validating features for product {product_id}: {e}")
         raise MissingFeaturesError(product_id)
     
-    # Step 3: Determine category for filtering
+    # Step 3: Determine category for filtering with fuzzy matching
+    from database import get_all_categories
+    
     product_category = product['category']
     normalized_category = normalize_category(product_category)
+    
+    # Try fuzzy matching if category doesn't exist exactly
+    if normalized_category is not None and not match_against_all:
+        available_categories = get_all_categories()
+        
+        # Check if category exists exactly (case-insensitive)
+        category_exists = any(cat.lower() == normalized_category.lower() for cat in available_categories)
+        
+        if not category_exists and available_categories:
+            # Try fuzzy matching for misspellings
+            fuzzy_match = fuzzy_match_category(normalized_category, available_categories, threshold=2)
+            
+            if fuzzy_match:
+                warnings_list.append(
+                    f"Category '{product_category}' not found. Using similar category '{fuzzy_match}' instead."
+                )
+                logger.info(f"Fuzzy matched category '{normalized_category}' to '{fuzzy_match}'")
+                normalized_category = normalize_category(fuzzy_match)
+            else:
+                warnings_list.append(
+                    f"Category '{product_category}' not found in catalog. Available categories: {', '.join(available_categories[:5])}{'...' if len(available_categories) > 5 else ''}"
+                )
+                logger.warning(f"No fuzzy match found for category '{normalized_category}'")
     
     if normalized_category is None:
         if product_category is not None:
@@ -277,6 +415,10 @@ def find_matches(
             match_against_all = True
     
     # Step 4: Get candidate products from historical catalog
+    # PERFORMANCE OPTIMIZATION (Task 14): Category filtering happens at database level
+    # Uses composite index (category, is_historical) for efficient retrieval
+    # This ensures we only load features for products in the target category,
+    # avoiding unnecessary similarity computations on irrelevant products
     logger.info(f"Fetching historical products for matching (category: {normalized_category}, match_all: {match_against_all})")
     
     if match_against_all:
@@ -287,7 +429,7 @@ def find_matches(
             include_uncategorized=True
         )
     else:
-        # Match only within same category
+        # Match only within same category (OPTIMIZED: filters at DB level)
         candidate_features = get_all_features_by_category(
             category=normalized_category,
             is_historical=True,

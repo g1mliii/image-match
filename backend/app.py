@@ -181,6 +181,44 @@ def upload_product():
                 logger.warning(f"Duplicate SKU detected: {sku}")
         
         # Handle missing category (default to None/NULL)
+        # Apply fuzzy matching for category misspellings
+        category_warning = None
+        if category is not None:
+            from product_matching import normalize_category, fuzzy_match_category
+            from database import get_all_categories
+            
+            normalized_cat = normalize_category(category)
+            
+            if normalized_cat is not None:
+                # Get existing categories
+                available_categories = get_all_categories()
+                
+                if available_categories:
+                    # Check if category exists exactly
+                    category_exists = any(cat.lower() == normalized_cat.lower() for cat in available_categories)
+                    
+                    if not category_exists:
+                        # Try fuzzy matching
+                        fuzzy_match = fuzzy_match_category(normalized_cat, available_categories, threshold=2)
+                        
+                        if fuzzy_match:
+                            original_category = category
+                            category = fuzzy_match
+                            category_warning = f"Category '{original_category}' corrected to '{fuzzy_match}' (similar existing category)"
+                            logger.info(f"Fuzzy matched upload category '{original_category}' to '{fuzzy_match}'")
+                        else:
+                            # New category - that's okay
+                            category = normalized_cat
+                            logger.info(f"New category '{category}' will be added to catalog")
+                    else:
+                        # Normalize to match existing case
+                        for cat in available_categories:
+                            if cat.lower() == normalized_cat.lower():
+                                category = cat
+                                break
+            else:
+                category = None
+        
         if category is None:
             logger.info("Product uploaded without category, will be stored as NULL")
         
@@ -291,6 +329,9 @@ def upload_product():
         
         if sku and check_sku_exists(sku, exclude_product_id=product_id):
             response['warning_sku'] = f'SKU "{sku}" already exists in database'
+        
+        if category_warning:
+            response['warning_category'] = category_warning
         
         return jsonify(response), 200
         
