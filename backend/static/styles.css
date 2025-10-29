@@ -79,7 +79,7 @@ body {
 .upload-area {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 25px;
 }
 
 .drop-zone {
@@ -109,10 +109,11 @@ body {
 }
 
 .file-info {
-    padding: 15px;
+    padding: 20px;
     background: #edf2f7;
     border-radius: 8px;
     display: none;
+    margin-top: 10px;
 }
 
 .file-info.show {
@@ -137,31 +138,59 @@ body {
 }
 
 .csv-upload {
-    padding: 15px;
+    padding: 20px;
     background: #f7fafc;
     border-radius: 8px;
+    margin-top: 15px;
 }
 
 .csv-upload label {
-    display: block;
-    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
     font-weight: 500;
     color: #2c3e50;
 }
 
 .csv-upload input[type="file"] {
     width: 100%;
-    padding: 10px;
+    padding: 12px;
     border: 1px solid #cbd5e0;
     border-radius: 5px;
     background: white;
+    cursor: pointer;
+}
+
+.csv-upload input[type="file"]:hover {
+    border-color: #667eea;
 }
 
 .csv-upload small {
     display: block;
     margin-top: 8px;
     color: #718096;
-    font-size: 13px;
+    font-size: 12px;
+}
+
+.info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: #667eea;
+    color: white;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: help;
+    flex-shrink: 0;
+}
+
+.info-icon:hover {
+    background: #5568d3;
+    transform: scale(1.1);
 }
 
 .btn {

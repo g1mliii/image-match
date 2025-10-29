@@ -18,6 +18,8 @@ TEST_FILES = [
     'test_image_processing.py',
     'test_feature_cache.py',
     'test_similarity_simple.py',
+    'test_matching.py',
+    'test_realworld_data.py',
 ]
 
 def run_test(test_file):
@@ -61,8 +63,9 @@ def main():
     failed = len(results) - passed
     
     for test_file, success in results.items():
-        status = "✓ PASSED" if success else "✗ FAILED"
-        print(f"{status:12} {test_file}")
+        status = "PASSED" if success else "FAILED"
+        symbol = "[+]" if success else "[X]"
+        print(f"{symbol} {status:8} {test_file}")
     
     print("=" * 70)
     print(f"Total: {len(results)} tests, {passed} passed, {failed} failed")

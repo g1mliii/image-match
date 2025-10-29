@@ -119,9 +119,10 @@
 
 - [ ] 14. Performance optimizations (OPTIONAL - for large catalogs)
   - Add lazy loading for product images
-  - Optimize database queries with indexes (already done in task 2)
-  - Add image compression for stored products
-  - _Requirements: 8.1, 8.2_
+  - Optimize database queries with indexes (might already be done in task 2)
+  - Add image compression if needed i dont think we store the images other than for processing so may not need it. 
+  - optimize to first match based on category and unknown catgeory for images, instead of matching all right off the bat im pretty sure we are already doing this but just check the matching should be efficient.
+  - _Requirements: 8.1, 8.2_![alt text](image.png)
 
 - [ ] 15. Implement error handling and user feedback
   - Add toast notifications for success and error messages
@@ -141,7 +142,8 @@
   - Single .exe file - no complex installer needed!
   - _Requirements: 9.2_
 
-- [ ]* 17. Create end-to-end tests for critical workflows
+- [ ] 17. Create end-to-end tests for critical workflows
+
   - Write automated test for uploading new product and viewing matches
   - Write automated test for batch upload workflow
   - Write automated test for adding historical product to catalog

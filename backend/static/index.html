@@ -34,9 +34,12 @@
                     <div class="file-info" id="historicalInfo"></div>
                     
                     <div class="csv-upload">
-                        <label>Optional: Upload CSV with metadata (filename, category, ...)</label>
+                        <label>
+                            Optional: Upload CSV with metadata
+                            <span class="info-icon" title="CSV Format:&#10;&#10;First line (optional header):&#10;filename,category,sku,name&#10;&#10;Data rows:&#10;product1.jpg,placemats,SKU-001,Blue Placemat&#10;product2.jpg,dinnerware,SKU-002,White Plate&#10;&#10;• First column must be the image filename&#10;• Other columns are optional&#10;• Use commas to separate values&#10;• Wrap values with commas in quotes">ⓘ</span>
+                        </label>
                         <input type="file" id="historicalCsvInput" accept=".csv">
-                        <small>CSV format: filename,category,sku,name,... (e.g., "product1.jpg,placemats,SKU-001,Blue Placemat")</small>
+                        <small>Format: filename,category,sku,name,...</small>
                     </div>
                     
                     <button class="btn btn-primary" id="processHistoricalBtn" disabled>Process Historical Catalog</button>
@@ -65,9 +68,12 @@
                     <div class="file-info" id="newInfo"></div>
                     
                     <div class="csv-upload">
-                        <label>Optional: Upload CSV with metadata (filename, category, ...)</label>
+                        <label>
+                            Optional: Upload CSV with metadata
+                            <span class="info-icon" title="CSV Format:&#10;&#10;First line (optional header):&#10;filename,category,sku,name&#10;&#10;Data rows:&#10;product1.jpg,placemats,SKU-001,Blue Placemat&#10;product2.jpg,dinnerware,SKU-002,White Plate&#10;&#10;• First column must be the image filename&#10;• Other columns are optional&#10;• Use commas to separate values&#10;• Wrap values with commas in quotes">ⓘ</span>
+                        </label>
                         <input type="file" id="newCsvInput" accept=".csv">
-                        <small>CSV format: filename,category,sku,name,... (e.g., "product1.jpg,placemats,SKU-001,Blue Placemat")</small>
+                        <small>Format: filename,category,sku,name,...</small>
                     </div>
                     
                     <button class="btn btn-primary" id="processNewBtn" disabled>Process New Products</button>
