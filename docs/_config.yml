@@ -1,0 +1,20 @@
+# GitHub Pages Configuration for Product Matcher
+
+# Site settings
+title: Product Matcher
+description: AI-Powered Product Similarity Analysis
+url: https://yourusername.github.io
+baseurl: /product-matcher
+
+# Build settings
+markdown: kramdown
+theme: null
+
+# Exclude files from processing
+exclude:
+  - README.md
+  - .gitkeep
+
+# Include files
+include:
+  - _config.yml

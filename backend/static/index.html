@@ -22,6 +22,11 @@
                 </div>
                 
                 <div class="upload-area">
+                    <div class="help-box">
+                        <strong>📁 Organize by Category:</strong> Put images in subfolders named by category (e.g., placemats/, dinnerware/, glassware/)
+                        <br><small>Example: historical_products/placemats/image1.jpg → Category: "placemats"</small>
+                    </div>
+                    
                     <div class="drop-zone" id="historicalDropZone">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
@@ -35,11 +40,11 @@
                     
                     <div class="csv-upload">
                         <label>
-                            Optional: Upload CSV with metadata
-                            <span class="info-icon" title="CSV Format:&#10;&#10;First line (optional header):&#10;filename,category,sku,name&#10;&#10;Data rows:&#10;product1.jpg,placemats,SKU-001,Blue Placemat&#10;product2.jpg,dinnerware,SKU-002,White Plate&#10;&#10;• First column must be the image filename&#10;• Other columns are optional&#10;• Use commas to separate values&#10;• Wrap values with commas in quotes">ⓘ</span>
+                            Optional: Upload CSV with metadata (SKU, name)
+                            <span class="info-icon" title="CSV Format:&#10;&#10;First line (optional header):&#10;filename,sku,name&#10;&#10;Data rows:&#10;product1.jpg,SKU-001,Blue Placemat&#10;product2.jpg,SKU-002,White Plate&#10;&#10;• First column must be the image filename&#10;• SKU and name are optional&#10;• Category is auto-detected from folder structure">ⓘ</span>
                         </label>
                         <input type="file" id="historicalCsvInput" accept=".csv">
-                        <small>Format: filename,category,sku,name,...</small>
+                        <small>Optional: Add SKU and product names (category auto-detected from folders)</small>
                     </div>
                     
                     <button class="btn btn-primary" id="processHistoricalBtn" disabled>Process Historical Catalog</button>
@@ -56,6 +61,11 @@
                 </div>
                 
                 <div class="upload-area">
+                    <div class="help-box">
+                        <strong>📁 Organize by Category:</strong> Put images in subfolders named by category (e.g., placemats/, dinnerware/, glassware/)
+                        <br><small>Matching will prioritize products in the same category</small>
+                    </div>
+                    
                     <div class="drop-zone" id="newDropZone">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
@@ -69,11 +79,11 @@
                     
                     <div class="csv-upload">
                         <label>
-                            Optional: Upload CSV with metadata
-                            <span class="info-icon" title="CSV Format:&#10;&#10;First line (optional header):&#10;filename,category,sku,name&#10;&#10;Data rows:&#10;product1.jpg,placemats,SKU-001,Blue Placemat&#10;product2.jpg,dinnerware,SKU-002,White Plate&#10;&#10;• First column must be the image filename&#10;• Other columns are optional&#10;• Use commas to separate values&#10;• Wrap values with commas in quotes">ⓘ</span>
+                            Optional: Upload CSV with metadata (SKU, name)
+                            <span class="info-icon" title="CSV Format:&#10;&#10;First line (optional header):&#10;filename,sku,name&#10;&#10;Data rows:&#10;product1.jpg,SKU-001,Blue Placemat&#10;product2.jpg,SKU-002,White Plate&#10;&#10;• First column must be the image filename&#10;• SKU and name are optional&#10;• Category is auto-detected from folder structure">ⓘ</span>
                         </label>
                         <input type="file" id="newCsvInput" accept=".csv">
-                        <small>Format: filename,category,sku,name,...</small>
+                        <small>Optional: Add SKU and product names (category auto-detected from folders)</small>
                     </div>
                     
                     <button class="btn btn-primary" id="processNewBtn" disabled>Process New Products</button>

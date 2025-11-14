@@ -1,0 +1,10 @@
+# robots.txt for Product Matcher Marketing Site
+
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://yourusername.github.io/product-matcher/sitemap.xml
+
+# Crawl-delay (optional, adjust as needed)
+Crawl-delay: 1

@@ -133,18 +133,127 @@
   - Add visual feedback for drag-and-drop interactions
   - _Requirements: 9.4, 10.3, 10.4_
 
-- [ ] 16. Package application as Windows executable (SIMPLIFIED)
-  - Use PyInstaller to create standalone executable (much simpler than Electron Builder!)
-  - Command: `pyinstaller --onefile --windowed --add-data "backend/static;backend/static" main.py`
-  - Bundle Python backend, Flask, OpenCV, and all dependencies
-  - Configure application to store database in AppData folder
-  - Test executable on clean Windows system without Python installed
-  - Single .exe file - no complex installer needed!
+- [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
+  - Create test fixtures: 5 historical images, 3 new images, valid/invalid CSVs
+  - Test complete workflow: upload historical → upload new → match → verify results
+  - Test CSV metadata handling: valid fields, missing fields, duplicates, invalid format
+  - Test category filtering: products match within same category, NULL category handling
+  - Test threshold/limit: verify filtering and result limiting work correctly
+  - Test error handling: corrupted images, missing features, invalid inputs, empty catalog
+  - Test API validation: invalid product_id, threshold, limit return proper 400 errors
+  - Test response formats: verify all endpoints return expected fields
+  - Run with `pytest backend/tests/test_e2e.py -v` - all tests must pass before packaging
+  - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
+
+- [ ] 17. Package Windows executable with PyInstaller
+  - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
+  - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --name "Product Matcher"`
+  - Create build.bat: `pyinstaller --clean product-matcher.spec`
+  - Test packaged exe on clean Windows system: verify launches, creates AppData folders, full workflow works
+  - Package: zip exe + README.txt + sample.csv template
   - _Requirements: 9.2_
 
-- [ ] 17. Create end-to-end tests for critical workflows
-  - Write automated test for uploading new product and viewing matches
-  - Write automated test for batch upload workflow
-  - Write automated test for adding historical product to catalog
-  - Write automated test for threshold filtering and result limiting
-  - _Requirements: 1.1, 4.1, 6.1, 8.4_
+- [ ] 18. Package macOS application (optional - if needed)
+  - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
+  - Create product-matcher-mac.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher"`
+  - Create build-mac.sh: `pyinstaller --clean product-matcher-mac.spec`
+  - Test packaged .app on clean macOS system: verify launches, creates folders, full workflow works
+  - Optional: code sign with `codesign` to avoid Gatekeeper warnings (requires Apple Developer account)
+  - Package: zip .app + README.txt + sample.csv template
+  - Note: Must build on macOS machine (PyInstaller can't cross-compile)
+  - _Requirements: 9.2_
+
+## Future Enhancements (Public Release)
+
+- [ ] 19. Polish UI for public release
+  - Professional color scheme and branding style in the deign language of google android with rounded buttons things of that nature.
+  - gpu acceleratoin to speed up tasks, and ui if need be.
+  - Better onboarding flow with tutorial/step explanation area/or tooltops and other ways to guide user.
+  - Improved results visualization (charts, graphs)
+
+- [ ] 20. Add advanced features
+  - Adjustable similarity weights (color, shape, texture sliders)
+  - Batch export with images (not just CSV)
+  - Duplicate detection report
+  - Side-by-side comparison grid view
+  - Search/filter results
+  - Save/load matching sessions
+  - Undo/redo functionality
+
+- [x] 21. Create marketing website (GitHub Pages)
+
+
+
+
+
+  - **Design System** (Material Design inspired):
+    - Sleek, simple, clean aesthetic
+    - Rounded corners (8px-16px border-radius)
+    - Smooth hover effects with GPU acceleration (`transform: translateY()`, `will-change: transform`)
+    - Subtle shadows and elevation
+    - Fast loading with optimized images
+    - Color scheme: Primary (ocean blue), accent, soft white
+  - **Landing Page** (index.html):
+    - Hero section: Clear value proposition + CTA ("Download Free" / "Try Now")
+    - Features section: 3-4 key features with icons
+    - How it works: 3-step visual workflow
+    - Screenshots/demo video
+    - Social proof: testimonials (when available)
+    - CTA: Download buttons for Windows/macOS
+  - **Pricing Page** (pricing.html):
+    - Free vs Pro comparison table
+    - Free: 50 products, basic features
+    - Pro: $49 one-time, unlimited products, all features
+    - LemonSqueezy checkout link integration
+    - FAQ about licensing
+  - **Download Page** (download.html):
+    - Latest version info
+    - Download buttons for Windows (.exe) and macOS (.app)
+    - System requirements
+    - Installation instructions
+    - Changelog/release notes
+  - **Documentation** (docs.html):
+    - Quick start guide
+    - User guide with screenshots
+    - FAQ section
+    - Troubleshooting
+    - Video tutorials (when available)
+  - **Contact/Support** (contact.html):
+    - Email contact form or mailto link
+    - Support email
+    - Links to documentation
+  - **Technical Implementation**:
+    - Pure HTML/CSS/JS (no frameworks for speed)
+    - CSS animations with `transform` and `opacity` (GPU accelerated)
+    - Lazy loading for images
+    - Minified CSS/JS for production
+    - SEO optimized (meta tags, Open Graph, structured data)
+
+- [ ] 22. Implement license key system with LemonSqueezy
+  - **LemonSqueezy Setup** (lemonsqueezy.com):
+    - Create account and store
+    - Create product: "Product Matcher Pro" - $49 one-time payment
+    - Enable "Generate unique license keys" feature
+    - Get checkout link for GitHub Pages pricing page
+  - **License Key Validation in App**:
+    - Add "Enter License Key" dialog in Help menu
+    - Implement offline validation (check format: XXXX-XXXX-XXXX-XXXX)
+    - Store validated key in config file (AppData)
+    - Free tier: 50 products limit, Pro tier: unlimited
+    - Show upgrade prompt when hitting free tier limit
+    - Display license status in app (Free/Pro)
+
+- [ ] 22.5. Set up distribution and analytics
+  - GitHub releases for version management
+  - Auto-update mechanism in app (optional)
+  - Usage analytics - privacy-respecting, opt-in (optional)
+  - Crash reporting (optional)
+  - User feedback system (optional)
+
+- [ ] 23. Marketing and launch
+  - Create demo video showing workflow
+  - Write blog post/case study
+  - Post on Product Hunt, Reddit, HackerNews
+  - Reach out to relevant communities (e-commerce, retail)
+  - SEO optimization for website
+  - Social media presence (Twitter, LinkedIn)

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Product Matcher documentation - User guide, FAQ, and troubleshooting.">
+  
+  <!-- Security Headers -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:;">
+  
+  <title>Documentation - Product Matcher</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/png" href="images/favicon.png">
+</head>
+<body>
+  <!-- Navigation -->
+  <nav class="navbar">
+    <div class="container">
+      <a href="index.html" class="navbar-brand">🔍 Product Matcher</a>
+      <ul class="navbar-nav">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="pricing.html">Pricing</a></li>
+        <li><a href="docs.html">Docs</a></li>
+        <li><a href="download.html">Download</a></li>
+        <li><a href="contact.html">Contact</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <h1>Documentation</h1>
+      <p>Everything you need to know about using Product Matcher</p>
+    </div>
+  </section>
+
+  <!-- Documentation Content -->
+  <section>
+    <div class="container">
+      <div style="display: grid; grid-template-columns: 250px 1fr; gap: 2rem;">
+        <!-- Sidebar Navigation -->
+        <aside class="doc-nav">
+          <h4>Contents</h4>
+          <ul>
+            <li><a href="#quick-start">Quick Start</a></li>
+            <li><a href="#uploading-products">Uploading Products</a></li>
+            <li><a href="#csv-format">CSV Format</a></li>
+            <li><a href="#matching">Running Matches</a></li>
+            <li><a href="#results">Understanding Results</a></li>
+            <li><a href="#license">License Activation</a></li>
+            <li><a href="#faq">FAQ</a></li>
+            <li><a href="#troubleshooting">Troubleshooting</a></li>
+          </ul>
+        </aside>
+
+        <!-- Main Content -->
+        <div class="doc-content">
+          <h2 id="quick-start">Quick Start Guide</h2>
+          <p>Get started with Product Matcher in just a few minutes.</p>
+          
+          <h3>Step 1: Launch the Application</h3>
+          <p>Double-click the Product Matcher executable to launch the app. On first launch, the app will create a database in your system's application data folder.</p>
+          
+          <h3>Step 2: Upload Historical Catalog</h3>
+          <p>Click "Upload Historical Catalog" and select a folder containing your historical product images. You can optionally include a CSV file with product metadata.</p>
+          <ul>
+            <li>Supported formats: JPEG, PNG, WebP</li>
+            <li>Maximum file size: 10 MB per image</li>
+            <li>Recommended image size: 512x512 to 2048x2048 pixels</li>
+          </ul>
+          
+          <h3>Step 3: Upload New Products</h3>
+          <p>Click "Upload New Products" and select a folder containing the products you want to match. Again, you can include a CSV file with metadata.</p>
+          
+          <h3>Step 4: Configure and Match</h3>
+          <p>Set your matching preferences:</p>
+          <ul>
+            <li><strong>Similarity Threshold:</strong> Minimum score (0-100) for matches to appear</li>
+            <li><strong>Result Limit:</strong> Maximum number of matches per product (1-50)</li>
+          </ul>
+          <p>Click "Start Matching" to begin the process.</p>
+          
+          <h3>Step 5: View Results</h3>
+          <p>Browse your results in the grid view. Click any match to see a detailed side-by-side comparison with score breakdowns.</p>
+
+          <h2 id="uploading-products">Uploading Products</h2>
+          <p>Product Matcher supports two ways to upload products: folder upload and CSV metadata.</p>
+          
+          <h3>Folder Upload</h3>
+          <p>Simply drag and drop a folder containing product images onto the upload area. The app will:</p>
+          <ul>
+            <li>Scan all images in the folder</li>
+            <li>Extract visual features automatically</li>
+            <li>Use the filename as the product identifier</li>
+          </ul>
+          
+          <h3>With CSV Metadata</h3>
+          <p>Include a CSV file in your folder to provide additional product information. The CSV file should be named <code>products.csv</code> or <code>metadata.csv</code>.</p>
+
+          <h2 id="csv-format">CSV Format</h2>
+          <p>Your CSV file should include the following columns (all optional except filename):</p>
+          
+          <pre><code>filename,category,sku,name
+product1.jpg,placemats,SKU-001,Blue Placemat
+product2.jpg,dinnerware,SKU-002,White Plate
+product3.jpg,textiles,,Cotton Napkin</code></pre>
+          
+          <h3>Column Descriptions</h3>
+          <ul>
+            <li><strong>filename</strong> (required): Name of the image file</li>
+            <li><strong>category</strong> (optional): Product category for filtering</li>
+            <li><strong>sku</strong> (optional): Product SKU or identifier</li>
+            <li><strong>name</strong> (optional): Human-readable product name</li>
+          </ul>
+          
+          <p><strong>Notes:</strong></p>
+          <ul>
+            <li>The CSV must include a header row</li>
+            <li>Empty fields are allowed (leave blank or use empty quotes)</li>
+            <li>Values with commas should be quoted: <code>"Red, Blue Placemat"</code></li>
+            <li>If no category is provided, products will match against all categories</li>
+          </ul>
+
+          <h2 id="matching">Running Matches</h2>
+          <p>The matching process compares new products against your historical catalog using visual similarity analysis.</p>
+          
+          <h3>How Matching Works</h3>
+          <ol>
+            <li><strong>Feature Extraction:</strong> The app analyzes each image for color, shape, and texture features</li>
+            <li><strong>Category Filtering:</strong> Products are only compared within the same category (if specified)</li>
+            <li><strong>Similarity Scoring:</strong> Each comparison generates a score from 0-100</li>
+            <li><strong>Ranking:</strong> Matches are sorted by similarity score (highest first)</li>
+            <li><strong>Filtering:</strong> Only matches above your threshold are shown</li>
+          </ol>
+          
+          <h3>Matching Parameters</h3>
+          <ul>
+            <li><strong>Similarity Threshold (0-100):</strong> Set higher (e.g., 80) to see only very similar products, or lower (e.g., 50) for more matches</li>
+            <li><strong>Result Limit (1-50):</strong> Control how many matches to show per product</li>
+          </ul>
+          
+          <h3>Performance Tips</h3>
+          <ul>
+            <li>Matching 100 products against 1,000 historical items takes ~30 seconds</li>
+            <li>Use categories to speed up matching (fewer comparisons needed)</li>
+            <li>Features are cached - re-matching is faster than initial upload</li>
+          </ul>
+
+          <h2 id="results">Understanding Results</h2>
+          <p>Results are displayed in a grid showing each new product with its top matches.</p>
+          
+          <h3>Similarity Scores</h3>
+          <p>Scores are color-coded for easy interpretation:</p>
+          <ul>
+            <li><strong style="color: #00c9a7;">90-100 (Green):</strong> Potential duplicate - very high similarity</li>
+            <li><strong style="color: #0077be;">70-89 (Blue):</strong> Strong match - visually similar</li>
+            <li><strong style="color: #f39c12;">50-69 (Orange):</strong> Moderate match - some similarities</li>
+            <li><strong style="color: #e74c3c;">Below 50 (Red):</strong> Weak match - limited similarity</li>
+          </ul>
+          
+          <h3>Score Breakdown</h3>
+          <p>Click any match to see detailed scoring:</p>
+          <ul>
+            <li><strong>Color Score:</strong> How similar the color distributions are (50% weight)</li>
+            <li><strong>Shape Score:</strong> How similar the shapes and contours are (30% weight)</li>
+            <li><strong>Texture Score:</strong> How similar the patterns and textures are (20% weight)</li>
+          </ul>
+          
+          <h3>Exporting Results</h3>
+          <p>Click "Export to CSV" to save all results. The export includes:</p>
+          <ul>
+            <li>New product information</li>
+            <li>Matched product information</li>
+            <li>Overall similarity score</li>
+            <li>Individual feature scores (color, shape, texture)</li>
+          </ul>
+
+          <h2 id="license">License Activation</h2>
+          <p>The free version allows up to 50 products. Upgrade to Pro for unlimited products.</p>
+          
+          <h3>Activating Pro License</h3>
+          <ol>
+            <li>Purchase a Pro license from the <a href="pricing.html">pricing page</a></li>
+            <li>You'll receive a license key via email</li>
+            <li>In the app, go to <strong>Help → Enter License Key</strong></li>
+            <li>Paste your license key and click "Activate"</li>
+            <li>The app will unlock all Pro features immediately</li>
+          </ol>
+          
+          <h3>License Key Format</h3>
+          <p>License keys look like: <code>XXXX-XXXX-XXXX-XXXX</code></p>
+          
+          <h3>Multiple Computers</h3>
+          <p>Your Pro license can be used on up to 3 computers. Simply enter the same license key on each machine.</p>
+
+          <h2 id="faq">Frequently Asked Questions</h2>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">What image formats are supported?</h3>
+            <p class="faq-answer">JPEG (.jpg, .jpeg), PNG (.png), and WebP (.webp) formats are supported. Maximum file size is 10 MB per image.</p>
+          </div>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">How accurate is the matching?</h3>
+            <p class="faq-answer">Matching accuracy depends on image quality and product similarity. The system analyzes color, shape, and texture features. Products with similar visual characteristics will score higher. For best results, use clear, well-lit product photos with minimal background.</p>
+          </div>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">Can I match products without categories?</h3>
+            <p class="faq-answer">Yes! If you don't specify categories, products will be matched against the entire historical catalog. However, using categories improves accuracy and speed by limiting comparisons to relevant products.</p>
+          </div>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">Where is my data stored?</h3>
+            <p class="faq-answer">All data is stored locally on your computer. Windows: <code>%APPDATA%\ProductMatcher\</code>, macOS: <code>~/Library/Application Support/ProductMatcher/</code>. No data is sent to external servers.</p>
+          </div>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">Can I delete products from my catalog?</h3>
+            <p class="faq-answer">Currently, the app doesn't have a built-in delete feature. To reset your catalog, close the app and delete the database file from the data folder. A delete feature will be added in a future update.</p>
+          </div>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">How do I update the app?</h3>
+            <p class="faq-answer">Check the <a href="download.html">download page</a> for the latest version. Download and run the new version - your existing data will be preserved. Auto-update functionality is coming in a future release.</p>
+          </div>
+          
+          <div class="faq-item">
+            <h3 class="faq-question">What's the difference between Free and Pro?</h3>
+            <p class="faq-answer">The free version limits you to 50 products total (historical + new). Pro removes this limit, allowing unlimited products. All other features are identical. See the <a href="pricing.html">pricing page</a> for details.</p>
+          </div>
+
+          <h2 id="troubleshooting">Troubleshooting</h2>
+          
+          <h3>App Won't Launch</h3>
+          <p><strong>Windows:</strong> If Windows SmartScreen blocks the app, click "More info" then "Run anyway". The app is safe but not yet code-signed.</p>
+          <p><strong>macOS:</strong> If macOS blocks the app, go to System Preferences → Security & Privacy → click "Open Anyway".</p>
+          
+          <h3>Images Not Processing</h3>
+          <ul>
+            <li>Check that images are in supported formats (JPEG, PNG, WebP)</li>
+            <li>Verify images are under 10 MB</li>
+            <li>Ensure images aren't corrupted (try opening them in an image viewer)</li>
+            <li>Check the app logs for specific error messages</li>
+          </ul>
+          
+          <h3>Matching Takes Too Long</h3>
+          <ul>
+            <li>Use categories to reduce the number of comparisons</li>
+            <li>Process products in smaller batches</li>
+            <li>Ensure your computer meets the minimum system requirements</li>
+            <li>Close other resource-intensive applications</li>
+          </ul>
+          
+          <h3>No Matches Found</h3>
+          <ul>
+            <li>Lower your similarity threshold (try 50 instead of 80)</li>
+            <li>Check that categories match between new and historical products</li>
+            <li>Verify that historical products were uploaded successfully</li>
+            <li>Ensure images are clear and show the actual products</li>
+          </ul>
+          
+          <h3>CSV Not Recognized</h3>
+          <ul>
+            <li>Ensure the CSV file is named <code>products.csv</code> or <code>metadata.csv</code></li>
+            <li>Verify the CSV has a header row with column names</li>
+            <li>Check that the <code>filename</code> column exists and matches your image files</li>
+            <li>Save the CSV with UTF-8 encoding</li>
+          </ul>
+          
+          <h3>License Key Not Working</h3>
+          <ul>
+            <li>Check for typos - license keys are case-sensitive</li>
+            <li>Ensure you're copying the entire key (format: XXXX-XXXX-XXXX-XXXX)</li>
+            <li>Verify your internet connection (required for activation)</li>
+            <li>Contact support if the key still doesn't work</li>
+          </ul>
+          
+          <h3>Still Having Issues?</h3>
+          <p>If you're still experiencing problems:</p>
+          <ul>
+            <li>Check the <a href="https://github.com/yourusername/product-matcher/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a> page for known issues</li>
+            <li><a href="contact.html">Contact support</a> with details about your problem</li>
+            <li>Include your operating system, app version, and any error messages</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-section">
+          <h4>Product</h4>
+          <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="pricing.html">Pricing</a></li>
+            <li><a href="download.html">Download</a></li>
+            <li><a href="docs.html">Documentation</a></li>
+          </ul>
+        </div>
+        
+        <div class="footer-section">
+          <h4>Support</h4>
+          <ul>
+            <li><a href="docs.html#faq">FAQ</a></li>
+            <li><a href="docs.html#troubleshooting">Troubleshooting</a></li>
+            <li><a href="contact.html">Contact Us</a></li>
+          </ul>
+        </div>
+        
+        <div class="footer-section">
+          <h4>Legal</h4>
+          <ul>
+            <li><a href="privacy.html">Privacy Policy</a></li>
+            <li><a href="terms.html">Terms of Service</a></li>
+          </ul>
+        </div>
+        
+        <div class="footer-section">
+          <h4>Connect</h4>
+          <ul>
+            <li><a href="https://github.com/yourusername/product-matcher" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            <li><a href="https://twitter.com/productmatcher" target="_blank" rel="noopener noreferrer">Twitter</a></li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="footer-bottom">
+        <p>&copy; 2024 Product Matcher. All rights reserved.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="scripts.js"></script>
+</body>
+</html>

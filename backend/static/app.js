@@ -83,20 +83,41 @@ function handleHistoricalFiles(files) {
         return;
     }
 
-    historicalFiles = imageFiles;
+    // Extract categories from folder structure
+    const filesWithCategories = imageFiles.map(file => {
+        const category = extractCategoryFromPath(file.webkitRelativePath || file.name);
+        return { file, category };
+    });
+
+    historicalFiles = filesWithCategories;
+
+    // Count categories
+    const categoryCount = {};
+    filesWithCategories.forEach(({ category }) => {
+        if (category) {
+            categoryCount[category] = (categoryCount[category] || 0) + 1;
+        }
+    });
+
+    const categorySummary = Object.keys(categoryCount).length > 0
+        ? `<div style="margin-top: 10px;"><strong>Categories found:</strong> ${Object.entries(categoryCount).map(([cat, count]) => `${cat} (${count})`).join(', ')}</div>`
+        : '<div style="margin-top: 10px; color: #ed8936;">No subfolders detected - all images will be uncategorized</div>';
 
     const info = document.getElementById('historicalInfo');
     info.innerHTML = `
         <h4>✓ ${imageFiles.length} images loaded</h4>
+        ${categorySummary}
         <div class="file-list">
-            ${imageFiles.slice(0, 10).map(f => `<div>${escapeHtml(f.name)}</div>`).join('')}
+            ${filesWithCategories.slice(0, 10).map(({ file, category }) => 
+                `<div>${escapeHtml(file.name)}${category ? ` <span style="color: #667eea;">[${category}]</span>` : ''}</div>`
+            ).join('')}
             ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
         </div>
     `;
     info.classList.add('show');
 
     document.getElementById('processHistoricalBtn').disabled = false;
-    showToast(`${imageFiles.length} historical images loaded`, 'success');
+    showToast(`${imageFiles.length} historical images loaded from ${Object.keys(categoryCount).length || 0} categories`, 'success');
 }
 
 async function processHistoricalCatalog() {
@@ -127,13 +148,15 @@ async function processHistoricalCatalog() {
     const progressText = document.getElementById('historicalProgressText');
 
     for (let i = 0; i < historicalFiles.length; i++) {
-        const file = historicalFiles[i];
+        const { file, category } = historicalFiles[i];
         const metadata = categoryMap[file.name] || {};
 
         try {
             const formData = new FormData();
             formData.append('image', file);
-            if (metadata.category) formData.append('category', metadata.category);
+            // Use folder-based category, or CSV override if provided
+            const finalCategory = metadata.category || category;
+            if (finalCategory) formData.append('category', finalCategory);
             if (metadata.sku) formData.append('sku', metadata.sku);
             if (metadata.name) formData.append('product_name', metadata.name);
             else formData.append('product_name', file.name); // Fallback to filename
@@ -150,7 +173,7 @@ async function processHistoricalCatalog() {
                 historicalProducts.push({
                     id: data.product_id,
                     filename: file.name,
-                    category: metadata.category,
+                    category: finalCategory,
                     sku: metadata.sku,
                     name: metadata.name,
                     hasFeatures: data.feature_extraction_status === 'success'
@@ -260,20 +283,41 @@ function handleNewFiles(files) {
         return;
     }
 
-    newFiles = imageFiles;
+    // Extract categories from folder structure
+    const filesWithCategories = imageFiles.map(file => {
+        const category = extractCategoryFromPath(file.webkitRelativePath || file.name);
+        return { file, category };
+    });
+
+    newFiles = filesWithCategories;
+
+    // Count categories
+    const categoryCount = {};
+    filesWithCategories.forEach(({ category }) => {
+        if (category) {
+            categoryCount[category] = (categoryCount[category] || 0) + 1;
+        }
+    });
+
+    const categorySummary = Object.keys(categoryCount).length > 0
+        ? `<div style="margin-top: 10px;"><strong>Categories found:</strong> ${Object.entries(categoryCount).map(([cat, count]) => `${cat} (${count})`).join(', ')}</div>`
+        : '<div style="margin-top: 10px; color: #ed8936;">No subfolders detected - all images will be uncategorized</div>';
 
     const info = document.getElementById('newInfo');
     info.innerHTML = `
         <h4>✓ ${imageFiles.length} images loaded</h4>
+        ${categorySummary}
         <div class="file-list">
-            ${imageFiles.slice(0, 10).map(f => `<div>${escapeHtml(f.name)}</div>`).join('')}
+            ${filesWithCategories.slice(0, 10).map(({ file, category }) => 
+                `<div>${escapeHtml(file.name)}${category ? ` <span style="color: #667eea;">[${category}]</span>` : ''}</div>`
+            ).join('')}
             ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
         </div>
     `;
     info.classList.add('show');
 
     document.getElementById('processNewBtn').disabled = false;
-    showToast(`${imageFiles.length} new product images loaded`, 'success');
+    showToast(`${imageFiles.length} new product images loaded from ${Object.keys(categoryCount).length || 0} categories`, 'success');
 }
 
 async function processNewProducts() {
@@ -304,13 +348,15 @@ async function processNewProducts() {
     const progressText = document.getElementById('newProgressText');
 
     for (let i = 0; i < newFiles.length; i++) {
-        const file = newFiles[i];
+        const { file, category } = newFiles[i];
         const metadata = categoryMap[file.name] || {};
 
         try {
             const formData = new FormData();
             formData.append('image', file);
-            if (metadata.category) formData.append('category', metadata.category);
+            // Use folder-based category, or CSV override if provided
+            const finalCategory = metadata.category || category;
+            if (finalCategory) formData.append('category', finalCategory);
             if (metadata.sku) formData.append('sku', metadata.sku);
             if (metadata.name) formData.append('product_name', metadata.name);
             else formData.append('product_name', file.name); // Fallback to filename
@@ -327,7 +373,7 @@ async function processNewProducts() {
                 newProducts.push({
                     id: data.product_id,
                     filename: file.name,
-                    category: metadata.category,
+                    category: finalCategory,
                     sku: metadata.sku,
                     name: metadata.name,
                     hasFeatures: data.feature_extraction_status === 'success'
@@ -765,6 +811,36 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function extractCategoryFromPath(path) {
+    // Extract category from folder structure
+    // Examples:
+    // "historical_products/placemats/image1.jpg" -> "placemats"
+    // "placemats/image1.jpg" -> "placemats"
+    // "image1.jpg" -> null (no subfolder)
+    
+    if (!path) return null;
+    
+    const parts = path.split('/');
+    
+    // If only filename (no folders), return null
+    if (parts.length === 1) return null;
+    
+    // Get the immediate parent folder (last folder before filename)
+    const category = parts[parts.length - 2];
+    
+    // Ignore common root folder names
+    const ignoredFolders = ['historical_products', 'new_products', 'products', 'images', 'uploads'];
+    if (ignoredFolders.includes(category.toLowerCase())) {
+        // If there's another folder level, use that
+        if (parts.length > 2) {
+            return parts[parts.length - 3];
+        }
+        return null;
+    }
+    
+    return category;
 }
 
 // Lazy Loading Implementation for Performance Optimization

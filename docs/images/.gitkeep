@@ -1,0 +1,37 @@
+# Images Folder
+
+Place the following images in this folder:
+
+1. **favicon.png** (32x32 or 64x64 px)
+   - Browser tab icon
+   - Simple logo or icon representing Product Matcher
+
+2. **og-image.png** (1200x630 px)
+   - Social media preview image (Open Graph)
+   - Should include app name, tagline, and visual
+   - Used when sharing links on Twitter, Facebook, LinkedIn
+
+3. **screenshot-upload.png** (recommended: 1200x800 px)
+   - Screenshot of the upload interface
+   - Show drag-and-drop functionality
+   - Include folder upload and CSV metadata features
+
+4. **screenshot-results.png** (recommended: 1200x800 px)
+   - Screenshot of the results view
+   - Show matched products with similarity scores
+   - Include color-coded scores and grid layout
+
+## Tips for Screenshots
+
+- Use high-quality, clear images
+- Show the app with sample data (use placeholder products)
+- Ensure UI elements are readable
+- Use consistent styling
+- Optimize images for web (compress without losing quality)
+- Consider using tools like TinyPNG or ImageOptim
+
+## Temporary Placeholders
+
+Until you have actual screenshots, you can use placeholder images from:
+- https://placehold.co/1200x800/0077be/ffffff?text=Upload+Interface
+- https://placehold.co/1200x800/0077be/ffffff?text=Results+View
