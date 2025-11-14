@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Contact Product Matcher support team. Get help with technical issues, licensing, or general inquiries.">
   
-  <!-- Security Headers -->
-  <meta http-equiv="X-Content-Type-Options" content="nosniff">
-  <meta http-equiv="X-Frame-Options" content="DENY">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:;">
+  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self' mailto:;">
   
   <title>Contact - Product Matcher</title>
   <link rel="stylesheet" href="styles.css">
@@ -73,53 +71,17 @@
     <div class="container-narrow">
       <h2 class="section-title">Send Us a Message</h2>
       
-      <form class="contact-form" id="contactForm">
-        <div class="form-group">
-          <label for="name">Name *</label>
-          <input type="text" id="name" name="name" required>
-        </div>
+      <div style="background: var(--bg-white); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: var(--spacing-md); margin-bottom: var(--spacing-md);">
+        <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSePyHqUazsZza3Ci4qey9dp0VUGekSkJDCuCXnnEuKUe3zjMg/viewform?embedded=true" width="100%" height="1200" frameborder="0" marginheight="0" marginwidth="0" style="border-radius: var(--radius-sm);">Loading…</iframe>
         
-        <div class="form-group">
-          <label for="email">Email *</label>
-          <input type="email" id="email" name="email" required>
-        </div>
-        
-        <div class="form-group">
-          <label for="subject">Subject *</label>
-          <input type="text" id="subject" name="subject" required>
-        </div>
-        
-        <div class="form-group">
-          <label for="category">Category</label>
-          <select id="category" name="category" style="width: 100%; padding: 0.75rem; border: 2px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-primary); font-size: var(--font-size-base);">
-            <option value="general">General Inquiry</option>
-            <option value="technical">Technical Support</option>
-            <option value="license">License/Billing</option>
-            <option value="feature">Feature Request</option>
-            <option value="bug">Bug Report</option>
-            <option value="business">Business/Partnership</option>
-          </select>
-        </div>
-        
-        <div class="form-group">
-          <label for="message">Message *</label>
-          <textarea id="message" name="message" required></textarea>
-        </div>
-        
-        <button type="submit" class="btn btn-primary btn-lg" style="width: 100%;">Send Message</button>
-        
-        <p class="mt-2 text-center" style="font-size: 0.875rem; color: var(--text-light);">
-          We typically respond within 24-48 hours. For urgent issues, please email us directly.
+        <p class="text-center mt-2" style="font-size: 0.875rem;">
+          <strong>Prefer to open in a new tab?</strong> <a href="https://forms.gle/BJpmtiVWk7ic3ezX8" target="_blank" rel="noopener noreferrer">Click here to open the form</a>
         </p>
-      </form>
-      
-      <div id="formSuccess" style="display: none; background: #d4edda; color: #155724; padding: 1rem; border-radius: var(--radius-sm); margin-top: 1rem; text-align: center;">
-        <strong>Thank you!</strong> Your message has been sent. We'll get back to you soon.
       </div>
       
-      <div id="formError" style="display: none; background: #f8d7da; color: #721c24; padding: 1rem; border-radius: var(--radius-sm); margin-top: 1rem; text-align: center;">
-        <strong>Oops!</strong> Something went wrong. Please try again or email us directly at <a href="mailto:support@productmatcher.com">support@productmatcher.com</a>.
-      </div>
+      <p class="text-center" style="font-size: 0.875rem; color: var(--text-light);">
+        We typically respond within 24-48 hours. For urgent issues, please email us directly at <a href="mailto:support@productmatcher.com">support@productmatcher.com</a>.
+      </p>
     </div>
   </section>
 
@@ -207,61 +169,5 @@
   </footer>
 
   <script src="scripts.js"></script>
-  <script>
-    // Contact form handling with XSS protection
-    document.getElementById('contactForm').addEventListener('submit', function(e) {
-      e.preventDefault();
-      
-      // XSS Protection: Sanitize all form inputs
-      const sanitize = (input) => {
-        const div = document.createElement('div');
-        div.textContent = input;
-        return div.innerHTML;
-      };
-      
-      // Get and sanitize form data
-      const formData = {
-        name: sanitize(document.getElementById('name').value.trim()),
-        email: sanitize(document.getElementById('email').value.trim()),
-        subject: sanitize(document.getElementById('subject').value.trim()),
-        category: sanitize(document.getElementById('category').value),
-        message: sanitize(document.getElementById('message').value.trim())
-      };
-      
-      // Validate email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(document.getElementById('email').value)) {
-        document.getElementById('formError').style.display = 'block';
-        document.getElementById('formSuccess').style.display = 'none';
-        return;
-      }
-      
-      // Validate required fields
-      if (!formData.name || !formData.email || !formData.subject || !formData.message) {
-        document.getElementById('formError').style.display = 'block';
-        document.getElementById('formSuccess').style.display = 'none';
-        return;
-      }
-      
-      // In a real implementation, you would send this to a backend service
-      // For now, we'll create a mailto link as a fallback
-      const mailtoLink = `mailto:support@productmatcher.com?subject=${encodeURIComponent(formData.subject)}&body=${encodeURIComponent(
-        `Name: ${formData.name}\nEmail: ${formData.email}\nCategory: ${formData.category}\n\nMessage:\n${formData.message}`
-      )}`;
-      
-      // Show success message
-      document.getElementById('formSuccess').style.display = 'block';
-      document.getElementById('formError').style.display = 'none';
-      document.getElementById('contactForm').reset();
-      
-      // Open mailto link
-      window.location.href = mailtoLink;
-      
-      // Hide success message after 5 seconds
-      setTimeout(() => {
-        document.getElementById('formSuccess').style.display = 'none';
-      }, 5000);
-    });
-  </script>
 </body>
 </html>

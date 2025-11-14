@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Product Matcher pricing - Free for 50 products, Pro version for unlimited products at $49 one-time payment.">
   
-  <!-- Security Headers -->
-  <meta http-equiv="X-Content-Type-Options" content="nosniff">
-  <meta http-equiv="X-Frame-Options" content="DENY">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:;">
+  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self' mailto:;">
   
   <title>Pricing - Product Matcher</title>
   <link rel="stylesheet" href="styles.css">
@@ -34,6 +32,12 @@
     <div class="container">
       <h1>Simple, Transparent Pricing</h1>
       <p>Start free, upgrade when you need more. No subscriptions, no hidden fees.</p>
+      <div style="background: rgba(255, 255, 255, 0.2); border-radius: var(--radius-md); padding: 1rem; margin-top: 1.5rem; max-width: 600px; margin-left: auto; margin-right: auto;">
+        <p style="color: white; font-size: 1.125rem; margin: 0;">
+          <strong>🎉 Launch Special:</strong> Get Pro for just $29 (regular $49)<br>
+          <span style="font-size: 0.875rem; opacity: 0.9;">Limited time offer - Price increases after first 100 customers</span>
+        </p>
+      </div>
     </div>
   </section>
 
@@ -66,12 +70,16 @@
         
         <!-- Pro Plan -->
         <div class="pricing-card featured">
+          <div style="background: var(--accent); color: white; padding: 0.5rem; border-radius: var(--radius-sm); margin-bottom: 1rem; font-weight: 600; font-size: 0.875rem;">
+            🎉 LAUNCH PRICE - Save $20!
+          </div>
           <div class="pricing-header">
             <h3 class="pricing-title">Pro</h3>
             <div class="pricing-price">
-              $49
+              $29
               <small>one-time</small>
             </div>
+            <p style="text-decoration: line-through; color: var(--text-light); font-size: 1rem; margin-top: 0.5rem;">Regular: $49</p>
           </div>
           
           <ul class="pricing-features">
@@ -194,6 +202,11 @@
       </div>
       
       <div class="faq-item">
+        <h3 class="faq-question">Will the price increase?</h3>
+        <p class="faq-answer">Yes! This is our launch price of $29. The price will increase to $39 after the first 100 customers, and eventually to $49 as we add more features. Lock in the lowest price now!</p>
+      </div>
+      
+      <div class="faq-item">
         <h3 class="faq-question">Do you offer refunds?</h3>
         <p class="faq-answer">Yes! We offer a 30-day money-back guarantee. If you're not satisfied with Product Matcher Pro, contact us for a full refund.</p>
       </div>
@@ -216,8 +229,8 @@
       <h2>Ready to Match Unlimited Products?</h2>
       <p>Upgrade to Pro and unlock the full power of Product Matcher.</p>
       <div class="hero-cta">
-        <a href="https://productmatcher.lemonsqueezy.com/checkout" class="btn btn-accent btn-lg" target="_blank" rel="noopener noreferrer">Buy Pro - $49</a>
-        <a href="download.html" class="btn btn-outline btn-lg">Try Free First</a>
+        <a href="https://productmatcher.lemonsqueezy.com/checkout" class="btn btn-accent btn-lg" target="_blank" rel="noopener noreferrer">Buy Pro - $29</a>
+        <a href="download.html" class="btn btn-outline-white btn-lg">Try Free First</a>
       </div>
     </div>
   </section>

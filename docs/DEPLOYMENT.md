@@ -96,8 +96,9 @@ If you have a custom domain:
 1. Create a LemonSqueezy account at https://lemonsqueezy.com
 2. Create a new product:
    - Name: "Product Matcher Pro"
-   - Price: $49 (one-time)
+   - Price: $29 (one-time) - Launch pricing
    - Enable "Generate unique license keys"
+   - Note: Plan to increase to $39 after 100 sales, then $49
 3. Get your checkout URL
 4. Update `pricing.html` with the checkout URL
 

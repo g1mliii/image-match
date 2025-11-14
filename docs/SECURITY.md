@@ -47,22 +47,34 @@ This document outlines the security measures implemented in the Product Matcher 
 
 ## Content Security Policy (CSP)
 
-### Recommended CSP Headers
+### CSP via Meta Tags (Currently Implemented)
 
-Add these headers to your GitHub Pages configuration or via meta tags:
+GitHub Pages doesn't allow custom HTTP headers, so we use meta tags for CSP:
 
 ```html
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
-  script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://plausible.io;
+  script-src 'self' 'unsafe-inline';
   style-src 'self' 'unsafe-inline';
   img-src 'self' data: https:;
   font-src 'self';
-  connect-src 'self' https://www.google-analytics.com;
-  frame-ancestors 'none';
+  connect-src 'self';
   base-uri 'self';
   form-action 'self' mailto:;
 ">
+```
+
+**Note:** The following CSP directives are **NOT supported** in meta tags and require HTTP headers:
+- `frame-ancestors` (clickjacking protection)
+- `report-uri` / `report-to` (violation reporting)
+- `sandbox` (iframe sandboxing)
+
+### Full CSP Headers (For Custom Domain with CDN)
+
+If using a custom domain with Cloudflare, Netlify, or similar:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://plausible.io; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://www.google-analytics.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:;
 ```
 
 ### CSP Directives Explained
@@ -92,12 +104,14 @@ Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 
 ### Header Explanations
 
-- **X-Content-Type-Options**: Prevents MIME type sniffing
-- **X-Frame-Options**: Prevents clickjacking attacks
-- **X-XSS-Protection**: Browser XSS filter (legacy support)
-- **Referrer-Policy**: Controls referrer information
-- **Permissions-Policy**: Restricts browser features
-- **Strict-Transport-Security**: Forces HTTPS connections
+- **X-Content-Type-Options**: Prevents MIME type sniffing (HTTP header only)
+- **X-Frame-Options**: Prevents clickjacking attacks (HTTP header only)
+- **X-XSS-Protection**: Browser XSS filter - legacy support (HTTP header only)
+- **Referrer-Policy**: Controls referrer information (can use meta tag)
+- **Permissions-Policy**: Restricts browser features (HTTP header only)
+- **Strict-Transport-Security**: Forces HTTPS connections (HTTP header only)
+
+**Important:** Most security headers require HTTP headers and cannot be set via meta tags. GitHub Pages provides HTTPS automatically but doesn't allow custom headers.
 
 ## GitHub Pages Security
 
@@ -108,12 +122,22 @@ GitHub Pages provides:
 - DDoS protection via Fastly CDN
 - No server-side code execution
 - Static file serving only
+- Basic security headers (HSTS, X-Content-Type-Options)
 
 ### Limitations
 
-- Cannot set custom HTTP headers (except via meta tags)
+- Cannot set custom HTTP headers (most security headers unavailable)
+- CSP via meta tags only (some directives not supported)
 - No server-side validation
 - No rate limiting on forms
+- No clickjacking protection (X-Frame-Options requires HTTP header)
+
+### Workaround for Full Security Headers
+
+To get full security header support:
+1. Use a custom domain
+2. Put Cloudflare in front (free plan includes security headers)
+3. Or migrate to Netlify/Vercel (both support custom headers)
 
 ## Form Security
 

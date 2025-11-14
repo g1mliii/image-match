@@ -3,10 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Security Headers -->
-  <meta http-equiv="X-Content-Type-Options" content="nosniff">
-  <meta http-equiv="X-Frame-Options" content="DENY">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:;">
+  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self' mailto:;">
   
   <title>404 - Page Not Found | Product Matcher</title>
   <link rel="stylesheet" href="styles.css">
@@ -37,7 +35,7 @@
       </p>
       <div class="hero-cta">
         <a href="index.html" class="btn btn-accent btn-lg">Go Home</a>
-        <a href="docs.html" class="btn btn-outline btn-lg">View Documentation</a>
+        <a href="docs.html" class="btn btn-outline-white btn-lg">View Documentation</a>
       </div>
     </div>
   </section>

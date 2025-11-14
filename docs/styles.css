@@ -214,6 +214,18 @@ section {
   color: var(--text-white);
 }
 
+/* White outline button for dark backgrounds (hero sections) */
+.btn-outline-white {
+  background: transparent;
+  color: var(--text-white);
+  border: 2px solid var(--text-white);
+}
+
+.btn-outline-white:hover {
+  background: var(--text-white);
+  color: var(--primary);
+}
+
 .btn-lg {
   padding: 1rem 2.5rem;
   font-size: var(--font-size-lg);
