@@ -1,10 +1,10 @@
-# robots.txt for Product Matcher Marketing Site
+# robots.txt for CatalogMatch Marketing Site
 
 User-agent: *
 Allow: /
 
 # Sitemap location
-Sitemap: https://yourusername.github.io/product-matcher/sitemap.xml
+Sitemap: https://g1mliii.github.io/image-match/sitemap.xml
 
 # Crawl-delay (optional, adjust as needed)
 Crawl-delay: 1

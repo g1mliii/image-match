@@ -1,10 +1,10 @@
-# GitHub Pages Configuration for Product Matcher
+# GitHub Pages Configuration for CatalogMatch
 
 # Site settings
-title: Product Matcher
-description: AI-Powered Product Similarity Analysis
-url: https://yourusername.github.io
-baseurl: /product-matcher
+title: CatalogMatch
+description: Smart Product Comparison for Inventory Management
+url: https://g1mliii.github.io
+baseurl: /image-match
 
 # Build settings
 markdown: kramdown

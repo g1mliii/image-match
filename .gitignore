@@ -42,3 +42,18 @@ yarn-error.log*
 .env.local
 venv/
 env/
+
+# Kiro AI files (internal use only)
+.kiro/
+
+# Internal documentation (not for public)
+docs/DEPLOYMENT.md
+docs/ICON-REPLACEMENT-GUIDE.md
+docs/CONTACT-FORM-SETUP.md
+docs/GET-GOOGLE-FORM-EMBED.md
+docs/REBRAND-SUMMARY.md
+docs/SECURITY.md
+docs/README.md
+
+# Keep only public-facing files in docs/
+# (index.html, pricing.html, download.html, docs.html, contact.html, 404.html, styles.css, scripts.js, sitemap.xml, robots.txt, _config.yml)
