@@ -2,7 +2,7 @@
 
 ## Overview
 
-SKU (Stock Keeping Unit) support has been fully implemented in the product matching system with comprehensive real-world data handling. SKUs are **optional** metadata that can help identify and track products, but are not required for the system to function.
+SKU (Stock Keeping Unit) support has been fully implemented in Catalog Match with comprehensive real-world data handling. SKUs are **optional** metadata that can help identify and track products, but are not required for the system to function.
 
 ## Database Schema
 

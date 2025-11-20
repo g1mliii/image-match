@@ -1,4 +1,4 @@
-# Database Design - Product Matching System
+# Database Design - Catalog Match
 
 ## Overview
 The database layer is designed to handle real-world messy data where product information may be incomplete or missing.

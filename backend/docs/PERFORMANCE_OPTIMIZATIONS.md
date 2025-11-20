@@ -4,7 +4,7 @@ This document describes the performance optimizations implemented for handling l
 
 ## Overview
 
-The Product Matching System has been optimized to efficiently handle large catalogs through:
+Catalog Match has been optimized to efficiently handle large catalogs through:
 1. Database indexing for fast queries
 2. Category-based filtering at the database level
 3. Lazy loading for images in the frontend

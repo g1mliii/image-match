@@ -3,14 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Product Matching System</title>
+    <title>Catalog Match</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <div class="app-container">
         <header class="app-header">
-            <h1>Product Matching System</h1>
+            <h1>Catalog Match</h1>
             <p>Compare new products against historical catalog</p>
+            <a href="/static/csv-builder.html" class="btn btn-secondary" style="position: absolute; top: 20px; right: 20px;">📊 CSV Builder</a>
         </header>
 
         <main class="main-content">
@@ -157,11 +159,20 @@
                 <p class="help-intro">Your CSV file can include product details, price history, and performance history. All fields except filename are optional!</p>
                 
                 <div class="format-section" style="background: #eef2ff; border: 2px solid #667eea;">
-                    <h3>📥 Quick Start - Download Sample CSV</h3>
-                    <button class="btn btn-primary" onclick="downloadSampleCsv()" style="font-size: 16px; padding: 12px 24px;">
+                    <h3>✨ NEW: Interactive CSV Builder (Recommended!)</h3>
+                    <p style="margin: 10px 0; font-size: 15px;">Skip the manual CSV creation! Use our interactive CSV Builder tool to create your CSV file with a step-by-step wizard.</p>
+                    <a href="/static/csv-builder.html" target="_blank" class="btn btn-primary" style="font-size: 16px; padding: 12px 24px; display: inline-block; text-decoration: none;">
+                        🚀 Open CSV Builder Tool
+                    </a>
+                    <p class="format-note" style="margin-top: 15px;">💡 The CSV Builder auto-detects categories, validates data, and handles price/performance history with an easy-to-use interface!</p>
+                </div>
+                
+                <div class="format-section" style="background: #f8fafc; border: 1px solid #e2e8f0; margin-top: 20px;">
+                    <h3>📥 Or Download Sample CSV Template</h3>
+                    <button class="btn btn-secondary" onclick="downloadSampleCsv()" style="font-size: 14px; padding: 10px 20px;">
                         ⬇️ Download Sample CSV Template
                     </button>
-                    <p class="format-note" style="margin-top: 15px;">💡 Download this template and fill in your data. Open it in Excel or any text editor!</p>
+                    <p class="format-note" style="margin-top: 10px;">Download this template and fill in your data manually in Excel or any text editor.</p>
                 </div>
                 
                 <div class="format-section">

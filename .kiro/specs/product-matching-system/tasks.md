@@ -134,96 +134,6 @@
   - _Requirements: 9.4, 10.3, 10.4_
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-- [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
-  - Create test fixtures: 5 historical images, 3 new images, valid/invalid CSVs
-  - Test complete workflow: upload historical → upload new → match → verify results
-  - Test CSV metadata handling: valid fields, missing fields, duplicates, invalid format
-  - Test category filtering: products match within same category, NULL category handling
-  - Test threshold/limit: verify filtering and result limiting work correctly
-  - Test error handling: corrupted images, missing features, invalid inputs, empty catalog
-  - Test API validation: invalid product_id, threshold, limit return proper 400 errors
-  - Test response formats: verify all endpoints return expected fields
-  - Run with `pytest backend/tests/test_e2e.py -v` - all tests must pass before packaging
-  - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
-
-- [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
-  - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
-  - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --name "Product Matcher"`
-  - Create build.bat: `pyinstaller --clean product-matcher.spec`
-  - Test packaged exe on clean Windows system: verify launches, creates AppData folders, full workflow works
-  - Package: zip exe + README.txt + sample.csv template
-  - _Requirements: 9.2_
-
-- [ ] 18. Package macOS application for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
-  - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
-  - Create product-matcher-mac.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher"`
-  - Create build-mac.sh: `pyinstaller --clean product-matcher-mac.spec`
-  - Test packaged .app on clean macOS system: verify launches, creates folders, full workflow works
-  - Optional: code sign with `codesign` to avoid Gatekeeper warnings (requires Apple Developer account)
-  - Package: zip .app + README.txt + sample.csv template
-  - Note: Must build on macOS machine (PyInstaller can't cross-compile)
-  - _Requirements: 9.2_
-
-## Future Enhancements (Public Release)
-
-
-- [ ] 20. Add advanced features to ui
-  - Adjustable similarity weights (color, shape, texture sliders)
-  - Batch export with images (not just CSV)
-  - Duplicate detection report
-  - Side-by-side comparison grid view
-  - Search/filter results
-  - Save/load matching sessions
-  - Undo/redo functionality
-
-
-- [ ] 22. Implement license key system with LemonSqueezy
-  - **LemonSqueezy Setup** (lemonsqueezy.com):
-    - Create account and store
-    - Create product: "Product Matcher Pro" - $49 one-time payment
-    - Enable "Generate unique license keys" feature
-    - Get checkout link for GitHub Pages pricing page
-  - **License Key Validation in App**:
-    - Add "Enter License Key" dialog in Help menu
-    - Implement offline validation (check format: XXXX-XXXX-XXXX-XXXX)
-    - Store validated key in config file (AppData)
-    - Free tier: 50 products limit, Pro tier: unlimited
-    - Show upgrade prompt when hitting free tier limit
-    - Display license status in app (Free/Pro)
-
-
-- [ ] 22.5. Set up distribution and analytics
-  - GitHub releases for version management
-  - Auto-update mechanism in app (optional)
-  - Usage analytics - privacy-respecting, opt-in (optional)
-  - Crash reporting (optional)
-  - User feedback system (optional)
-
-
 - [x] 24. Add price history tracking feature
 
 - [x] 25. Add performance history tracking feature
@@ -249,7 +159,8 @@
     - Add option to export performance trends summary (avg sales, revenue, conversion per product)
   - _Requirements: New feature - extends Requirements 1, 4, 7_
 
-- [ ] 26. Add CSV Builder UI tool
+
+- [x] 26. Add CSV Builder UI tool should be idiot prood and handl broken/missing data just like the rest our code.
   - **Interactive CSV Creator:**
     - Create modal/page with step-by-step CSV builder
     - Allow users to upload image folders and auto-populate filenames
@@ -308,6 +219,81 @@
   - _Requirements: New feature - extends Requirements 1, 4, 7_
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+- [ ] 25. Implement cross-platform GPU acceleration using OpenCL (via OpenCV UMat)
+  - **Why OpenCL:** Cross-platform solution that works on Windows (NVIDIA/AMD/Intel), macOS (Apple Silicon M1-M5), and Linux without separate builds or platform-specific code
+  - **OpenCV UMat Implementation:**
+    - Use `cv2.UMat` instead of regular numpy arrays for automatic GPU acceleration
+    - OpenCV automatically uses OpenCL backend when available
+    - No additional dependencies needed - OpenCV already includes OpenCL support
+    - Graceful automatic fallback to CPU if no GPU/OpenCL available
+  - **Image Preprocessing on GPU:**
+    - Convert images to UMat: `img_gpu = cv2.UMat(img)`
+    - Use standard OpenCV functions - they automatically run on GPU with UMat
+    - Accelerate resize, color conversion (BGR to HSV), and normalization operations
+    - Implement batch preprocessing for multiple images
+  - **Feature Extraction Acceleration:**
+    - Move histogram computation to GPU using `cv2.calcHist()` with UMat inputs
+    - Color features: HSV histogram computation on GPU
+    - Texture features: LBP computation can use UMat for image operations
+    - Shape features: Contour detection and moment calculation with UMat
+  - **Similarity Computation:**
+    - Keep similarity calculations on CPU (numpy) - they're already fast for small vectors
+    - GPU overhead not worth it for simple distance calculations
+    - Focus GPU usage on image-heavy operations only
+  - **Detection and Configuration:**
+    - Detect OpenCL availability at startup: `cv2.ocl.haveOpenCL()`
+    - Add configuration option to enable/disable GPU acceleration in settings
+    - Log GPU status on startup: "OpenCL GPU acceleration: enabled/disabled"
+  - **Performance Monitoring:**
+    - Log processing times for GPU vs CPU operations
+    - Display GPU status in UI: "GPU Acceleration: Active (OpenCL)" or "CPU Mode"
+    - Add optional performance metrics to help menu
+  - **Fallback Handling:**
+    - UMat automatically falls back to CPU if OpenCL fails - no manual handling needed
+    - If OpenCL initialization fails, log warning and continue with CPU
+    - Provide option to force CPU mode if GPU causes issues
+  - **Testing:**
+    - Test on Windows with NVIDIA/AMD/Intel GPUs
+    - Test on macOS with Apple Silicon (M1/M2/M3/M4/M5)
+    - Test fallback behavior when no GPU available
+    - Verify performance improvements (expect 2-3x speedup on image operations)
+    - Ensure ARM compatibility is maintained
+  - **Code Migration Pattern:**
+    ```python
+    # Before (CPU only):
+    img = cv2.imread(path)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    # After (GPU accelerated):
+    img = cv2.imread(path)
+    img_gpu = cv2.UMat(img)  # Move to GPU
+    hsv_gpu = cv2.cvtColor(img_gpu, cv2.COLOR_BGR2HSV)  # Runs on GPU
+    hsv = hsv_gpu.get()  # Get result back to CPU if needed
+    ```
+  - _Note: This approach is ARM-compatible and works across all platforms without breaking macOS builds_
+
+
 - [ ] 23. Marketing and launch
   - Create demo video showing workflow
   - Write blog post/case study
@@ -317,36 +303,78 @@
   - Social media presence (Twitter, LinkedIn)
 
 
-- [ ] 25. Implement GPU acceleration for performance-intensive operations
-  - **OpenCV CUDA Support:**
-    - Add opencv-contrib-python with CUDA support to requirements
-    - Detect GPU availability at startup (fallback to CPU if not available)
-    - Add configuration option to enable/disable GPU acceleration
-  - **Image Preprocessing on GPU:**
-    - Use cv2.cuda.GpuMat for image loading and preprocessing
-    - Accelerate resize, color conversion, and normalization operations
-    - Implement batch preprocessing on GPU for multiple images
-  - **Feature Extraction Acceleration:**
-    - Move histogram computation to GPU (color features)
-    - Accelerate HOG/SIFT feature extraction if using GPU-compatible methods
-    - Batch feature extraction for multiple products
-  - **Similarity Computation:**
-    - Use GPU for parallel similarity score computation
-    - Implement batch distance calculations (histogram intersection, chi-square)
-    - Optimize matrix operations with cupy/numpy GPU arrays
-  - **Performance Monitoring:**
-    - Add GPU memory usage monitoring
-    - Log GPU vs CPU performance metrics
-    - Display GPU status in UI (enabled/disabled, memory usage)
-  - **Fallback Handling:**
-    - Gracefully fallback to CPU if GPU operations fail
-    - Provide clear error messages if CUDA not available
-    - Allow users to disable GPU if causing issues
-  - test the changes to see if everythign is working correctly including fallbakcs and normal implementation
-    - other tests.
+- [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
+  - Create test fixtures: 5 historical images, 3 new images, valid/invalid CSVs
+  - Test complete workflow: upload historical → upload new → match → verify results
+  - Test CSV metadata handling: valid fields, missing fields, duplicates, invalid format
+  - Test category filtering: products match within same category, NULL category handling
+  - Test threshold/limit: verify filtering and result limiting work correctly
+  - Test error handling: corrupted images, missing features, invalid inputs, empty catalog
+  - Test API validation: invalid product_id, threshold, limit return proper 400 errors
+  - Test response formats: verify all endpoints return expected fields
+  - Run with `pytest backend/tests/test_e2e.py -v` - all tests must pass before packaging
+  - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
 
-- [ ] 26. for mac os lets make sure we are arm compativble since most mac os devices now use arm m1-m5 chips now so we should make sure this is the case. a
-    - we may need to update site to detect arm vs x86 mac os devices so that anyone on mac os can download it correctly also updat mac os packing task to include both versions if need be.
+- [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
+  - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
+  - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --name "Product Matcher"`
+  - Create build.bat: `pyinstaller --clean product-matcher.spec`
+  - Test packaged exe on clean Windows system: verify launches, creates AppData folders, full workflow works
+  - Package: zip exe + README.txt + sample.csv template
+  - _Requirements: 9.2_
+
+- [ ] 18. Package macOS application for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
+  - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
+  - **ARM (Apple Silicon M1-M5) Build:**
+    - Create product-matcher-mac-arm64.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher" --target-arch arm64`
+    - Create build-mac-arm.sh: `pyinstaller --clean product-matcher-mac-arm64.spec`
+    - Ensure all dependencies (numpy, opencv-python, etc.) are ARM-compatible versions
+    - Test on Apple Silicon Mac (M1/M2/M3/M4/M5): verify native ARM performance
+  - **Intel (x86_64) Build:**
+    - Create product-matcher-mac-x86.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher" --target-arch x86_64`
+    - Create build-mac-intel.sh: `pyinstaller --clean product-matcher-mac-x86.spec`
+    - Test on Intel Mac or Rosetta 2: verify compatibility
+  - **Universal Binary (Optional but Recommended):**
+    - Use `lipo` to create universal binary: `lipo -create -output ProductMatcher-Universal ProductMatcher-arm64 ProductMatcher-x86_64`
+    - This allows single download for both architectures (larger file size ~100MB)
+  - **Distribution Strategy:**
+    - Option 1: Provide separate downloads (ARM vs Intel) - requires website detection
+    - Option 2: Provide universal binary - works on all Macs but larger download
+    - Recommended: Universal binary for simplicity, separate builds for size optimization
+  - Optional: code sign with `codesign` to avoid Gatekeeper warnings (requires Apple Developer account)
+  - Package: zip .app + README.txt + sample.csv template for each architecture
+  - Update download.html to detect architecture and provide correct download link
+  - Note: Must build on macOS machine (PyInstaller can't cross-compile). ARM build requires Apple Silicon Mac, Intel build can be done on either with Rosetta 2
+  - _Requirements: 9.2_
+
+- [ ] 20. Add advanced features to ui
+  - Adjustable similarity weights (color, shape, texture sliders)
+  - Batch export with images (not just CSV)
+  - Duplicate detection report with rank filters based on performance price history and other thigns that would be usefule for determining what new products would be good to implement.
+  - Search/filter results
+  - Save/load matching sessions
+  - Undo/redo functionality
+  - all should be performant and gpu accelerated if necessary taking into account our gpu acceleration plan in task 25 i think on line 236
+  - continue to make the ui for like the website its still to0 different even after changes the website looks way better than the ui currently.
+
+- [ ] 22. Implement license key system with LemonSqueezy
+  - **LemonSqueezy Setup** (lemonsqueezy.com):
+    - Create account and store
+    - Create product: "Product Matcher Pro" - $49 one-time payment
+    - Enable "Generate unique license keys" feature
+    - Get checkout link for GitHub Pages pricing page
+  - **License Key Validation in App**:
+    - Add "Enter License Key" dialog in Help menu
+    - Implement offline validation (check format: XXXX-XXXX-XXXX-XXXX)
+    - Store validated key in config file (AppData)
+    - Free tier: 50 products limit, Pro tier: unlimited
+    - Show upgrade prompt when hitting free tier limit
+    - Display license status in app (Free/Pro)
 
 
-- [ ] 27. ui redesign for our app to more visuall match the website ui design language right now they look very differnt it should behave the same and the elemetns are good/content is great and accurate and displayed well but the appearance and the vidual design should be more like the website since right now they look very different.
+- [ ] 22.5. Set up distribution and analytics
+  - GitHub releases for version management
+  - Auto-update mechanism in app (optional)
+  - Usage analytics - privacy-respecting, opt-in (optional)
+  - Crash reporting (optional)
+  - User feedback system (optional)

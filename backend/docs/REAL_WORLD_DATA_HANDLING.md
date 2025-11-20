@@ -1,6 +1,6 @@
 # Real-World Data Handling Verification
 
-This document verifies that the Product Matching System properly handles all types of messy, incomplete, and problematic real-world data.
+This document verifies that Catalog Match properly handles all types of messy, incomplete, and problematic real-world data.
 
 ## Overview
 

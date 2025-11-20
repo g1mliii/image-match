@@ -1,6 +1,6 @@
 # Image Processing Error Handling Guide
 
-This document describes the error handling system for image processing and feature extraction in the Product Matching System.
+This document describes the error handling system for image processing and feature extraction in Catalog Match.
 
 ## Overview
 

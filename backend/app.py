@@ -71,6 +71,11 @@ def index():
     """Serve the main application"""
     return send_from_directory(app.static_folder, 'index.html')
 
+@app.route('/csv-builder')
+def csv_builder():
+    """Serve the CSV builder tool"""
+    return send_from_directory(app.static_folder, 'csv-builder.html')
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
