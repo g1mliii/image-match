@@ -904,3 +904,386 @@ img.lazy-load[src]:not([src=""]) {
         left: 5%;
     }
 }
+
+
+/* Price History Styles */
+.price-sparkline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 6px;
+    background: rgba(102, 126, 234, 0.1);
+    border-radius: 4px;
+}
+
+.sparkline {
+    flex-shrink: 0;
+}
+
+.price-current {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 13px;
+}
+
+.price-trend {
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.price-trend-up {
+    color: #48bb78;
+}
+
+.price-trend-down {
+    color: #f56565;
+}
+
+.price-trend-stable {
+    color: #718096;
+}
+
+.price-history-section {
+    margin-top: 30px;
+    padding: 20px;
+    background: #f7fafc;
+    border-radius: 8px;
+}
+
+.price-history-section h4 {
+    margin-bottom: 20px;
+    color: #2c3e50;
+    font-size: 18px;
+}
+
+.price-statistics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.price-stat {
+    text-align: center;
+    padding: 15px;
+    background: white;
+    border-radius: 6px;
+    border: 2px solid #e2e8f0;
+}
+
+.price-stat-label {
+    display: block;
+    font-size: 12px;
+    color: #718096;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.price-stat-value {
+    display: block;
+    font-size: 20px;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.price-chart-container {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    border: 2px solid #e2e8f0;
+}
+
+.price-chart {
+    width: 100%;
+    height: auto;
+}
+
+.price-point {
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.price-point:hover {
+    r: 6;
+    fill: #5568d3;
+}
+
+.price-chart-legend {
+    text-align: center;
+    margin-top: 15px;
+    font-size: 13px;
+    color: #718096;
+}
+
+/* Price Filter Badge */
+.price-filter-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: #667eea;
+    color: white;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 8px;
+}
+
+.price-filter-badge svg {
+    width: 12px;
+    height: 12px;
+}
+
+
+/* CSV Help Modal Styles */
+.csv-help-modal {
+    max-width: 900px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.csv-help-modal h2 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-size: 28px;
+}
+
+.help-intro {
+    font-size: 16px;
+    color: #4a5568;
+    margin-bottom: 30px;
+    padding: 15px;
+    background: #edf2f7;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+}
+
+.format-section {
+    margin-bottom: 35px;
+    padding: 20px;
+    background: #f7fafc;
+    border-radius: 10px;
+    border: 2px solid #e2e8f0;
+}
+
+.format-section h3 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-size: 20px;
+}
+
+.csv-example-box {
+    background: #2d3748;
+    color: #e2e8f0;
+    padding: 15px;
+    border-radius: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    overflow-x: auto;
+    margin-bottom: 15px;
+}
+
+.csv-header {
+    color: #48bb78;
+    font-weight: bold;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #4a5568;
+}
+
+.csv-row {
+    color: #e2e8f0;
+    padding: 4px 0;
+    line-height: 1.6;
+}
+
+.format-note {
+    font-size: 14px;
+    color: #4a5568;
+    margin: 8px 0;
+    padding-left: 10px;
+}
+
+.format-note code {
+    background: #edf2f7;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    color: #667eea;
+    font-size: 13px;
+}
+
+.important-notes {
+    background: #fff5f5;
+    border-color: #fc8181;
+}
+
+.important-notes h3 {
+    color: #c53030;
+}
+
+.important-notes ul {
+    list-style: none;
+    padding-left: 0;
+}
+
+.important-notes li {
+    padding: 8px 0;
+    padding-left: 25px;
+    position: relative;
+    color: #2c3e50;
+    line-height: 1.6;
+}
+
+.important-notes li:before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: #48bb78;
+    font-weight: bold;
+}
+
+.important-notes li strong {
+    color: #c53030;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #667eea;
+    cursor: pointer;
+    font-size: 13px;
+    text-decoration: underline;
+    padding: 5px 0;
+    margin-top: 5px;
+    display: inline-block;
+}
+
+.btn-link:hover {
+    color: #5568d3;
+}
+
+/* CSV Upload Enhanced Styles */
+.csv-upload {
+    position: relative;
+}
+
+.csv-upload .info-icon {
+    cursor: help;
+    transition: transform 0.2s;
+}
+
+.csv-upload .info-icon:hover {
+    transform: scale(1.2);
+}
+
+
+/* Performance History Styles */
+.performance-sparkline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 6px;
+    background: rgba(72, 187, 120, 0.1);
+    border-radius: 4px;
+}
+
+.performance-sales {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 12px;
+}
+
+.performance-trend {
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.performance-trend-up {
+    color: #48bb78;
+}
+
+.performance-trend-down {
+    color: #f56565;
+}
+
+.performance-trend-stable {
+    color: #718096;
+}
+
+.performance-history-section {
+    margin-top: 30px;
+    padding: 20px;
+    background: #f0fff4;
+    border-radius: 8px;
+    border: 2px solid #48bb78;
+}
+
+.performance-history-section h4 {
+    margin-bottom: 20px;
+    color: #2c3e50;
+    font-size: 18px;
+}
+
+.performance-statistics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.performance-stat {
+    text-align: center;
+    padding: 15px;
+    background: white;
+    border-radius: 6px;
+    border: 2px solid #e2e8f0;
+}
+
+.performance-stat-label {
+    display: block;
+    font-size: 12px;
+    color: #718096;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.performance-stat-value {
+    display: block;
+    font-size: 20px;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.performance-chart-container {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    border: 2px solid #e2e8f0;
+}
+
+.performance-chart {
+    width: 100%;
+    height: auto;
+}
+
+.performance-point {
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.performance-point:hover {
+    r: 6;
+    fill: #38a169;
+}
+
+.performance-chart-legend {
+    text-align: center;
+    margin-top: 15px;
+    font-size: 13px;
+    color: #718096;
+}

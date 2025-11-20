@@ -170,14 +170,79 @@ async function processHistoricalCatalog() {
             const data = await response.json();
 
             if (response.ok) {
+                const productId = data.product_id;
+                
                 historicalProducts.push({
-                    id: data.product_id,
+                    id: productId,
                     filename: file.name,
                     category: finalCategory,
                     sku: metadata.sku,
                     name: metadata.name,
-                    hasFeatures: data.feature_extraction_status === 'success'
+                    hasFeatures: data.feature_extraction_status === 'success',
+                    hasPriceHistory: false
                 });
+                
+                // Upload price history if present
+                if (metadata.priceHistory && metadata.priceHistory.length > 0) {
+                    try {
+                        const priceResponse = await fetchWithRetry(`/api/products/${productId}/price-history`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ prices: metadata.priceHistory })
+                        });
+                        
+                        if (priceResponse.ok) {
+                            const priceData = await priceResponse.json();
+                            // Update product to indicate it has price history
+                            const product = historicalProducts.find(p => p.id === productId);
+                            if (product) {
+                                product.hasPriceHistory = true;
+                            }
+                            
+                            // Show validation warnings if any
+                            if (priceData.validation_errors && priceData.validation_errors.length > 0) {
+                                console.warn(`Price validation warnings for ${file.name}:`, priceData.validation_errors);
+                            }
+                        } else {
+                            // Non-critical error - log but continue
+                            console.warn(`Failed to upload price history for ${file.name}: ${priceResponse.status}`);
+                        }
+                    } catch (error) {
+                        // Non-critical error - log but continue
+                        console.warn(`Failed to upload price history for ${file.name}:`, error);
+                    }
+                }
+                
+                // Upload performance history if present
+                if (metadata.performanceHistory && metadata.performanceHistory.length > 0) {
+                    try {
+                        const perfResponse = await fetchWithRetry(`/api/products/${productId}/performance-history`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ performance: metadata.performanceHistory })
+                        });
+                        
+                        if (perfResponse.ok) {
+                            const perfData = await perfResponse.json();
+                            // Update product to indicate it has performance history
+                            const product = historicalProducts.find(p => p.id === productId);
+                            if (product) {
+                                product.hasPerformanceHistory = true;
+                            }
+                            
+                            // Show validation warnings if any
+                            if (perfData.validation_errors && perfData.validation_errors.length > 0) {
+                                console.warn(`Performance validation warnings for ${file.name}:`, perfData.validation_errors);
+                            }
+                        } else {
+                            // Non-critical error - log but continue
+                            console.warn(`Failed to upload performance history for ${file.name}: ${perfResponse.status}`);
+                        }
+                    } catch (error) {
+                        // Non-critical error - log but continue
+                        console.warn(`Failed to upload performance history for ${file.name}:`, error);
+                    }
+                }
 
                 // Show warnings if any
                 if (data.warning) {
@@ -370,14 +435,79 @@ async function processNewProducts() {
             const data = await response.json();
 
             if (response.ok) {
+                const productId = data.product_id;
+                
                 newProducts.push({
-                    id: data.product_id,
+                    id: productId,
                     filename: file.name,
                     category: finalCategory,
                     sku: metadata.sku,
                     name: metadata.name,
-                    hasFeatures: data.feature_extraction_status === 'success'
+                    hasFeatures: data.feature_extraction_status === 'success',
+                    hasPriceHistory: false
                 });
+                
+                // Upload price history if present
+                if (metadata.priceHistory && metadata.priceHistory.length > 0) {
+                    try {
+                        const priceResponse = await fetchWithRetry(`/api/products/${productId}/price-history`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ prices: metadata.priceHistory })
+                        });
+                        
+                        if (priceResponse.ok) {
+                            const priceData = await priceResponse.json();
+                            // Update product to indicate it has price history
+                            const product = newProducts.find(p => p.id === productId);
+                            if (product) {
+                                product.hasPriceHistory = true;
+                            }
+                            
+                            // Show validation warnings if any
+                            if (priceData.validation_errors && priceData.validation_errors.length > 0) {
+                                console.warn(`Price validation warnings for ${file.name}:`, priceData.validation_errors);
+                            }
+                        } else {
+                            // Non-critical error - log but continue
+                            console.warn(`Failed to upload price history for ${file.name}: ${priceResponse.status}`);
+                        }
+                    } catch (error) {
+                        // Non-critical error - log but continue
+                        console.warn(`Failed to upload price history for ${file.name}:`, error);
+                    }
+                }
+                
+                // Upload performance history if present
+                if (metadata.performanceHistory && metadata.performanceHistory.length > 0) {
+                    try {
+                        const perfResponse = await fetchWithRetry(`/api/products/${productId}/performance-history`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ performance: metadata.performanceHistory })
+                        });
+                        
+                        if (perfResponse.ok) {
+                            const perfData = await perfResponse.json();
+                            // Update product to indicate it has performance history
+                            const product = newProducts.find(p => p.id === productId);
+                            if (product) {
+                                product.hasPerformanceHistory = true;
+                            }
+                            
+                            // Show validation warnings if any
+                            if (perfData.validation_errors && perfData.validation_errors.length > 0) {
+                                console.warn(`Performance validation warnings for ${file.name}:`, perfData.validation_errors);
+                            }
+                        } else {
+                            // Non-critical error - log but continue
+                            console.warn(`Failed to upload performance history for ${file.name}: ${perfResponse.status}`);
+                        }
+                    } catch (error) {
+                        // Non-critical error - log but continue
+                        console.warn(`Failed to upload performance history for ${file.name}:`, error);
+                    }
+                }
 
                 // Show warnings if any
                 if (data.warning) {
@@ -477,10 +607,43 @@ async function startMatching() {
             });
 
             const data = await response.json();
+            
+            const matches = data.matches || [];
+            
+            // Fetch price and performance history for each match
+            for (const match of matches) {
+                // Fetch price history
+                try {
+                    const priceResponse = await fetchWithRetry(`/api/products/${match.product_id}/price-history`);
+                    if (priceResponse.ok) {
+                        const priceData = await priceResponse.json();
+                        match.priceHistory = priceData.price_history || [];
+                        match.priceStatistics = priceData.statistics;
+                    }
+                } catch (error) {
+                    console.warn(`Failed to fetch price history for match ${match.product_id}:`, error);
+                    match.priceHistory = [];
+                    match.priceStatistics = null;
+                }
+                
+                // Fetch performance history
+                try {
+                    const perfResponse = await fetchWithRetry(`/api/products/${match.product_id}/performance-history`);
+                    if (perfResponse.ok) {
+                        const perfData = await perfResponse.json();
+                        match.performanceHistory = perfData.performance_history || [];
+                        match.performanceStatistics = perfData.statistics;
+                    }
+                } catch (error) {
+                    console.warn(`Failed to fetch performance history for match ${match.product_id}:`, error);
+                    match.performanceHistory = [];
+                    match.performanceStatistics = null;
+                }
+            }
 
             matchResults.push({
                 product: product,
-                matches: data.matches || [],
+                matches: matches,
                 error: response.ok ? null : data.error
             });
         } catch (error) {
@@ -578,6 +741,20 @@ function displayResults() {
                                 ${match.similarity_score > 90 ? '<span class="duplicate-badge">DUPLICATE?</span>' : ''}
                                 <div class="match-info">
                                     ${escapeHtml(match.product_name || 'Unknown')}
+                                    ${match.priceStatistics ? `
+                                        <div class="price-sparkline" title="Price trend: ${match.priceStatistics.trend}">
+                                            ${generateSparkline(match.priceHistory)}
+                                            <span class="price-current">$${match.priceStatistics.current}</span>
+                                            <span class="price-trend price-trend-${match.priceStatistics.trend}">${getTrendIcon(match.priceStatistics.trend)}</span>
+                                        </div>
+                                    ` : ''}
+                                    ${match.performanceStatistics ? `
+                                        <div class="performance-sparkline" title="Sales trend: ${match.performanceStatistics.sales_trend}">
+                                            ${generatePerformanceSparkline(match.performanceHistory)}
+                                            <span class="performance-sales">📊 ${match.performanceStatistics.total_sales} sales</span>
+                                            <span class="performance-trend performance-trend-${match.performanceStatistics.sales_trend}">${getTrendIcon(match.performanceStatistics.sales_trend)}</span>
+                                        </div>
+                                    ` : ''}
                                 </div>
                             </div>
                         `).join('')}
@@ -688,6 +865,70 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                     </div>
                 </div>
             ` : ''}
+            ${matchDetails?.priceStatistics ? `
+                <div class="price-history-section">
+                    <h4>💰 Price History</h4>
+                    <div class="price-statistics">
+                        <div class="price-stat">
+                            <span class="price-stat-label">Current</span>
+                            <span class="price-stat-value">$${matchDetails.priceStatistics.current}</span>
+                        </div>
+                        <div class="price-stat">
+                            <span class="price-stat-label">Average</span>
+                            <span class="price-stat-value">$${matchDetails.priceStatistics.average}</span>
+                        </div>
+                        <div class="price-stat">
+                            <span class="price-stat-label">Min</span>
+                            <span class="price-stat-value">$${matchDetails.priceStatistics.min}</span>
+                        </div>
+                        <div class="price-stat">
+                            <span class="price-stat-label">Max</span>
+                            <span class="price-stat-value">$${matchDetails.priceStatistics.max}</span>
+                        </div>
+                        <div class="price-stat">
+                            <span class="price-stat-label">Trend</span>
+                            <span class="price-stat-value price-trend-${matchDetails.priceStatistics.trend}">
+                                ${getTrendIcon(matchDetails.priceStatistics.trend)} ${matchDetails.priceStatistics.trend}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="price-chart-container">
+                        ${generatePriceChart(matchDetails.priceHistory, 'modalPriceChart')}
+                    </div>
+                </div>
+            ` : ''}
+            ${matchDetails?.performanceStatistics ? `
+                <div class="performance-history-section">
+                    <h4>📊 Performance History</h4>
+                    <div class="performance-statistics">
+                        <div class="performance-stat">
+                            <span class="performance-stat-label">Total Sales</span>
+                            <span class="performance-stat-value">${matchDetails.performanceStatistics.total_sales}</span>
+                        </div>
+                        <div class="performance-stat">
+                            <span class="performance-stat-label">Total Views</span>
+                            <span class="performance-stat-value">${matchDetails.performanceStatistics.total_views.toLocaleString()}</span>
+                        </div>
+                        <div class="performance-stat">
+                            <span class="performance-stat-label">Avg Conversion</span>
+                            <span class="performance-stat-value">${matchDetails.performanceStatistics.avg_conversion}%</span>
+                        </div>
+                        <div class="performance-stat">
+                            <span class="performance-stat-label">Total Revenue</span>
+                            <span class="performance-stat-value">$${matchDetails.performanceStatistics.total_revenue.toLocaleString()}</span>
+                        </div>
+                        <div class="performance-stat">
+                            <span class="performance-stat-label">Sales Trend</span>
+                            <span class="performance-stat-value performance-trend-${matchDetails.performanceStatistics.sales_trend}">
+                                ${getTrendIcon(matchDetails.performanceStatistics.sales_trend)} ${matchDetails.performanceStatistics.sales_trend}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="performance-chart-container">
+                        ${generatePerformanceChart(matchDetails.performanceHistory, 'modalPerformanceChart')}
+                    </div>
+                </div>
+            ` : ''}
         `;
 
         modal.classList.add('show');
@@ -704,7 +945,7 @@ function closeModal() {
 }
 
 function exportResults() {
-    let csv = 'New Product,Category,Match Count,Top Match,Top Score\n';
+    let csv = 'New Product,Category,Match Count,Top Match,Top Score,Price Current,Price Avg,Price Min,Price Max,Price Trend,Total Sales,Total Revenue,Avg Conversion,Sales Trend\n';
 
     matchResults.forEach(result => {
         const product = result.product;
@@ -714,8 +955,29 @@ function exportResults() {
 
         if (topMatch) {
             csv += `,"${topMatch.product_name || 'Unknown'}",${topMatch.similarity_score.toFixed(1)}`;
+            
+            // Add price history data if available
+            if (topMatch.priceStatistics) {
+                csv += `,${topMatch.priceStatistics.current}`;
+                csv += `,${topMatch.priceStatistics.average}`;
+                csv += `,${topMatch.priceStatistics.min}`;
+                csv += `,${topMatch.priceStatistics.max}`;
+                csv += `,"${topMatch.priceStatistics.trend}"`;
+            } else {
+                csv += ',,,,,';
+            }
+            
+            // Add performance history data if available
+            if (topMatch.performanceStatistics) {
+                csv += `,${topMatch.performanceStatistics.total_sales}`;
+                csv += `,${topMatch.performanceStatistics.total_revenue}`;
+                csv += `,${topMatch.performanceStatistics.avg_conversion}`;
+                csv += `,"${topMatch.performanceStatistics.sales_trend}"`;
+            } else {
+                csv += ',,,,';
+            }
         } else {
-            csv += ',"No matches",0';
+            csv += ',"No matches",0,,,,,,,,,';
         }
 
         csv += '\n';
@@ -729,7 +991,7 @@ function exportResults() {
     a.click();
     URL.revokeObjectURL(url);
 
-    showToast('Results exported to CSV', 'success');
+    showToast('Results exported to CSV with price & performance history', 'success');
 }
 
 function resetApp() {
@@ -747,49 +1009,285 @@ async function parseCsv(file) {
             const lines = text.split('\n').filter(line => line.trim());
             const map = {};
             const duplicates = [];
+            const errors = [];
 
             // Check if first line is a header
             const firstLine = lines[0];
             const hasHeader = firstLine.toLowerCase().includes('filename') ||
-                firstLine.toLowerCase().includes('category');
+                firstLine.toLowerCase().includes('category') ||
+                firstLine.toLowerCase().includes('sku');
 
             const dataLines = hasHeader ? lines.slice(1) : lines;
 
             dataLines.forEach((line, index) => {
-                const parts = line.split(',').map(s => s.trim().replace(/^"|"$/g, '')); // Remove quotes
+                try {
+                    // Handle both comma and tab separated values
+                    const parts = line.split(/[,\t]/).map(s => s.trim().replace(/^"|"$/g, '')); // Remove quotes
 
-                if (parts.length >= 1) {
-                    const filename = parts[0];
-                    const category = parts[1] || null;
-                    const sku = parts[2] || null;
-                    const name = parts[3] || null;
-
-                    if (filename) {
-                        // Check for duplicate filename
-                        if (map[filename]) {
-                            duplicates.push(filename);
+                    if (parts.length >= 1) {
+                        const filename = parts[0];
+                        if (!filename) return; // Skip empty lines
+                        
+                        const category = parts[1] || null;
+                        const sku = parts[2] || null;
+                        const name = parts[3] || null;
+                        
+                        // Parse price - can be in column 4 OR 5 (flexible)
+                        // Format 1: Single price in column 4
+                        // Format 2: Price history in column 5
+                        let priceHistory = null;
+                        let singlePrice = null;
+                        
+                        // Try to parse column 4 as single price
+                        if (parts[4] && !parts[4].includes(':') && !parts[4].includes(';')) {
+                            const price = parseFloat(parts[4]);
+                            if (!isNaN(price) && price >= 0) {
+                                singlePrice = price;
+                                // Convert single price to price history with today's date
+                                const today = new Date().toISOString().split('T')[0];
+                                priceHistory = [{ date: today, price: price }];
+                            }
                         }
                         
-                        // Store metadata (last entry wins if duplicate)
-                        map[filename] = {
-                            category: category,
-                            sku: sku,
-                            name: name
-                        };
+                        // Try to parse column 4 or 5 as price history
+                        const priceHistoryStr = parts[4] || parts[5] || null;
+                        if (priceHistoryStr && (priceHistoryStr.includes(':') || priceHistoryStr.includes(';'))) {
+                            try {
+                                const parsed = parsePriceHistory(priceHistoryStr);
+                                if (parsed && parsed.length > 0) {
+                                    priceHistory = parsed;
+                                }
+                            } catch (error) {
+                                errors.push(`Row ${index + 2}: Failed to parse price history for ${filename}`);
+                            }
+                        }
+                        
+                        // Parse performance history - can be in column 5 or 6
+                        // Format: "2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160"
+                        // (date:sales:views:conversion:revenue)
+                        let performanceHistory = null;
+                        const performanceHistoryStr = parts[5] || parts[6] || null;
+                        
+                        if (performanceHistoryStr && performanceHistoryStr.includes(':')) {
+                            try {
+                                const parsed = parsePerformanceHistory(performanceHistoryStr);
+                                if (parsed && parsed.length > 0) {
+                                    performanceHistory = parsed;
+                                }
+                            } catch (error) {
+                                errors.push(`Row ${index + 2}: Failed to parse performance history for ${filename}`);
+                            }
+                        }
+
+                        if (filename) {
+                            // Check for duplicate filename
+                            if (map[filename]) {
+                                duplicates.push(filename);
+                            }
+                            
+                            // Store metadata (last entry wins if duplicate)
+                            map[filename] = {
+                                category: category,
+                                sku: sku,
+                                name: name,
+                                priceHistory: priceHistory,
+                                performanceHistory: performanceHistory
+                            };
+                        }
                     }
+                } catch (error) {
+                    errors.push(`Row ${index + 2}: ${error.message}`);
                 }
             });
 
-            // Warn about duplicates
+            // Show warnings
             if (duplicates.length > 0) {
                 const uniqueDuplicates = [...new Set(duplicates)];
-                showToast(`CSV Warning: ${uniqueDuplicates.length} duplicate filename(s) found. Using last entry for: ${uniqueDuplicates.slice(0, 3).join(', ')}${uniqueDuplicates.length > 3 ? '...' : ''}`, 'warning');
+                showToast(`CSV Warning: ${uniqueDuplicates.length} duplicate filename(s) found. Using last entry.`, 'warning');
+            }
+            
+            if (errors.length > 0 && errors.length < 10) {
+                errors.forEach(err => console.warn(err));
+                showToast(`CSV parsed with ${errors.length} warning(s). Check console for details.`, 'warning');
+            } else if (errors.length >= 10) {
+                showToast(`CSV parsed with ${errors.length} warnings. Check console for details.`, 'warning');
             }
 
             resolve(map);
         };
+        
+        reader.onerror = () => {
+            showToast('Failed to read CSV file. Please check the file format.', 'error');
+            resolve({});
+        };
+        
         reader.readAsText(file);
     });
+}
+
+function parsePriceHistory(priceHistoryStr) {
+    // Parse price history string - FLEXIBLE FORMATS:
+    // Format 1: "2024-01-15:29.99;2024-02-15:31.50" (semicolon separated)
+    // Format 2: "2024-01-15:29.99,2024-02-15:31.50" (comma separated)
+    // Format 3: "29.99;31.50;28.75" (prices only, auto-generate monthly dates)
+    // Returns array of {date, price} objects
+    
+    if (!priceHistoryStr || priceHistoryStr.trim() === '') {
+        return null;
+    }
+    
+    const str = priceHistoryStr.trim();
+    const priceHistory = [];
+    
+    // Check if it contains dates (has colons)
+    if (str.includes(':')) {
+        // Format with dates
+        const entries = str.split(/[;,]/).filter(e => e.trim());
+        
+        for (const entry of entries) {
+            const parts = entry.split(':').map(s => s.trim());
+            if (parts.length >= 2) {
+                const date = parts[0];
+                const price = parseFloat(parts[1]);
+                
+                // Validate date format (YYYY-MM-DD or MM/DD/YYYY or similar)
+                if (date && !isNaN(price) && price >= 0) {
+                    // Try to normalize date to YYYY-MM-DD
+                    const normalizedDate = normalizeDateString(date);
+                    if (normalizedDate) {
+                        priceHistory.push({
+                            date: normalizedDate,
+                            price: price
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        // Format without dates - just prices
+        // Generate monthly dates going backwards from today
+        const prices = str.split(/[;,]/).filter(e => e.trim()).map(p => parseFloat(p.trim()));
+        const today = new Date();
+        
+        prices.forEach((price, index) => {
+            if (!isNaN(price) && price >= 0) {
+                const date = new Date(today);
+                date.setMonth(date.getMonth() - (prices.length - 1 - index));
+                priceHistory.push({
+                    date: date.toISOString().split('T')[0],
+                    price: price
+                });
+            }
+        });
+    }
+    
+    // Limit to 12 months and sort by date
+    if (priceHistory.length > 0) {
+        priceHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+        return priceHistory.slice(-12); // Keep most recent 12
+    }
+    
+    return null;
+}
+
+function normalizeDateString(dateStr) {
+    // Try to parse various date formats and return YYYY-MM-DD
+    try {
+        // Already in YYYY-MM-DD format
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            return dateStr;
+        }
+        
+        // MM/DD/YYYY or M/D/YYYY
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
+            const [month, day, year] = dateStr.split('/');
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        }
+        
+        // DD/MM/YYYY or D/M/YYYY (European format)
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
+            const [day, month, year] = dateStr.split('/');
+            // Ambiguous - assume MM/DD/YYYY (US format) by default
+            return `${year}-${day.padStart(2, '0')}-${month.padStart(2, '0')}`;
+        }
+        
+        // Try parsing with Date constructor
+        const date = new Date(dateStr);
+        if (!isNaN(date.getTime())) {
+            return date.toISOString().split('T')[0];
+        }
+        
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function parsePerformanceHistory(performanceHistoryStr) {
+    // Parse performance history string - FLEXIBLE FORMATS:
+    // Format 1: "2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160"
+    //           (date:sales:views:conversion:revenue)
+    // Format 2: "150:1200:12.5:1800;180:1500:12.0:2160" (no dates, auto-generate)
+    // Returns array of {date, sales, views, conversion_rate, revenue} objects
+    
+    if (!performanceHistoryStr || performanceHistoryStr.trim() === '') {
+        return null;
+    }
+    
+    const str = performanceHistoryStr.trim();
+    const performanceHistory = [];
+    
+    // Split by semicolon or comma
+    const entries = str.split(/[;,]/).filter(e => e.trim());
+    
+    for (const entry of entries) {
+        const parts = entry.split(':').map(s => s.trim());
+        
+        let date, sales, views, conversion_rate, revenue;
+        
+        // Check if first part is a date
+        if (parts.length >= 5 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
+            // Format with date
+            date = parts[0];
+            sales = parseInt(parts[1]) || 0;
+            views = parseInt(parts[2]) || 0;
+            conversion_rate = parseFloat(parts[3]) || 0.0;
+            revenue = parseFloat(parts[4]) || 0.0;
+        } else if (parts.length >= 4) {
+            // Format without date - generate monthly dates backwards
+            const today = new Date();
+            const monthsBack = performanceHistory.length;
+            const dateObj = new Date(today);
+            dateObj.setMonth(dateObj.getMonth() - monthsBack);
+            date = dateObj.toISOString().split('T')[0];
+            
+            sales = parseInt(parts[0]) || 0;
+            views = parseInt(parts[1]) || 0;
+            conversion_rate = parseFloat(parts[2]) || 0.0;
+            revenue = parseFloat(parts[3]) || 0.0;
+        } else {
+            continue; // Skip invalid entries
+        }
+        
+        // Validate values
+        if (sales >= 0 && views >= 0 && conversion_rate >= 0 && conversion_rate <= 100 && revenue >= 0) {
+            performanceHistory.push({
+                date: date,
+                sales: sales,
+                views: views,
+                conversion_rate: conversion_rate,
+                revenue: revenue
+            });
+        }
+    }
+    
+    // Limit to 12 months and sort by date
+    if (performanceHistory.length > 0) {
+        performanceHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+        return performanceHistory.slice(-12); // Keep most recent 12
+    }
+    
+    return null;
 }
 
 function showToast(message, type = 'info') {
@@ -1028,6 +1526,36 @@ function positionTooltip(element, tooltip) {
     tooltip.style.left = `${left}px`;
 }
 
+// CSV Help Functions
+function showCsvHelp(type) {
+    const modal = document.getElementById('csvHelpModal');
+    modal.classList.add('show');
+}
+
+function closeCsvHelp() {
+    const modal = document.getElementById('csvHelpModal');
+    modal.classList.remove('show');
+}
+
+function downloadSampleCsv() {
+    const csv = `filename,category,sku,name,price,performance_history
+product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160;2024-03-15:200:1800:11.1:2400
+product2.jpg,dinnerware,DW-002,White Plate Set,45.00,2024-01-15:200:2000:10.0:9000;2024-02-15:220:2200:10.0:9900;2024-03-15:240:2400:10.0:10800
+product3.jpg,textiles,TX-003,Cotton Napkins,15.99,100:800:12.5:1200;120:900:13.3:1440;110:850:12.9:1320
+product4.jpg,placemats,PM-004,Red Placemat,32.00,
+product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,80:600:13.3:960;90:650:13.8:1080`;
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sample_product_data.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showToast('Sample CSV downloaded! Open it in Excel or any text editor.', 'success');
+}
+
 // Enhanced Toast with Action Button
 function showToastWithAction(message, type, actionText, actionCallback) {
     const toast = document.getElementById('toast');
@@ -1053,4 +1581,182 @@ function showToastWithAction(message, type, actionText, actionCallback) {
     setTimeout(() => {
         toast.classList.remove('show');
     }, timeout);
+}
+
+// Price History Visualization Functions
+
+function generateSparkline(priceHistory) {
+    // Generate a simple SVG sparkline chart
+    if (!priceHistory || priceHistory.length === 0) {
+        return '';
+    }
+    
+    const prices = priceHistory.map(p => p.price).reverse(); // Oldest to newest
+    const max = Math.max(...prices);
+    const min = Math.min(...prices);
+    const range = max - min || 1;
+    
+    const width = 60;
+    const height = 20;
+    const points = prices.map((price, i) => {
+        const x = (i / (prices.length - 1)) * width;
+        const y = height - ((price - min) / range) * height;
+        return `${x},${y}`;
+    }).join(' ');
+    
+    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <polyline points="${points}" fill="none" stroke="#667eea" stroke-width="2"/>
+    </svg>`;
+}
+
+function generatePerformanceSparkline(performanceHistory) {
+    // Generate a simple SVG sparkline chart for sales
+    if (!performanceHistory || performanceHistory.length === 0) {
+        return '';
+    }
+    
+    const sales = performanceHistory.map(p => p.sales).reverse(); // Oldest to newest
+    const max = Math.max(...sales);
+    const min = Math.min(...sales);
+    const range = max - min || 1;
+    
+    const width = 60;
+    const height = 20;
+    const points = sales.map((sale, i) => {
+        const x = (i / (sales.length - 1)) * width;
+        const y = height - ((sale - min) / range) * height;
+        return `${x},${y}`;
+    }).join(' ');
+    
+    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <polyline points="${points}" fill="none" stroke="#48bb78" stroke-width="2"/>
+    </svg>`;
+}
+
+function getTrendIcon(trend) {
+    switch (trend) {
+        case 'up':
+            return '↑';
+        case 'down':
+            return '↓';
+        case 'stable':
+        default:
+            return '→';
+    }
+}
+
+function generatePerformanceChart(performanceHistory, containerId) {
+    // Generate a more detailed performance chart for the modal
+    if (!performanceHistory || performanceHistory.length === 0) {
+        return '<p>No performance history available</p>';
+    }
+    
+    const sales = performanceHistory.map(p => p.sales).reverse(); // Oldest to newest
+    const dates = performanceHistory.map(p => p.date).reverse();
+    const max = Math.max(...sales);
+    const min = Math.min(...sales);
+    const range = max - min || 1;
+    
+    const width = 400;
+    const height = 200;
+    const padding = 40;
+    const chartWidth = width - padding * 2;
+    const chartHeight = height - padding * 2;
+    
+    // Generate points for the line
+    const points = sales.map((sale, i) => {
+        const x = padding + (i / (sales.length - 1)) * chartWidth;
+        const y = padding + chartHeight - ((sale - min) / range) * chartHeight;
+        return { x, y, sale, date: dates[i] };
+    });
+    
+    const linePoints = points.map(p => `${p.x},${p.y}`).join(' ');
+    
+    // Generate circles for data points
+    const circles = points.map(p => 
+        `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#48bb78" class="performance-point" data-sales="${p.sale}" data-date="${p.date}"/>`
+    ).join('');
+    
+    // Generate axis labels
+    const minLabel = `<text x="${padding}" y="${padding + chartHeight + 20}" font-size="12" fill="#666">${min}</text>`;
+    const maxLabel = `<text x="${padding}" y="${padding - 10}" font-size="12" fill="#666">${max}</text>`;
+    
+    return `
+        <svg class="performance-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+            <!-- Grid lines -->
+            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
+            <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
+            
+            <!-- Sales line -->
+            <polyline points="${linePoints}" fill="none" stroke="#48bb78" stroke-width="3"/>
+            
+            <!-- Data points -->
+            ${circles}
+            
+            <!-- Labels -->
+            ${minLabel}
+            ${maxLabel}
+        </svg>
+        <div class="performance-chart-legend">
+            <span>Showing ${sales.length} data point${sales.length !== 1 ? 's' : ''}</span>
+        </div>
+    `;
+}
+
+function generatePriceChart(priceHistory, containerId) {
+    // Generate a more detailed price chart for the modal
+    if (!priceHistory || priceHistory.length === 0) {
+        return '<p>No price history available</p>';
+    }
+    
+    const prices = priceHistory.map(p => p.price).reverse(); // Oldest to newest
+    const dates = priceHistory.map(p => p.date).reverse();
+    const max = Math.max(...prices);
+    const min = Math.min(...prices);
+    const range = max - min || 1;
+    
+    const width = 400;
+    const height = 200;
+    const padding = 40;
+    const chartWidth = width - padding * 2;
+    const chartHeight = height - padding * 2;
+    
+    // Generate points for the line
+    const points = prices.map((price, i) => {
+        const x = padding + (i / (prices.length - 1)) * chartWidth;
+        const y = padding + chartHeight - ((price - min) / range) * chartHeight;
+        return { x, y, price, date: dates[i] };
+    });
+    
+    const linePoints = points.map(p => `${p.x},${p.y}`).join(' ');
+    
+    // Generate circles for data points
+    const circles = points.map(p => 
+        `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#667eea" class="price-point" data-price="${p.price}" data-date="${p.date}"/>`
+    ).join('');
+    
+    // Generate axis labels
+    const minLabel = `<text x="${padding}" y="${padding + chartHeight + 20}" font-size="12" fill="#666">$${min.toFixed(2)}</text>`;
+    const maxLabel = `<text x="${padding}" y="${padding - 10}" font-size="12" fill="#666">$${max.toFixed(2)}</text>`;
+    
+    return `
+        <svg class="price-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+            <!-- Grid lines -->
+            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
+            <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
+            
+            <!-- Price line -->
+            <polyline points="${linePoints}" fill="none" stroke="#667eea" stroke-width="3"/>
+            
+            <!-- Data points -->
+            ${circles}
+            
+            <!-- Labels -->
+            ${minLabel}
+            ${maxLabel}
+        </svg>
+        <div class="price-chart-legend">
+            <span>Showing ${prices.length} price point${prices.length !== 1 ? 's' : ''}</span>
+        </div>
+    `;
 }

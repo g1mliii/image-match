@@ -8,7 +8,11 @@ from datetime import datetime
 
 from database import (
     init_db, insert_product, get_product_by_id, get_features_by_product_id,
-    insert_features, validate_sku_format, normalize_sku, check_sku_exists
+    insert_features, validate_sku_format, normalize_sku, check_sku_exists,
+    insert_price_history, bulk_insert_price_history, get_price_history,
+    get_price_statistics, link_price_history, get_products_with_price_history,
+    insert_performance_history, bulk_insert_performance_history, get_performance_history,
+    get_performance_statistics, link_performance_history, get_products_with_performance_history
 )
 from image_processing import (
     extract_all_features, validate_image_file,
@@ -1208,6 +1212,409 @@ def internal_error(error):
         'Please try again or contact support',
         status_code=500
     )
+
+@app.route('/api/products/<int:product_id>/price-history', methods=['GET'])
+def get_product_price_history(product_id):
+    """
+    Get price history for a product.
+    
+    Query parameters:
+    - limit: Maximum number of records (optional, default: 12)
+    
+    Returns:
+    - 200: Success with price history and statistics
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        # Check if product exists
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        # Get limit parameter
+        limit = request.args.get('limit', 12, type=int)
+        if limit < 1:
+            limit = 12
+        if limit > 100:
+            limit = 100
+        
+        # Get price history
+        price_records = get_price_history(product_id, limit=limit)
+        
+        # Convert to list of dicts
+        price_list = []
+        for record in price_records:
+            price_list.append({
+                'date': record['date'],
+                'price': record['price'],
+                'currency': record['currency']
+            })
+        
+        # Get statistics
+        stats = get_price_statistics(product_id)
+        
+        response = {
+            'status': 'success',
+            'product_id': product_id,
+            'price_history': price_list,
+            'statistics': stats,
+            'has_price_data': len(price_list) > 0
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error retrieving price history for product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'PRICE_HISTORY_ERROR',
+            'Failed to retrieve price history',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+@app.route('/api/products/<int:product_id>/price-history', methods=['POST'])
+def add_product_price_history(product_id):
+    """
+    Add price history records for a product.
+    
+    JSON body:
+    - prices: Array of price records with 'date', 'price', and optional 'currency'
+    
+    Returns:
+    - 200: Success with number of records added
+    - 400: Validation error
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        # Check if product exists
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        # Parse JSON body
+        data = request.get_json()
+        if not data or 'prices' not in data:
+            return create_error_response(
+                'MISSING_PRICES',
+                'prices array is required',
+                'Send JSON body with prices array',
+                status_code=400
+            )
+        
+        prices = data['prices']
+        if not isinstance(prices, list):
+            return create_error_response(
+                'INVALID_PRICES',
+                'prices must be an array',
+                status_code=400
+            )
+        
+        # Validate price records
+        valid_records = []
+        errors = []
+        
+        for i, record in enumerate(prices):
+            if not isinstance(record, dict):
+                errors.append(f"Record {i}: must be an object")
+                continue
+            
+            date = record.get('date')
+            price = record.get('price')
+            currency = record.get('currency', 'USD')
+            
+            # Validate date format (YYYY-MM-DD)
+            if not date:
+                errors.append(f"Record {i}: date is required")
+                continue
+            
+            try:
+                from datetime import datetime
+                datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                errors.append(f"Record {i}: invalid date format (use YYYY-MM-DD)")
+                continue
+            
+            # Validate price
+            if price is None:
+                errors.append(f"Record {i}: price is required")
+                continue
+            
+            try:
+                price = float(price)
+                if price < 0:
+                    errors.append(f"Record {i}: price must be non-negative")
+                    continue
+            except (ValueError, TypeError):
+                errors.append(f"Record {i}: price must be a number")
+                continue
+            
+            valid_records.append({
+                'date': date,
+                'price': price,
+                'currency': currency
+            })
+        
+        if not valid_records:
+            return create_error_response(
+                'NO_VALID_RECORDS',
+                'No valid price records provided',
+                'Check the validation errors',
+                {'errors': errors},
+                status_code=400
+            )
+        
+        # Insert price history
+        inserted = bulk_insert_price_history(product_id, valid_records)
+        
+        response = {
+            'status': 'success',
+            'product_id': product_id,
+            'records_inserted': inserted,
+            'records_validated': len(valid_records)
+        }
+        
+        if errors:
+            response['validation_errors'] = errors
+            response['note'] = f'{len(errors)} record(s) skipped due to validation errors'
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error adding price history for product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'PRICE_HISTORY_ERROR',
+            'Failed to add price history',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+@app.route('/api/products/<int:product_id>/performance-history', methods=['GET'])
+def get_product_performance_history(product_id):
+    """
+    Get performance history for a product.
+    
+    Query parameters:
+    - limit: Maximum number of records (optional, default: 12)
+    
+    Returns:
+    - 200: Success with performance history and statistics
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        # Check if product exists
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        # Get limit parameter
+        limit = request.args.get('limit', 12, type=int)
+        if limit < 1:
+            limit = 12
+        if limit > 100:
+            limit = 100
+        
+        # Get performance history
+        performance_records = get_performance_history(product_id, limit=limit)
+        
+        # Convert to list of dicts
+        performance_list = []
+        for record in performance_records:
+            performance_list.append({
+                'date': record['date'],
+                'sales': record['sales'],
+                'views': record['views'],
+                'conversion_rate': record['conversion_rate'],
+                'revenue': record['revenue']
+            })
+        
+        # Get statistics
+        stats = get_performance_statistics(product_id)
+        
+        response = {
+            'status': 'success',
+            'product_id': product_id,
+            'performance_history': performance_list,
+            'statistics': stats,
+            'has_performance_data': len(performance_list) > 0
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error retrieving performance history for product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'PERFORMANCE_HISTORY_ERROR',
+            'Failed to retrieve performance history',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+@app.route('/api/products/<int:product_id>/performance-history', methods=['POST'])
+def add_product_performance_history(product_id):
+    """
+    Add performance history records for a product.
+    
+    JSON body:
+    - performance: Array of performance records with 'date', 'sales', 'views', 'conversion_rate', 'revenue'
+    
+    Returns:
+    - 200: Success with number of records added
+    - 400: Validation error
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        # Check if product exists
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        # Parse JSON body
+        data = request.get_json()
+        if not data or 'performance' not in data:
+            return create_error_response(
+                'MISSING_PERFORMANCE',
+                'performance array is required',
+                'Send JSON body with performance array',
+                status_code=400
+            )
+        
+        performance = data['performance']
+        if not isinstance(performance, list):
+            return create_error_response(
+                'INVALID_PERFORMANCE',
+                'performance must be an array',
+                status_code=400
+            )
+        
+        # Validate performance records
+        valid_records = []
+        errors = []
+        
+        for i, record in enumerate(performance):
+            if not isinstance(record, dict):
+                errors.append(f"Record {i}: must be an object")
+                continue
+            
+            date = record.get('date')
+            sales = record.get('sales', 0)
+            views = record.get('views', 0)
+            conversion_rate = record.get('conversion_rate', 0.0)
+            revenue = record.get('revenue', 0.0)
+            
+            # Validate date format (YYYY-MM-DD)
+            if not date:
+                errors.append(f"Record {i}: date is required")
+                continue
+            
+            try:
+                from datetime import datetime
+                datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                errors.append(f"Record {i}: invalid date format (use YYYY-MM-DD)")
+                continue
+            
+            # Validate numeric fields
+            try:
+                sales = int(sales)
+                if sales < 0:
+                    errors.append(f"Record {i}: sales must be non-negative")
+                    continue
+            except (ValueError, TypeError):
+                errors.append(f"Record {i}: sales must be a number")
+                continue
+            
+            try:
+                views = int(views)
+                if views < 0:
+                    errors.append(f"Record {i}: views must be non-negative")
+                    continue
+            except (ValueError, TypeError):
+                errors.append(f"Record {i}: views must be a number")
+                continue
+            
+            try:
+                conversion_rate = float(conversion_rate)
+                if conversion_rate < 0 or conversion_rate > 100:
+                    errors.append(f"Record {i}: conversion_rate must be between 0 and 100")
+                    continue
+            except (ValueError, TypeError):
+                errors.append(f"Record {i}: conversion_rate must be a number")
+                continue
+            
+            try:
+                revenue = float(revenue)
+                if revenue < 0:
+                    errors.append(f"Record {i}: revenue must be non-negative")
+                    continue
+            except (ValueError, TypeError):
+                errors.append(f"Record {i}: revenue must be a number")
+                continue
+            
+            valid_records.append({
+                'date': date,
+                'sales': sales,
+                'views': views,
+                'conversion_rate': conversion_rate,
+                'revenue': revenue
+            })
+        
+        if not valid_records:
+            return create_error_response(
+                'NO_VALID_RECORDS',
+                'No valid performance records provided',
+                'Check the validation errors',
+                {'errors': errors},
+                status_code=400
+            )
+        
+        # Insert performance history
+        inserted = bulk_insert_performance_history(product_id, valid_records)
+        
+        response = {
+            'status': 'success',
+            'product_id': product_id,
+            'records_inserted': inserted,
+            'records_validated': len(valid_records)
+        }
+        
+        if errors:
+            response['validation_errors'] = errors
+            response['note'] = f'{len(errors)} record(s) skipped due to validation errors'
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error adding performance history for product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'PERFORMANCE_HISTORY_ERROR',
+            'Failed to add performance history',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=True)

@@ -133,6 +133,31 @@
   - Add visual feedback for drag-and-drop interactions
   - _Requirements: 9.4, 10.3, 10.4_
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 - [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
   - Create test fixtures: 5 historical images, 3 new images, valid/invalid CSVs
   - Test complete workflow: upload historical → upload new → match → verify results
@@ -145,7 +170,7 @@
   - Run with `pytest backend/tests/test_e2e.py -v` - all tests must pass before packaging
   - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
 
-- [ ] 17. Package Windows executable with PyInstaller
+- [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
   - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
   - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --name "Product Matcher"`
   - Create build.bat: `pyinstaller --clean product-matcher.spec`
@@ -153,7 +178,7 @@
   - Package: zip exe + README.txt + sample.csv template
   - _Requirements: 9.2_
 
-- [ ] 18. Package macOS application (optional - if needed)
+- [ ] 18. Package macOS application for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
   - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
   - Create product-matcher-mac.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher"`
   - Create build-mac.sh: `pyinstaller --clean product-matcher-mac.spec`
@@ -165,13 +190,8 @@
 
 ## Future Enhancements (Public Release)
 
-- [ ] 19. Polish UI for public release
-  - Professional color scheme and branding style in the deign language of google android with rounded buttons things of that nature.
-  - gpu acceleratoin to speed up tasks, and ui if need be.
-  - Better onboarding flow with tutorial/step explanation area/or tooltops and other ways to guide user.
-  - Improved results visualization (charts, graphs)
 
-- [ ] 20. Add advanced features
+- [ ] 20. Add advanced features to ui
   - Adjustable similarity weights (color, shape, texture sliders)
   - Batch export with images (not just CSV)
   - Duplicate detection report
@@ -195,12 +215,98 @@
     - Show upgrade prompt when hitting free tier limit
     - Display license status in app (Free/Pro)
 
+
 - [ ] 22.5. Set up distribution and analytics
   - GitHub releases for version management
   - Auto-update mechanism in app (optional)
   - Usage analytics - privacy-respecting, opt-in (optional)
   - Crash reporting (optional)
   - User feedback system (optional)
+
+
+- [x] 24. Add price history tracking feature
+
+- [x] 25. Add performance history tracking feature
+  - **Performance Metrics Support:**
+    - Extend CSV/JSON to include performance metrics per product
+    - Schema: `{ "sku": "ABC123", "performance": [{"date": "2024-01-15", "sales": 150, "views": 1200, "conversion": 12.5}, ...] }`
+    - Support up to 12 months of performance data per product
+  - **Data Storage:**
+    - Create new `performance_history` table with columns: product_id, date, sales, views, conversion_rate, revenue
+    - Link performance records to products via foreign key relationship
+    - Add indexes on product_id and date for efficient querying
+  - **Smart Linking:**
+    - When matching products, automatically link performance history from matched historical products
+    - Display performance trends for matched items in comparison view
+    - Calculate performance statistics: avg sales, total revenue, conversion trends
+  - **UI Display:**
+    - Add performance history chart to product detail/comparison view
+    - Show sparkline charts in match results for quick performance visualization
+    - Display performance statistics alongside similarity scores
+    - Add filter to show only products with performance history data
+  - **Export Enhancement:**
+    - Include performance history data in CSV exports
+    - Add option to export performance trends summary (avg sales, revenue, conversion per product)
+  - _Requirements: New feature - extends Requirements 1, 4, 7_
+
+- [ ] 26. Add CSV Builder UI tool
+  - **Interactive CSV Creator:**
+    - Create modal/page with step-by-step CSV builder
+    - Allow users to upload image folders and auto-populate filenames
+    - Provide form fields for each product: category, sku, name, price, performance
+    - Support multiple folder uploads (different categories)
+    - Real-time CSV preview as user fills in data
+  - **Smart Features:**
+    - Auto-detect category from folder name
+    - Bulk edit fields (apply same value to multiple products)
+    - Copy/paste from Excel support
+    - Validation with visual feedback
+    - Undo/redo functionality
+  - **Price History Builder:**
+    - Visual date picker for price entries
+    - Add/remove price points easily
+    - Quick format: just enter prices, dates auto-generated
+    - Import existing price data from clipboard
+  - **Performance History Builder:**
+    - Visual form for performance metrics
+    - Add/remove performance entries
+    - Calculate conversion rate automatically
+    - Import from clipboard/Excel
+  - **Export Options:**
+    - Download as CSV
+    - Copy to clipboard
+    - Save as template for reuse
+    - Multiple format options (with/without headers, different separators)
+  - **User Experience:**
+    - Progress indicator showing completion
+    - Save draft functionality
+    - Load previous CSV for editing
+    - Clear visual examples and tooltips
+    - Mobile-friendly interface
+  - _Requirements: New feature - improves usability for Requirements 1, 6, 10_
+
+  - **JSON Metadata Support:**
+    - Extend CSV/JSON upload to include optional price history data per product
+    - Schema: `{ "sku": "ABC123", "prices": [{"date": "2024-01-15", "price": 29.99}, ...] }`
+    - Support up to 12 months of historical price data per product
+  - **Data Storage:**
+    - Create new `price_history` table with columns: product_id, date, price, currency
+    - Link price records to products via foreign key relationship
+    - Add indexes on product_id and date for efficient querying
+  - **Smart Linking:**
+    - When matching products, automatically link price history from matched historical products
+    - Display price trends for matched items in comparison view
+    - Calculate price statistics: min, max, average, current trend (up/down/stable)
+  - **UI Display:**
+    - Add price history chart to product detail/comparison view
+    - Show sparkline charts in match results for quick price trend visualization
+    - Display price statistics alongside similarity scores
+    - Add filter to show only products with price history data
+  - **Export Enhancement:**
+    - Include price history data in CSV exports
+    - Add option to export price trends summary (avg, min, max per product)
+  - _Requirements: New feature - extends Requirements 1, 4, 7_
+
 
 - [ ] 23. Marketing and launch
   - Create demo video showing workflow
@@ -209,3 +315,38 @@
   - Reach out to relevant communities (e-commerce, retail)
   - SEO optimization for website
   - Social media presence (Twitter, LinkedIn)
+
+
+- [ ] 25. Implement GPU acceleration for performance-intensive operations
+  - **OpenCV CUDA Support:**
+    - Add opencv-contrib-python with CUDA support to requirements
+    - Detect GPU availability at startup (fallback to CPU if not available)
+    - Add configuration option to enable/disable GPU acceleration
+  - **Image Preprocessing on GPU:**
+    - Use cv2.cuda.GpuMat for image loading and preprocessing
+    - Accelerate resize, color conversion, and normalization operations
+    - Implement batch preprocessing on GPU for multiple images
+  - **Feature Extraction Acceleration:**
+    - Move histogram computation to GPU (color features)
+    - Accelerate HOG/SIFT feature extraction if using GPU-compatible methods
+    - Batch feature extraction for multiple products
+  - **Similarity Computation:**
+    - Use GPU for parallel similarity score computation
+    - Implement batch distance calculations (histogram intersection, chi-square)
+    - Optimize matrix operations with cupy/numpy GPU arrays
+  - **Performance Monitoring:**
+    - Add GPU memory usage monitoring
+    - Log GPU vs CPU performance metrics
+    - Display GPU status in UI (enabled/disabled, memory usage)
+  - **Fallback Handling:**
+    - Gracefully fallback to CPU if GPU operations fail
+    - Provide clear error messages if CUDA not available
+    - Allow users to disable GPU if causing issues
+  - test the changes to see if everythign is working correctly including fallbakcs and normal implementation
+    - other tests.
+
+- [ ] 26. for mac os lets make sure we are arm compativble since most mac os devices now use arm m1-m5 chips now so we should make sure this is the case. a
+    - we may need to update site to detect arm vs x86 mac os devices so that anyone on mac os can download it correctly also updat mac os packing task to include both versions if need be.
+
+
+- [ ] 27. ui redesign for our app to more visuall match the website ui design language right now they look very differnt it should behave the same and the elemetns are good/content is great and accurate and displayed well but the appearance and the vidual design should be more like the website since right now they look very different.

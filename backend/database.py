@@ -109,6 +109,56 @@ def init_db():
             ON features(product_id)
         ''')
         
+        # Create price_history table for tracking historical prices
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                price REAL NOT NULL,
+                currency TEXT DEFAULT 'USD',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Create indexes for price_history table for efficient querying
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_price_history_product_id
+            ON price_history(product_id)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_price_history_date
+            ON price_history(product_id, date)
+        ''')
+        
+        # Create performance_history table for tracking sales/performance metrics
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS performance_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                sales INTEGER DEFAULT 0,
+                views INTEGER DEFAULT 0,
+                conversion_rate REAL DEFAULT 0.0,
+                revenue REAL DEFAULT 0.0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Create indexes for performance_history table
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_performance_history_product_id
+            ON performance_history(product_id)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_performance_history_date
+            ON performance_history(product_id, date)
+        ''')
+        
         conn.commit()
         print("Database initialized successfully with performance indexes")
 
@@ -936,3 +986,476 @@ def normalize_sku(sku: Optional[str]) -> Optional[str]:
         return None
     
     return sku
+
+
+# Price History Functions
+
+def insert_price_history(product_id: int, date: str, price: float, currency: str = 'USD') -> int:
+    """Insert a price history record for a product
+    
+    Args:
+        product_id: ID of the product
+        date: Date in YYYY-MM-DD format
+        price: Price value
+        currency: Currency code (default: USD)
+    
+    Returns:
+        ID of inserted price history record
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO price_history (product_id, date, price, currency)
+            VALUES (?, ?, ?, ?)
+        ''', (product_id, date, price, currency))
+        return cursor.lastrowid
+
+def bulk_insert_price_history(product_id: int, price_records: List[Dict[str, Any]]) -> int:
+    """Bulk insert price history records for a product
+    
+    Args:
+        product_id: ID of the product
+        price_records: List of dicts with 'date', 'price', and optional 'currency' keys
+    
+    Returns:
+        Number of records inserted
+    """
+    if not price_records:
+        return 0
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        records = []
+        for record in price_records:
+            date = record.get('date')
+            price = record.get('price')
+            currency = record.get('currency', 'USD')
+            
+            if date and price is not None:
+                records.append((product_id, date, price, currency))
+        
+        if records:
+            cursor.executemany('''
+                INSERT INTO price_history (product_id, date, price, currency)
+                VALUES (?, ?, ?, ?)
+            ''', records)
+            return len(records)
+        
+        return 0
+
+def get_price_history(product_id: int, limit: int = 12) -> List[sqlite3.Row]:
+    """Get price history for a product
+    
+    Args:
+        product_id: ID of the product
+        limit: Maximum number of records to return (default: 12 months)
+    
+    Returns:
+        List of price history records ordered by date descending
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM price_history
+            WHERE product_id = ?
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (product_id, limit))
+        return cursor.fetchall()
+
+def get_price_statistics(product_id: int) -> Optional[Dict[str, Any]]:
+    """Calculate price statistics for a product
+    
+    Args:
+        product_id: ID of the product
+    
+    Returns:
+        Dictionary with min, max, average, current price, and trend
+        Returns None if no price history exists
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get all prices ordered by date
+        cursor.execute('''
+            SELECT price, date FROM price_history
+            WHERE product_id = ?
+            ORDER BY date ASC
+        ''', (product_id,))
+        
+        records = cursor.fetchall()
+        
+        if not records:
+            return None
+        
+        prices = [r['price'] for r in records]
+        
+        # Calculate statistics
+        min_price = min(prices)
+        max_price = max(prices)
+        avg_price = sum(prices) / len(prices)
+        current_price = records[-1]['price']  # Most recent
+        
+        # Determine trend (compare last 2 prices if available)
+        trend = 'stable'
+        if len(records) >= 2:
+            prev_price = records[-2]['price']
+            if current_price > prev_price * 1.05:  # 5% threshold
+                trend = 'up'
+            elif current_price < prev_price * 0.95:
+                trend = 'down'
+        
+        return {
+            'min': round(min_price, 2),
+            'max': round(max_price, 2),
+            'average': round(avg_price, 2),
+            'current': round(current_price, 2),
+            'trend': trend,
+            'data_points': len(records)
+        }
+
+def link_price_history(source_product_id: int, target_product_id: int) -> int:
+    """Link price history from one product to another
+    
+    Used when matching products to automatically link historical price data
+    
+    Args:
+        source_product_id: Product to copy price history from
+        target_product_id: Product to copy price history to
+    
+    Returns:
+        Number of price records linked
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get price history from source
+        cursor.execute('''
+            SELECT date, price, currency FROM price_history
+            WHERE product_id = ?
+            ORDER BY date DESC
+            LIMIT 12
+        ''', (source_product_id,))
+        
+        source_records = cursor.fetchall()
+        
+        if not source_records:
+            return 0
+        
+        # Insert into target (avoid duplicates by checking date)
+        inserted = 0
+        for record in source_records:
+            try:
+                cursor.execute('''
+                    INSERT INTO price_history (product_id, date, price, currency)
+                    SELECT ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM price_history
+                        WHERE product_id = ? AND date = ?
+                    )
+                ''', (target_product_id, record['date'], record['price'], record['currency'],
+                      target_product_id, record['date']))
+                
+                if cursor.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                logger.error(f"Error linking price record: {e}")
+                continue
+        
+        return inserted
+
+def delete_price_history(product_id: int) -> bool:
+    """Delete all price history for a product
+    
+    Args:
+        product_id: ID of the product
+    
+    Returns:
+        True if any records were deleted
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM price_history WHERE product_id = ?', (product_id,))
+        return cursor.rowcount > 0
+
+def get_products_with_price_history(category: Optional[str] = None, 
+                                   is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
+    """Get all products that have price history data
+    
+    Args:
+        category: Optional category filter
+        is_historical: Optional filter for historical vs new products
+    
+    Returns:
+        List of products with price history
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        conditions = ['EXISTS (SELECT 1 FROM price_history WHERE product_id = p.id)']
+        params = []
+        
+        if category is not None:
+            conditions.append('p.category = ?')
+            params.append(category)
+        
+        if is_historical is not None:
+            conditions.append('p.is_historical = ?')
+            params.append(is_historical)
+        
+        where_clause = ' AND '.join(conditions)
+        
+        cursor.execute(f'''
+            SELECT p.* FROM products p
+            WHERE {where_clause}
+            ORDER BY p.created_at DESC
+        ''', params)
+        
+        return cursor.fetchall()
+
+
+# Performance History Functions
+
+def insert_performance_history(product_id: int, date: str, sales: int = 0, 
+                               views: int = 0, conversion_rate: float = 0.0, 
+                               revenue: float = 0.0) -> int:
+    """Insert a performance history record for a product
+    
+    Args:
+        product_id: ID of the product
+        date: Date in YYYY-MM-DD format
+        sales: Number of sales
+        views: Number of views
+        conversion_rate: Conversion rate percentage (0-100)
+        revenue: Total revenue
+    
+    Returns:
+        ID of inserted performance history record
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO performance_history (product_id, date, sales, views, conversion_rate, revenue)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (product_id, date, sales, views, conversion_rate, revenue))
+        return cursor.lastrowid
+
+def bulk_insert_performance_history(product_id: int, performance_records: List[Dict[str, Any]]) -> int:
+    """Bulk insert performance history records for a product
+    
+    Args:
+        product_id: ID of the product
+        performance_records: List of dicts with 'date', 'sales', 'views', 'conversion_rate', 'revenue' keys
+    
+    Returns:
+        Number of records inserted
+    """
+    if not performance_records:
+        return 0
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        records = []
+        for record in performance_records:
+            date = record.get('date')
+            sales = record.get('sales', 0)
+            views = record.get('views', 0)
+            conversion_rate = record.get('conversion_rate', 0.0)
+            revenue = record.get('revenue', 0.0)
+            
+            if date:
+                records.append((product_id, date, sales, views, conversion_rate, revenue))
+        
+        if records:
+            cursor.executemany('''
+                INSERT INTO performance_history (product_id, date, sales, views, conversion_rate, revenue)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', records)
+            return len(records)
+        
+        return 0
+
+def get_performance_history(product_id: int, limit: int = 12) -> List[sqlite3.Row]:
+    """Get performance history for a product
+    
+    Args:
+        product_id: ID of the product
+        limit: Maximum number of records to return (default: 12 months)
+    
+    Returns:
+        List of performance history records ordered by date descending
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM performance_history
+            WHERE product_id = ?
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (product_id, limit))
+        return cursor.fetchall()
+
+def get_performance_statistics(product_id: int) -> Optional[Dict[str, Any]]:
+    """Calculate performance statistics for a product
+    
+    Args:
+        product_id: ID of the product
+    
+    Returns:
+        Dictionary with total sales, avg conversion, total revenue, trends
+        Returns None if no performance history exists
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get all performance records ordered by date
+        cursor.execute('''
+            SELECT sales, views, conversion_rate, revenue, date 
+            FROM performance_history
+            WHERE product_id = ?
+            ORDER BY date ASC
+        ''', (product_id,))
+        
+        records = cursor.fetchall()
+        
+        if not records:
+            return None
+        
+        # Calculate statistics
+        total_sales = sum(r['sales'] for r in records)
+        total_views = sum(r['views'] for r in records)
+        total_revenue = sum(r['revenue'] for r in records)
+        avg_conversion = sum(r['conversion_rate'] for r in records) / len(records)
+        
+        # Calculate trends (compare last 2 records if available)
+        sales_trend = 'stable'
+        conversion_trend = 'stable'
+        
+        if len(records) >= 2:
+            prev_sales = records[-2]['sales']
+            current_sales = records[-1]['sales']
+            if current_sales > prev_sales * 1.1:  # 10% threshold
+                sales_trend = 'up'
+            elif current_sales < prev_sales * 0.9:
+                sales_trend = 'down'
+            
+            prev_conversion = records[-2]['conversion_rate']
+            current_conversion = records[-1]['conversion_rate']
+            if current_conversion > prev_conversion * 1.05:  # 5% threshold
+                conversion_trend = 'up'
+            elif current_conversion < prev_conversion * 0.95:
+                conversion_trend = 'down'
+        
+        return {
+            'total_sales': total_sales,
+            'total_views': total_views,
+            'total_revenue': round(total_revenue, 2),
+            'avg_conversion': round(avg_conversion, 2),
+            'avg_sales_per_period': round(total_sales / len(records), 1),
+            'sales_trend': sales_trend,
+            'conversion_trend': conversion_trend,
+            'data_points': len(records)
+        }
+
+def link_performance_history(source_product_id: int, target_product_id: int) -> int:
+    """Link performance history from one product to another
+    
+    Used when matching products to automatically link historical performance data
+    
+    Args:
+        source_product_id: Product to copy performance history from
+        target_product_id: Product to copy performance history to
+    
+    Returns:
+        Number of performance records linked
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get performance history from source
+        cursor.execute('''
+            SELECT date, sales, views, conversion_rate, revenue 
+            FROM performance_history
+            WHERE product_id = ?
+            ORDER BY date DESC
+            LIMIT 12
+        ''', (source_product_id,))
+        
+        source_records = cursor.fetchall()
+        
+        if not source_records:
+            return 0
+        
+        # Insert into target (avoid duplicates by checking date)
+        inserted = 0
+        for record in source_records:
+            try:
+                cursor.execute('''
+                    INSERT INTO performance_history (product_id, date, sales, views, conversion_rate, revenue)
+                    SELECT ?, ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM performance_history
+                        WHERE product_id = ? AND date = ?
+                    )
+                ''', (target_product_id, record['date'], record['sales'], record['views'], 
+                      record['conversion_rate'], record['revenue'],
+                      target_product_id, record['date']))
+                
+                if cursor.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                logger.error(f"Error linking performance record: {e}")
+                continue
+        
+        return inserted
+
+def delete_performance_history(product_id: int) -> bool:
+    """Delete all performance history for a product
+    
+    Args:
+        product_id: ID of the product
+    
+    Returns:
+        True if any records were deleted
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM performance_history WHERE product_id = ?', (product_id,))
+        return cursor.rowcount > 0
+
+def get_products_with_performance_history(category: Optional[str] = None, 
+                                         is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
+    """Get all products that have performance history data
+    
+    Args:
+        category: Optional category filter
+        is_historical: Optional filter for historical vs new products
+    
+    Returns:
+        List of products with performance history
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        conditions = ['EXISTS (SELECT 1 FROM performance_history WHERE product_id = p.id)']
+        params = []
+        
+        if category is not None:
+            conditions.append('p.category = ?')
+            params.append(category)
+        
+        if is_historical is not None:
+            conditions.append('p.is_historical = ?')
+            params.append(is_historical)
+        
+        where_clause = ' AND '.join(conditions)
+        
+        cursor.execute(f'''
+            SELECT p.* FROM products p
+            WHERE {where_clause}
+            ORDER BY p.created_at DESC
+        ''', params)
+        
+        return cursor.fetchall()
