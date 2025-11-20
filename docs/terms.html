@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terms of Service - Catalog Match</title>
+    <meta name="description" content="Terms of Service for Catalog Match.">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+
+<body
+    class="min-h-screen flex flex-col bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- Navbar -->
+    <nav id="navbar"
+        class="fixed top-0 w-full z-50 transition-all duration-300 bg-white/80 backdrop-blur-md border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center">
+                    <a href="index.html" class="flex items-center space-x-2 group">
+                        <div class="p-2 bg-indigo-600 rounded-lg group-hover:bg-indigo-700 transition-colors">
+                            <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+                        </div>
+                        <span class="text-xl font-bold text-slate-900">Catalog Match</span>
+                    </a>
+                </div>
+
+                <!-- Desktop Nav -->
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="index.html#features"
+                        class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Features</a>
+                    <a href="index.html#workflow"
+                        class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How it
+                        Works</a>
+                    <a href="pricing.html"
+                        class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</a>
+                    <a href="download.html"
+                        class="px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-full hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/20">
+                        Download Beta
+                    </a>
+                </div>
+
+                <!-- Mobile Toggle -->
+                <div class="md:hidden">
+                    <button id="mobile-menu-btn" class="p-2 text-slate-600 hover:text-slate-900">
+                        <i data-lucide="menu" id="menu-icon" class="h-6 w-6"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-slate-100">
+            <div class="px-4 pt-2 pb-6 space-y-1">
+                <a href="index.html#features"
+                    class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Features</a>
+                <a href="index.html#workflow"
+                    class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">How
+                    it Works</a>
+                <a href="pricing.html"
+                    class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Pricing</a>
+                <div class="pt-4">
+                    <a href="download.html"
+                        class="block w-full text-center px-4 py-3 text-base font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+                        Download Beta
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-grow pt-24 pb-20">
+        <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h1 class="text-4xl font-bold text-slate-900 mb-8">Terms of Service</h1>
+
+            <div class="prose prose-slate max-w-none">
+                <p>Last updated: November 2024</p>
+
+                <h3>1. Acceptance of Terms</h3>
+                <p>By downloading or using Catalog Match, you agree to be bound by these Terms of Service. If you do
+                    not agree to these terms, please do not use the software.</p>
+
+                <h3>2. License</h3>
+                <p>We grant you a limited, non-exclusive, non-transferable license to use Catalog Match for your
+                    personal or internal business purposes, subject to the terms of this agreement.</p>
+
+                <h3>3. Pro Version</h3>
+                <p>The Pro version of Catalog Match is a paid upgrade that unlocks additional features. The license is
+                    a one-time purchase and is valid for the lifetime of the product version.</p>
+
+                <h3>4. Disclaimer</h3>
+                <p>Catalog Match is provided "as is" without warranty of any kind. We are not responsible for any data
+                    loss or damages that may occur from using the software.</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 text-slate-300 py-12 border-t border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+                <div class="col-span-1 md:col-span-2">
+                    <div class="flex items-center space-x-2 mb-4">
+                        <div class="p-2 bg-indigo-600 rounded-lg">
+                            <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+                        </div>
+                        <span class="text-xl font-bold text-white">Catalog Match</span>
+                    </div>
+                    <p class="text-slate-400 max-w-xs">
+                        Empowering businesses to manage visual inventory with next-generation computer vision
+                        technology.
+                    </p>
+                </div>
+
+                <div>
+                    <h4 class="text-white font-semibold mb-4">Product</h4>
+                    <ul class="space-y-2">
+                        <li><a href="download.html" class="hover:text-white transition-colors">Download</a></li>
+                        <li><a href="pricing.html" class="hover:text-white transition-colors">Pricing</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
+                        <li><a href="docs.html" class="hover:text-white transition-colors">Docs</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h4 class="text-white font-semibold mb-4">Company</h4>
+                    <ul class="space-y-2">
+                        <li><a href="#" class="hover:text-white transition-colors">About</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
+                        <li><a href="contact.html" class="hover:text-white transition-colors">Contact</a></li>
+                        <li><a href="privacy.html" class="hover:text-white transition-colors">Privacy</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+                <p class="text-sm text-slate-500">© 2024 CatalogSync AI Inc. All rights reserved.</p>
+                <div class="flex space-x-6 mt-4 md:mt-0">
+                    <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="twitter"
+                            class="w-5 h-5"></i></a>
+                    <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="github"
+                            class="w-5 h-5"></i></a>
+                    <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="linkedin"
+                            class="w-5 h-5"></i></a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="scripts.js"></script>
+</body>
+
+</html>

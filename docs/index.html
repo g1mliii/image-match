@@ -1,233 +1,577 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="CatalogMatch - Smart product comparison for inventory management. Compare new products against your catalog using AI-powered visual similarity analysis.">
-  <meta name="keywords" content="catalog matching, product comparison, inventory management, visual similarity, image matching, product intelligence">
-  <meta name="author" content="CatalogMatch">
-  
-  <!-- Open Graph / Facebook -->
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://g1mliii.github.io/image-match/">
-  <meta property="og:title" content="CatalogMatch - Smart Product Comparison for Inventory Management">
-  <meta property="og:description" content="Compare new products against your catalog using visual similarity analysis. Make smarter inventory decisions with AI-powered matching.">
-  <meta property="og:image" content="https://g1mliii.github.io/image-match/images/og-image.png">
-  
-  <!-- Twitter -->
-  <meta property="twitter:card" content="summary_large_image">
-  <meta property="twitter:url" content="https://g1mliii.github.io/image-match/">
-  <meta property="twitter:title" content="CatalogMatch - Smart Product Comparison for Inventory Management">
-  <meta property="twitter:description" content="Compare new products against your catalog using visual similarity analysis.">
-  <meta property="twitter:image" content="https://g1mliii.github.io/image-match/images/og-image.png">
-  
-  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self' mailto:;">
-  
-  <title>CatalogMatch - Smart Product Comparison for Inventory Management</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="icon" type="image/png" href="images/favicon.png">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Catalog Match - Intelligent Inventory Matching</title>
+  <meta name="description"
+    content="CatalogMatch - Smart product comparison for inventory management. Compare new products against your catalog using AI-powered visual similarity analysis.">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+
+    /* Smooth scrolling */
+    html {
+      scroll-behavior: smooth;
+    }
+  </style>
 </head>
-<body>
-  <!-- Navigation -->
-  <nav class="navbar">
-    <div class="container">
-      <a href="index.html" class="navbar-brand">🔍 CatalogMatch</a>
-      <ul class="navbar-nav">
-        <li><a href="index.html">Home</a></li>
-        <li><a href="pricing.html">Pricing</a></li>
-        <li><a href="docs.html">Docs</a></li>
-        <li><a href="download.html">Download</a></li>
-        <li><a href="contact.html">Contact</a></li>
-      </ul>
+
+<body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- Navbar -->
+  <nav id="navbar" class="fixed top-0 w-full z-50 transition-all duration-300 bg-transparent">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between items-center h-16">
+        <div class="flex items-center">
+          <button onclick="window.scrollTo({top: 0, behavior: 'smooth'})" class="flex items-center space-x-2 group">
+            <div class="p-2 bg-indigo-600 rounded-lg group-hover:bg-indigo-700 transition-colors">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-slate-900">Catalog Match</span>
+          </button>
+        </div>
+
+        <!-- Desktop Nav -->
+        <div class="hidden md:flex items-center space-x-8">
+          <a href="#features"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Features</a>
+          <a href="#workflow" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How it
+            Works</a>
+          <a href="#pricing"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</a>
+          <a href="download.html"
+            class="px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-full hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/20">
+            Download Beta
+          </a>
+        </div>
+
+        <!-- Mobile Toggle -->
+        <div class="md:hidden">
+          <button id="mobile-menu-btn" class="p-2 text-slate-600 hover:text-slate-900">
+            <i data-lucide="menu" id="menu-icon" class="h-6 w-6"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Menu -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-slate-100">
+      <div class="px-4 pt-2 pb-6 space-y-1">
+        <a href="#features"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Features</a>
+        <a href="#workflow"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">How
+          it Works</a>
+        <a href="#pricing"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Pricing</a>
+        <div class="pt-4">
+          <a href="download.html"
+            class="block w-full text-center px-4 py-3 text-base font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+            Download Beta
+          </a>
+        </div>
+      </div>
     </div>
   </nav>
 
-  <!-- Hero Section -->
-  <section class="hero">
-    <div class="container">
-      <h1>Smart Product Comparison for Your Catalog</h1>
-      <p>Compare new products against your existing inventory using AI-powered visual similarity analysis. Make smarter purchasing and inventory decisions with confidence.</p>
-      <div class="hero-cta">
-        <a href="download.html" class="btn btn-accent btn-lg">⬇️ Download Free</a>
-        <a href="docs.html" class="btn btn-outline-white btn-lg">📚 View Documentation</a>
+  <main class="flex-grow">
+    <!-- Hero Section -->
+    <div class="relative pt-32 pb-20 lg:pt-40 lg:pb-28 overflow-hidden">
+      <!-- Abstract Background Shapes -->
+      <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full -z-10">
+        <div
+          class="absolute top-20 left-10 w-72 h-72 bg-indigo-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse">
+        </div>
+        <div
+          class="absolute top-20 right-10 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse delay-75">
+        </div>
+        <div
+          class="absolute -bottom-8 left-1/2 w-96 h-96 bg-teal-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse delay-150">
+        </div>
       </div>
-    </div>
-  </section>
 
-  <!-- Features Section -->
-  <section class="features">
-    <div class="container">
-      <h2 class="section-title">Powerful Features for Product Matching</h2>
-      <p class="section-subtitle">Everything you need to compare products and make informed decisions</p>
-      
-      <div class="grid grid-3">
-        <div class="card">
-          <div class="card-icon">🎨</div>
-          <h3 class="card-title">Visual Similarity</h3>
-          <p class="card-text">Advanced image analysis compares color, shape, and texture to find visually similar products with precision.</p>
-        </div>
-        
-        <div class="card">
-          <div class="card-icon">⚡</div>
-          <h3 class="card-title">Lightning Fast</h3>
-          <p class="card-text">Match against 1,000+ products in seconds. Batch process multiple items simultaneously for maximum efficiency.</p>
-        </div>
-        
-        <div class="card">
-          <div class="card-icon">🎯</div>
-          <h3 class="card-title">Category Filtering</h3>
-          <p class="card-text">Smart category-based matching ensures you only see relevant comparisons within the same product type.</p>
-        </div>
-        
-        <div class="card">
-          <div class="card-icon">📊</div>
-          <h3 class="card-title">Detailed Scoring</h3>
-          <p class="card-text">Get comprehensive similarity scores with breakdowns by color, shape, and texture for transparent results.</p>
-        </div>
-        
-        <div class="card">
-          <div class="card-icon">💻</div>
-          <h3 class="card-title">Desktop App</h3>
-          <p class="card-text">Standalone Windows application - no internet required. Your data stays private and secure on your computer.</p>
-        </div>
-        
-        <div class="card">
-          <div class="card-icon">📁</div>
-          <h3 class="card-title">Batch Processing</h3>
-          <p class="card-text">Upload entire folders of products at once. Process hundreds of items with CSV metadata support.</p>
-        </div>
-      </div>
-    </div>
-  </section>
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+        <div class="text-center max-w-4xl mx-auto">
+          <div
+            class="inline-flex items-center px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-600 text-sm font-medium mb-6">
+            <span class="flex h-2 w-2 bg-indigo-600 rounded-full mr-2"></span>
+            Desktop Software v1.0
+          </div>
 
-  <!-- How It Works Section -->
-  <section>
-    <div class="container">
-      <h2 class="section-title">How It Works</h2>
-      <p class="section-subtitle">Get started in three simple steps</p>
-      
-      <div class="steps">
-        <div class="step">
-          <div class="step-number">1</div>
-          <h3>Upload Historical Catalog</h3>
-          <p>Import your existing product images with categories. Drag and drop folders or use CSV files for metadata.</p>
-        </div>
-        
-        <div class="step">
-          <div class="step-number">2</div>
-          <h3>Add New Products</h3>
-          <p>Upload new product images you want to match. The system extracts visual features automatically.</p>
-        </div>
-        
-        <div class="step">
-          <div class="step-number">3</div>
-          <h3>View Matches</h3>
-          <p>Get ranked results with similarity scores. Compare side-by-side and export results to CSV.</p>
-        </div>
-      </div>
-    </div>
-  </section>
+          <h1 class="text-5xl md:text-6xl font-bold text-slate-900 mb-6 leading-tight">
+            Smart Product Comparison for <span
+              class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">Your Catalog</span>
+          </h1>
+          <p class="text-xl text-slate-600 mb-10 max-w-2xl mx-auto leading-relaxed">
+            Compare new products against your existing inventory using AI-powered visual similarity analysis. Make
+            smarter purchasing and inventory decisions with confidence.
+          </p>
 
-  <!-- Screenshot Section -->
-  <section class="features">
-    <div class="container">
-      <h2 class="section-title">See It In Action</h2>
-      <div class="grid grid-2">
-        <div>
-          <img data-src="images/screenshot-upload.png" alt="Upload interface showing drag and drop functionality" class="lazy-load" style="border-radius: 12px; box-shadow: var(--shadow-md);">
-          <p class="text-center mt-2"><strong>Easy Upload</strong> - Drag and drop folders with CSV metadata</p>
-        </div>
-        <div>
-          <img data-src="images/screenshot-results.png" alt="Results view showing matched products with similarity scores" class="lazy-load" style="border-radius: 12px; box-shadow: var(--shadow-md);">
-          <p class="text-center mt-2"><strong>Clear Results</strong> - Visual matches with detailed scoring</p>
-        </div>
-      </div>
-    </div>
-  </section>
+          <div class="flex flex-col sm:flex-row justify-center gap-4">
+            <a href="download.html"
+              class="px-8 py-4 text-lg font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 flex items-center justify-center">
+              Download for Windows
+              <i data-lucide="arrow-right" class="ml-2 h-5 w-5"></i>
+            </a>
+            <a href="docs.html"
+              class="px-8 py-4 text-lg font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all flex items-center justify-center">
+              View Documentation
+            </a>
+          </div>
 
-  <!-- Social Proof Section -->
-  <section>
-    <div class="container">
-      <h2 class="section-title">Trusted by Businesses</h2>
-      <div class="grid grid-3">
-        <div class="card">
-          <p class="card-text">"CatalogMatch saved us hours of manual comparison work. The visual similarity matching is incredibly accurate."</p>
-          <p><strong>- Sarah J.</strong>, E-commerce Manager</p>
-        </div>
-        
-        <div class="card">
-          <p class="card-text">"We use it daily to check for duplicate products and find similar items in our catalog. Essential tool for our team."</p>
-          <p><strong>- Mike T.</strong>, Inventory Specialist</p>
-        </div>
-        
-        <div class="card">
-          <p class="card-text">"The batch processing feature is a game-changer. We can process hundreds of products in minutes."</p>
-          <p><strong>- Lisa R.</strong>, Product Manager</p>
+          <!-- Stats/Trust -->
+          <div class="mt-16 pt-8 border-t border-slate-200 grid grid-cols-2 md:grid-cols-4 gap-8">
+            <div class="flex flex-col items-center">
+              <i data-lucide="database" class="h-6 w-6 text-slate-400 mb-2"></i>
+              <span class="font-bold text-2xl text-slate-900">Local</span>
+              <span class="text-sm text-slate-500">Database Processing</span>
+            </div>
+            <div class="flex flex-col items-center">
+              <i data-lucide="refresh-cw" class="h-6 w-6 text-slate-400 mb-2"></i>
+              <span class="font-bold text-2xl text-slate-900">100</span>
+              <span class="text-sm text-slate-500">Products per Batch</span>
+            </div>
+            <div class="flex flex-col items-center">
+              <i data-lucide="sliders" class="h-6 w-6 text-slate-400 mb-2"></i>
+              <span class="font-bold text-2xl text-slate-900">0-100</span>
+              <span class="text-sm text-slate-500">Similarity Scoring</span>
+            </div>
+            <div class="flex flex-col items-center">
+              <i data-lucide="monitor" class="h-6 w-6 text-slate-400 mb-2"></i>
+              <span class="font-bold text-2xl text-slate-900">macOS/Win</span>
+              <span class="text-sm text-slate-500">Native Support</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
-  </section>
 
-  <!-- CTA Section -->
-  <section class="hero">
-    <div class="container">
-      <h2>Ready to Get Started?</h2>
-      <p>Download CatalogMatch for free and start comparing products today.</p>
-      <div class="hero-cta">
-        <a href="download.html" class="btn btn-accent btn-lg">⬇️ Download for Windows</a>
-        <a href="pricing.html" class="btn btn-outline-white btn-lg">💰 View Pricing</a>
+    <!-- Features Section -->
+    <section id="features" class="py-20 bg-white">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <h2 class="text-base font-semibold text-indigo-600 tracking-wide uppercase">Powerful Features</h2>
+          <p class="mt-2 text-3xl leading-8 font-extrabold text-slate-900 sm:text-4xl">
+            Built for High-Volume Inventory
+          </p>
+          <p class="mt-4 max-w-2xl text-xl text-slate-500 mx-auto">
+            Stop manually checking spreadsheets. Let our vision engine match your new stock to your old catalog in
+            seconds.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-8">
+          <!-- Feature 1 -->
+          <div
+            class="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-100/50 transition-all duration-300">
+            <div
+              class="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <i data-lucide="eye" class="w-6 h-6 text-indigo-600"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-3">Visual Similarity</h3>
+            <p class="text-slate-600 leading-relaxed">Advanced image analysis compares color, shape, and texture to find
+              visually similar products with precision.</p>
+          </div>
+
+          <!-- Feature 2 -->
+          <div
+            class="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-100/50 transition-all duration-300">
+            <div
+              class="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <i data-lucide="zap" class="w-6 h-6 text-purple-600"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-3">Lightning Fast</h3>
+            <p class="text-slate-600 leading-relaxed">Match against 1,000+ products in seconds. Batch process multiple
+              items simultaneously for maximum efficiency.</p>
+          </div>
+
+          <!-- Feature 3 -->
+          <div
+            class="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-100/50 transition-all duration-300">
+            <div
+              class="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <i data-lucide="target" class="w-6 h-6 text-emerald-600"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-3">Category Filtering</h3>
+            <p class="text-slate-600 leading-relaxed">Smart category-based matching ensures you only see relevant
+              comparisons within the same product type.</p>
+          </div>
+
+          <!-- Feature 4 -->
+          <div
+            class="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-100/50 transition-all duration-300">
+            <div
+              class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <i data-lucide="bar-chart-2" class="w-6 h-6 text-blue-600"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-3">Detailed Scoring</h3>
+            <p class="text-slate-600 leading-relaxed">Get comprehensive similarity scores with breakdowns by color,
+              shape, and texture for transparent results.</p>
+          </div>
+
+          <!-- Feature 5 -->
+          <div
+            class="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-100/50 transition-all duration-300">
+            <div
+              class="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <i data-lucide="monitor" class="w-6 h-6 text-orange-600"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-3">Desktop App</h3>
+            <p class="text-slate-600 leading-relaxed">Standalone Windows application - no internet required. Your data
+              stays private and secure on your computer.</p>
+          </div>
+
+          <!-- Feature 6 -->
+          <div
+            class="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-100/50 transition-all duration-300">
+            <div
+              class="w-12 h-12 bg-pink-50 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <i data-lucide="folder-open" class="w-6 h-6 text-pink-600"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-3">Batch Processing</h3>
+            <p class="text-slate-600 leading-relaxed">Upload entire folders of products at once. Process hundreds of
+              items with CSV metadata support.</p>
+          </div>
+        </div>
       </div>
-      <p class="mt-3" style="color: rgba(255, 255, 255, 0.8); font-size: 0.9rem;">Free version includes 50 products. No credit card required.</p>
-    </div>
-  </section>
+    </section>
+
+    <!-- Workflow Section -->
+    <section id="workflow" class="py-24 bg-slate-900 text-white relative overflow-hidden">
+      <!-- Background Pattern -->
+      <div
+        class="absolute inset-0 bg-[linear-gradient(to_right,#4f4f4f2e_1px,transparent_1px),linear-gradient(to_bottom,#4f4f4f2e_1px,transparent_1px)] bg-[size:14px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]">
+      </div>
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+        <div class="text-center mb-20">
+          <h2 class="text-3xl md:text-4xl font-bold mb-6">How it Works</h2>
+          <p class="text-xl text-slate-400 max-w-3xl mx-auto">
+            Your catalog is messy. Our software cleans it up. <br />
+            Here is the typical workflow for a business user.
+          </p>
+        </div>
+
+        <div class="relative">
+          <!-- Connecting Line (Desktop) -->
+          <div class="hidden md:block absolute top-1/2 left-0 w-full h-1 bg-indigo-900/50 -translate-y-1/2 z-0"></div>
+
+          <div class="grid md:grid-cols-3 gap-12 relative z-10">
+            <!-- Step 1 -->
+            <div
+              class="bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center transform hover:-translate-y-2 transition-transform duration-300 shadow-2xl">
+              <div
+                class="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6 text-white shadow-lg shadow-indigo-600/20">
+                <i data-lucide="upload" class="w-8 h-8"></i>
+              </div>
+              <h3 class="text-xl font-bold mb-4">1. Batch Upload</h3>
+              <p class="text-slate-400 leading-relaxed">
+                Select a "New Arrivals" folder and a "Legacy Catalog" folder from your local drive. The app ingests
+                thousands of images in seconds.
+              </p>
+            </div>
+
+            <!-- Step 2 -->
+            <div
+              class="bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center transform hover:-translate-y-2 transition-transform duration-300 shadow-2xl">
+              <div
+                class="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center mx-auto mb-6 text-white shadow-lg shadow-purple-600/20">
+                <i data-lucide="git-merge" class="w-8 h-8"></i>
+              </div>
+              <h3 class="text-xl font-bold mb-4">2. AI Matching</h3>
+              <p class="text-slate-400 leading-relaxed">
+                The engine identifies visually similar items. It flags exact matches, suggests variants for similar
+                items, and categorizes completely new stock.
+              </p>
+            </div>
+
+            <!-- Step 3 -->
+            <div
+              class="bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center transform hover:-translate-y-2 transition-transform duration-300 shadow-2xl">
+              <div
+                class="w-16 h-16 bg-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 text-white shadow-lg shadow-emerald-600/20">
+                <i data-lucide="line-chart" class="w-8 h-8"></i>
+              </div>
+              <h3 class="text-xl font-bold mb-4">3. Review & Export</h3>
+              <p class="text-slate-400 leading-relaxed">
+                Review similarity scores and match confidence. Approve new entries, flag duplicates, and export the clean
+                dataset to your inventory system.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- UI Mockup / Visual -->
+        <div class="mt-24 bg-slate-800 rounded-xl border border-slate-700 p-2 shadow-2xl max-w-4xl mx-auto">
+          <div class="bg-slate-900 rounded-lg overflow-hidden border border-slate-800">
+            <div class="flex items-center gap-2 px-4 py-3 border-b border-slate-800 bg-slate-800/50">
+              <div class="flex gap-1.5">
+                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+              </div>
+              <div class="ml-4 text-xs text-slate-400 font-mono">Catalog Match - Project: Summer_Inventory_2024</div>
+            </div>
+            <div class="p-6 grid md:grid-cols-2 gap-6">
+              <!-- Left: List -->
+              <div class="space-y-3">
+                <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">New Uploads
+                  (Processing...)</div>
+
+                <!-- Item 1 -->
+                <div class="flex items-center gap-3 p-3 bg-slate-800/50 rounded border border-slate-700">
+                  <div class="w-10 h-10 bg-slate-700 rounded flex items-center justify-center text-xs text-slate-500">
+                    Img</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="h-2 w-24 bg-slate-600 rounded mb-1.5"></div>
+                    <div class="h-2 w-16 bg-slate-700 rounded"></div>
+                  </div>
+                  <div class="text-emerald-400 text-xs font-bold">MATCH</div>
+                </div>
+
+                <!-- Item 2 -->
+                <div class="flex items-center gap-3 p-3 bg-slate-800/50 rounded border border-slate-700">
+                  <div class="w-10 h-10 bg-slate-700 rounded flex items-center justify-center text-xs text-slate-500">
+                    Img</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="h-2 w-24 bg-slate-600 rounded mb-1.5"></div>
+                    <div class="h-2 w-16 bg-slate-700 rounded"></div>
+                  </div>
+                  <div class="text-yellow-400 text-xs font-bold">VARIANT</div>
+                </div>
+
+                <!-- Item 3 -->
+                <div class="flex items-center gap-3 p-3 bg-slate-800/50 rounded border border-slate-700">
+                  <div class="w-10 h-10 bg-slate-700 rounded flex items-center justify-center text-xs text-slate-500">
+                    Img</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="h-2 w-24 bg-slate-600 rounded mb-1.5"></div>
+                    <div class="h-2 w-16 bg-slate-700 rounded"></div>
+                  </div>
+                  <div class="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+
+              </div>
+              <!-- Right: Details -->
+              <div class="bg-slate-800 rounded p-4 border border-slate-700">
+                <div class="flex justify-between items-center mb-4">
+                  <div class="text-sm font-bold text-white">Blue Denim Jacket v2</div>
+                  <div
+                    class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs rounded border border-emerald-500/30 flex items-center gap-1">
+                    <i data-lucide="check-circle-2" class="w-3 h-3"></i>
+                    Exact Match
+                  </div>
+                </div>
+                <div class="space-y-4">
+                  <div>
+                    <div class="text-xs text-slate-500 mb-1">Matched with Legacy ID</div>
+                    <div class="font-mono text-sm text-indigo-300">SKU-9928-XJ</div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-slate-500 mb-1">Similarity Breakdown</div>
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-2">
+                        <div class="text-xs text-slate-400 w-12">Color</div>
+                        <div class="flex-1 bg-slate-700 rounded-full h-2">
+                          <div class="bg-indigo-500 h-2 rounded-full" style="width: 92%"></div>
+                        </div>
+                        <div class="text-xs text-slate-300 w-8">92%</div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <div class="text-xs text-slate-400 w-12">Shape</div>
+                        <div class="flex-1 bg-slate-700 rounded-full h-2">
+                          <div class="bg-purple-500 h-2 rounded-full" style="width: 88%"></div>
+                        </div>
+                        <div class="text-xs text-slate-300 w-8">88%</div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <div class="text-xs text-slate-400 w-12">Texture</div>
+                        <div class="flex-1 bg-slate-700 rounded-full h-2">
+                          <div class="bg-emerald-500 h-2 rounded-full" style="width: 85%"></div>
+                        </div>
+                        <div class="text-xs text-slate-300 w-8">85%</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section id="pricing" class="py-20 bg-slate-50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <h2 class="text-base font-semibold text-indigo-600 tracking-wide uppercase">Pricing</h2>
+          <p class="mt-2 text-3xl leading-8 font-extrabold text-slate-900 sm:text-4xl">
+            Simple, Transparent Pricing
+          </p>
+          <p class="mt-4 max-w-2xl text-xl text-slate-500 mx-auto">
+            Choose the plan that fits your needs. No hidden fees.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+          <!-- Starter Tier -->
+          <div
+            class="relative rounded-3xl p-8 xl:p-10 transition-all duration-300 bg-slate-50 border border-slate-200 hover:border-indigo-300">
+            <h3 class="text-2xl font-bold text-slate-900">Free</h3>
+            <div class="mt-4 flex items-baseline">
+              <span class="text-5xl font-extrabold tracking-tight text-slate-900">$0</span>
+              <span class="ml-2 text-xl text-slate-500 font-medium">forever</span>
+            </div>
+            <p class="mt-4 text-slate-500">For hobbyists or testing the engine.</p>
+
+            <ul class="mt-8 space-y-4">
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Up to 50 Products</p>
+              </li>
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Visual Similarity Matching</p>
+              </li>
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Category Filtering</p>
+              </li>
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Offline Usage</p>
+              </li>
+            </ul>
+
+            <div class="mt-10">
+              <a href="download.html"
+                class="w-full block text-center rounded-xl px-6 py-4 text-lg font-bold transition-all bg-white border border-slate-200 text-slate-900 hover:bg-slate-50">
+                Download Free
+              </a>
+            </div>
+          </div>
+
+          <!-- Business Tier -->
+          <div
+            class="relative rounded-3xl p-8 xl:p-10 transition-all duration-300 bg-slate-50 border-2 border-indigo-600 scale-105 z-10">
+            <div class="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2">
+              <span
+                class="bg-indigo-600 text-white px-4 py-1 rounded-full text-sm font-semibold uppercase tracking-wide shadow-md">
+                Launch Special
+              </span>
+            </div>
+
+            <h3 class="text-2xl font-bold text-slate-900">Pro</h3>
+            <div class="mt-4 flex items-baseline">
+              <span class="text-5xl font-extrabold tracking-tight text-slate-900">$29</span>
+              <span class="ml-2 text-xl text-slate-500 font-medium">one-time</span>
+            </div>
+            <p class="mt-4 text-slate-500">Unlimited products. Lifetime access.</p>
+
+            <ul class="mt-8 space-y-4">
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Unlimited Products</p>
+              </li>
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Priority Support</p>
+              </li>
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Commercial License</p>
+              </li>
+              <li class="flex items-center">
+                <i data-lucide="check" class="h-5 w-5 text-indigo-600 mr-3"></i>
+                <p class="text-base text-slate-600">Lifetime Updates</p>
+              </li>
+            </ul>
+
+            <div class="mt-10">
+              <a href="pricing.html"
+                class="w-full block text-center rounded-xl px-6 py-4 text-lg font-bold transition-all bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg hover:shadow-indigo-200">
+                Get Pro License
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
 
   <!-- Footer -->
-  <footer class="footer">
-    <div class="container">
-      <div class="footer-content">
-        <div class="footer-section">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="index.html">Home</a></li>
-            <li><a href="pricing.html">Pricing</a></li>
-            <li><a href="download.html">Download</a></li>
-            <li><a href="docs.html">Documentation</a></li>
+  <footer class="bg-slate-900 text-slate-300 py-12 border-t border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        <div class="col-span-1 md:col-span-2">
+          <div class="flex items-center space-x-2 mb-4">
+            <div class="p-2 bg-indigo-600 rounded-lg">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-white">Catalog Match</span>
+          </div>
+          <p class="text-slate-400 max-w-xs">
+            Empowering businesses to manage visual inventory with next-generation computer vision technology.
+          </p>
+        </div>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Product</h4>
+          <ul class="space-y-2">
+            <li><a href="download.html" class="hover:text-white transition-colors">Download</a></li>
+            <li><a href="pricing.html" class="hover:text-white transition-colors">Pricing</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
+            <li><a href="docs.html" class="hover:text-white transition-colors">Docs</a></li>
           </ul>
         </div>
-        
-        <div class="footer-section">
-          <h4>Support</h4>
-          <ul>
-            <li><a href="docs.html#faq">FAQ</a></li>
-            <li><a href="docs.html#troubleshooting">Troubleshooting</a></li>
-            <li><a href="contact.html">Contact Us</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Legal</h4>
-          <ul>
-            <li><a href="privacy.html">Privacy Policy</a></li>
-            <li><a href="terms.html">Terms of Service</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Connect</h4>
-          <ul>
-            <li><a href="https://github.com/g1mliii/image-match" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-            <li><a href="https://twitter.com/productmatcher" target="_blank" rel="noopener noreferrer">Twitter</a></li>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Company</h4>
+          <ul class="space-y-2">
+            <li><a href="#" class="hover:text-white transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
+            <li><a href="contact.html" class="hover:text-white transition-colors">Contact</a></li>
+            <li><a href="privacy.html" class="hover:text-white transition-colors">Privacy</a></li>
           </ul>
         </div>
       </div>
-      
-      <div class="footer-bottom">
-        <p>&copy; 2024 CatalogMatch. All rights reserved.</p>
+
+      <div class="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+        <p class="text-sm text-slate-500">© 2024 Catalog Match Inc. All rights reserved.</p>
+        <div class="flex space-x-6 mt-4 md:mt-0">
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="twitter"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="github"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="linkedin"
+              class="w-5 h-5"></i></a>
+        </div>
       </div>
     </div>
   </footer>
 
   <script src="scripts.js"></script>
 </body>
+
 </html>

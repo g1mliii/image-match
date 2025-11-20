@@ -55,5 +55,25 @@ docs/REBRAND-SUMMARY.md
 docs/SECURITY.md
 docs/README.md
 
+# Backup folders
+docs-backup/
+google site creation/
+
+# Node modules (if any)
+node_modules/
+package-lock.json
+package.json
+
+# IDE settings
+.vscode/
+.idea/
+
+# Internal documentation
+ERROR_HANDLING_IMPLEMENTATION.md
+PROJECT_STRUCTURE.md
+SETUP_SIMPLE.md
+ORGANIZATION_SUMMARY.md
+QUICK_REFERENCE.md
+
 # Keep only public-facing files in docs/
 # (index.html, pricing.html, download.html, docs.html, contact.html, 404.html, styles.css, scripts.js, sitemap.xml, robots.txt, _config.yml)

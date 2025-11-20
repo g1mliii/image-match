@@ -1,80 +1,105 @@
-# Product Matching System
+# CatalogMatch
 
-Lightweight desktop application for comparing new products against a historical catalog using image-based similarity analysis.
+**Smart Product Comparison for Inventory Management**
 
-## Features
+CatalogMatch is a desktop application that helps businesses compare new products against their existing inventory using AI-powered visual similarity analysis. Make smarter purchasing and inventory decisions by finding visually similar items in your catalog.
 
-- Upload product images with category classification
-- Visual similarity matching using color, shape, and texture features
-- Category-based filtering
-- Batch processing support
-- Historical product catalog management
-- Simple, fast, no complex build process
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![License](https://img.shields.io/badge/license-Proprietary-red)
 
-## Technology Stack
+## 🌐 Website
 
-- **Frontend**: Vanilla HTML/CSS/JavaScript (no frameworks!)
-- **Backend**: Python + Flask
-- **Desktop**: pywebview (lightweight wrapper)
-- **Image Processing**: OpenCV, scikit-image
+Visit our website: **https://g1mliii.github.io/image-match/**
+
+## ✨ Features
+
+- **Visual Similarity Matching** - Compare products based on color, shape, and texture
+- **Category Filtering** - Match products only within the same category
+- **Batch Processing** - Process up to 100 products at once
+- **Offline Desktop App** - No internet required, your data stays private
+- **CSV Import/Export** - Easy integration with your existing systems
+- **Detailed Scoring** - See similarity breakdowns by feature type
+- **Side-by-Side Comparison** - Visual comparison of matched products
+
+## 🚀 Quick Start
+
+1. **Download** the app from [our website](https://g1mliii.github.io/image-match/download.html)
+2. **Install** by running the executable (Windows only)
+3. **Upload** your historical product catalog
+4. **Match** new products against your catalog
+5. **Review** results and export to CSV
+
+## 📋 System Requirements
+
+### Windows
+- Windows 10 or later (64-bit)
+- 4 GB RAM minimum (8 GB recommended)
+- 500 MB free disk space
+- Display resolution: 1280x720 or higher
+
+## 💰 Pricing
+
+- **Free**: Up to 50 products
+- **Pro**: $29 one-time payment for unlimited products
+
+[View full pricing details](https://g1mliii.github.io/image-match/pricing.html)
+
+## 📚 Documentation
+
+Full documentation is available at: https://g1mliii.github.io/image-match/docs.html
+
+## 🛠️ Technology Stack
+
+- **Backend**: Python, Flask, OpenCV, NumPy
+- **Frontend**: HTML, CSS (Tailwind), JavaScript
 - **Database**: SQLite
+- **Desktop**: PyWebView
 
-## Prerequisites
+## 📦 What's Included
 
-- Python 3.8 or higher
-- pip (Python package manager)
+- Visual similarity engine with color, shape, and texture analysis
+- Category-based filtering system
+- Batch upload and processing
+- CSV metadata import/export
+- Local SQLite database
+- Desktop GUI application
 
-## Installation
+## 🔒 Privacy & Security
 
-Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
+- **100% Offline** - All processing happens on your computer
+- **No Cloud Storage** - Your data never leaves your machine
+- **Local Database** - SQLite database stored in your app data folder
+- **No Tracking** - We don't collect any usage data
 
-## Running the Application
+## 📧 Support
 
-### Development Mode (Browser)
-```bash
-python backend/app.py
-```
-Then open http://127.0.0.1:5000 in your browser
+- **Documentation**: https://g1mliii.github.io/image-match/docs.html
+- **Bug Reports**: https://github.com/g1mliii/image-match/issues
+- **Business Inquiries**: info@anchored.site
 
-### Desktop Mode
-```bash
-python main.py
-```
+## 🗺️ Roadmap
 
-## Building Executable (Optional)
+- [ ] macOS support
+- [ ] Price history tracking
+- [ ] Advanced filtering options
+- [ ] Duplicate detection reports
+- [ ] GPU acceleration
+- [ ] API access for Pro users
 
-Create a standalone executable:
-```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --add-data "backend/static;backend/static" main.py
-```
+## 📄 License
 
-The executable will be in the `dist/` folder.
+Proprietary software. See [Terms of Service](https://g1mliii.github.io/image-match/terms.html) for details.
 
-## Project Structure
+- **Free Version**: Personal use only, up to 50 products
+- **Pro Version**: Commercial use allowed, unlimited products
 
-```
-product-matching-system/
-├── backend/
-│   ├── app.py              # Flask REST API
-│   ├── database.py         # Database operations
-│   ├── image_processing.py # Feature extraction
-│   ├── similarity.py       # Similarity computation
-│   ├── product_matching.py # Matching logic
-│   ├── static/             # Frontend files
-│   │   ├── index.html      # Main UI
-│   │   ├── styles.css      # Styling
-│   │   └── app.js          # Frontend logic
-│   └── uploads/            # Uploaded images
-├── main.py                 # Desktop app launcher
-└── requirements.txt        # Python dependencies
-```
+## 🏢 About
 
-See [SETUP_SIMPLE.md](SETUP_SIMPLE.md) for detailed setup instructions.
+CatalogMatch is developed to help businesses make smarter inventory decisions through visual product comparison. Whether you're managing e-commerce inventory, retail stock, or product catalogs, CatalogMatch helps you quickly identify similar items and avoid duplicate purchases.
 
-## License
+---
 
-MIT
+**© 2024 CatalogMatch. All rights reserved.**
+
+[Website](https://g1mliii.github.io/image-match/) • [Download](https://g1mliii.github.io/image-match/download.html) • [Pricing](https://g1mliii.github.io/image-match/pricing.html) • [Docs](https://g1mliii.github.io/image-match/docs.html)

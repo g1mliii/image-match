@@ -1,340 +1,554 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="CatalogMatch documentation - User guide, FAQ, and troubleshooting for smart product comparison.">
-  
-  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self' mailto:;">
-  
-  <title>Documentation - CatalogMatch</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="icon" type="image/png" href="images/favicon.png">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation - Catalog Match</title>
+  <meta name="description"
+    content="CatalogMatch documentation - User guide, FAQ, and troubleshooting for smart product comparison.">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+
+    /* Smooth scrolling offset for sticky header */
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 100px;
+    }
+  </style>
 </head>
-<body>
-  <!-- Navigation -->
-  <nav class="navbar">
-    <div class="container">
-      <a href="index.html" class="navbar-brand">🔍 CatalogMatch</a>
-      <ul class="navbar-nav">
-        <li><a href="index.html">Home</a></li>
-        <li><a href="pricing.html">Pricing</a></li>
-        <li><a href="docs.html">Docs</a></li>
-        <li><a href="download.html">Download</a></li>
-        <li><a href="contact.html">Contact</a></li>
-      </ul>
+
+<body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- Navbar -->
+  <nav id="navbar"
+    class="fixed top-0 w-full z-50 transition-all duration-300 bg-white/80 backdrop-blur-md border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between items-center h-16">
+        <div class="flex items-center">
+          <a href="index.html" class="flex items-center space-x-2 group">
+            <div class="p-2 bg-indigo-600 rounded-lg group-hover:bg-indigo-700 transition-colors">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-slate-900">Catalog Match</span>
+          </a>
+        </div>
+
+        <!-- Desktop Nav -->
+        <div class="hidden md:flex items-center space-x-8">
+          <a href="index.html#features"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Features</a>
+          <a href="index.html#workflow"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How it Works</a>
+          <a href="pricing.html"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</a>
+          <a href="download.html"
+            class="px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-full hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/20">
+            Download Beta
+          </a>
+        </div>
+
+        <!-- Mobile Toggle -->
+        <div class="md:hidden">
+          <button id="mobile-menu-btn" class="p-2 text-slate-600 hover:text-slate-900">
+            <i data-lucide="menu" id="menu-icon" class="h-6 w-6"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Menu -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-slate-100">
+      <div class="px-4 pt-2 pb-6 space-y-1">
+        <a href="index.html#features"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Features</a>
+        <a href="index.html#workflow"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">How
+          it Works</a>
+        <a href="pricing.html"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Pricing</a>
+        <div class="pt-4">
+          <a href="download.html"
+            class="block w-full text-center px-4 py-3 text-base font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+            Download Beta
+          </a>
+        </div>
+      </div>
     </div>
   </nav>
 
-  <!-- Hero Section -->
-  <section class="hero">
-    <div class="container">
-      <h1>Documentation</h1>
-      <p>Everything you need to know about using CatalogMatch</p>
+  <main class="flex-grow pt-24 pb-20">
+    <!-- Hero Section -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-12">
+      <div class="max-w-3xl">
+        <h1 class="text-4xl md:text-5xl font-bold text-slate-900 mb-6">Documentation</h1>
+        <p class="text-xl text-slate-600 leading-relaxed">
+          Everything you need to know about using CatalogMatch.
+        </p>
+      </div>
     </div>
-  </section>
 
-  <!-- Documentation Content -->
-  <section>
-    <div class="container">
-      <div style="display: grid; grid-template-columns: 250px 1fr; gap: 2rem;">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex flex-col lg:flex-row gap-12">
         <!-- Sidebar Navigation -->
-        <aside class="doc-nav">
-          <h4>Contents</h4>
-          <ul>
-            <li><a href="#quick-start">Quick Start</a></li>
-            <li><a href="#uploading-products">Uploading Products</a></li>
-            <li><a href="#csv-format">CSV Format</a></li>
-            <li><a href="#matching">Running Matches</a></li>
-            <li><a href="#results">Understanding Results</a></li>
-            <li><a href="#license">License Activation</a></li>
-            <li><a href="#faq">FAQ</a></li>
-            <li><a href="#troubleshooting">Troubleshooting</a></li>
-          </ul>
+        <aside class="lg:w-64 flex-shrink-0">
+          <div class="sticky top-24">
+            <h4 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Contents</h4>
+            <nav class="space-y-1">
+              <a href="#quick-start"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">Quick
+                Start</a>
+              <a href="#uploading-products"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">Uploading
+                Products</a>
+              <a href="#csv-format"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">CSV
+                Format</a>
+              <a href="#matching"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">Running
+                Matches</a>
+              <a href="#results"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">Understanding
+                Results</a>
+              <a href="#license"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">License
+                Activation</a>
+              <a href="#faq"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">FAQ</a>
+              <a href="#troubleshooting"
+                class="block px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-md transition-colors">Troubleshooting</a>
+            </nav>
+          </div>
         </aside>
 
         <!-- Main Content -->
-        <div class="doc-content">
-          <h2 id="quick-start">Quick Start Guide</h2>
-          <p>Get started with CatalogMatch in just a few minutes.</p>
-          
-          <h3>Step 1: Launch the Application</h3>
-          <p>Double-click the CatalogMatch executable to launch the app. On first launch, the app will create a database in your system's application data folder.</p>
-          
-          <h3>Step 2: Upload Historical Catalog</h3>
-          <p>Click "Upload Historical Catalog" and select a folder containing your historical product images. You can optionally include a CSV file with product metadata.</p>
-          <ul>
-            <li>Supported formats: JPEG, PNG, WebP</li>
-            <li>Maximum file size: 10 MB per image</li>
-            <li>Recommended image size: 512x512 to 2048x2048 pixels</li>
-          </ul>
-          
-          <h3>Step 3: Upload New Products</h3>
-          <p>Click "Upload New Products" and select a folder containing the products you want to match. Again, you can include a CSV file with metadata.</p>
-          
-          <h3>Step 4: Configure and Match</h3>
-          <p>Set your matching preferences:</p>
-          <ul>
-            <li><strong>Similarity Threshold:</strong> Minimum score (0-100) for matches to appear</li>
-            <li><strong>Result Limit:</strong> Maximum number of matches per product (1-50)</li>
-          </ul>
-          <p>Click "Start Matching" to begin the process.</p>
-          
-          <h3>Step 5: View Results</h3>
-          <p>Browse your results in the grid view. Click any match to see a detailed side-by-side comparison with score breakdowns.</p>
+        <div class="flex-1 min-w-0">
+          <div class="prose prose-slate max-w-none">
 
-          <h2 id="uploading-products">Uploading Products</h2>
-          <p>CatalogMatch supports two ways to upload products: folder upload and CSV metadata.</p>
-          
-          <h3>Folder Upload</h3>
-          <p>Simply drag and drop a folder containing product images onto the upload area. The app will:</p>
-          <ul>
-            <li>Scan all images in the folder</li>
-            <li>Extract visual features automatically</li>
-            <li>Use the filename as the product identifier</li>
-          </ul>
-          
-          <h3>With CSV Metadata</h3>
-          <p>Include a CSV file in your folder to provide additional product information. The CSV file should be named <code>products.csv</code> or <code>metadata.csv</code>.</p>
+            <!-- Quick Start -->
+            <section id="quick-start" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">Quick Start Guide</h2>
+              <p class="text-lg text-slate-600 mb-6">Get started with CatalogMatch in just a few minutes.</p>
 
-          <h2 id="csv-format">CSV Format</h2>
-          <p>Your CSV file should include the following columns (all optional except filename):</p>
-          
-          <pre><code>filename,category,sku,name
-product1.jpg,placemats,SKU-001,Blue Placemat
-product2.jpg,dinnerware,SKU-002,White Plate
-product3.jpg,textiles,,Cotton Napkin</code></pre>
-          
-          <h3>Column Descriptions</h3>
-          <ul>
-            <li><strong>filename</strong> (required): Name of the image file</li>
-            <li><strong>category</strong> (optional): Product category for filtering</li>
-            <li><strong>sku</strong> (optional): Product SKU or identifier</li>
-            <li><strong>name</strong> (optional): Human-readable product name</li>
-          </ul>
-          
-          <p><strong>Notes:</strong></p>
-          <ul>
-            <li>The CSV must include a header row</li>
-            <li>Empty fields are allowed (leave blank or use empty quotes)</li>
-            <li>Values with commas should be quoted: <code>"Red, Blue Placemat"</code></li>
-            <li>If no category is provided, products will match against all categories</li>
-          </ul>
+              <div class="space-y-8">
+                <div class="bg-white p-6 rounded-xl border border-slate-200">
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Step 1: Launch the Application</h3>
+                  <p class="text-slate-600">Double-click the CatalogMatch executable to launch the app. On first launch,
+                    the app will create a database in your system's application data folder.</p>
+                </div>
 
-          <h2 id="matching">Running Matches</h2>
-          <p>The matching process compares new products against your historical catalog using visual similarity analysis.</p>
-          
-          <h3>How Matching Works</h3>
-          <ol>
-            <li><strong>Feature Extraction:</strong> The app analyzes each image for color, shape, and texture features</li>
-            <li><strong>Category Filtering:</strong> Products are only compared within the same category (if specified)</li>
-            <li><strong>Similarity Scoring:</strong> Each comparison generates a score from 0-100</li>
-            <li><strong>Ranking:</strong> Matches are sorted by similarity score (highest first)</li>
-            <li><strong>Filtering:</strong> Only matches above your threshold are shown</li>
-          </ol>
-          
-          <h3>Matching Parameters</h3>
-          <ul>
-            <li><strong>Similarity Threshold (0-100):</strong> Set higher (e.g., 80) to see only very similar products, or lower (e.g., 50) for more matches</li>
-            <li><strong>Result Limit (1-50):</strong> Control how many matches to show per product</li>
-          </ul>
-          
-          <h3>Performance Tips</h3>
-          <ul>
-            <li>Matching 100 products against 1,000 historical items takes ~30 seconds</li>
-            <li>Use categories to speed up matching (fewer comparisons needed)</li>
-            <li>Features are cached - re-matching is faster than initial upload</li>
-          </ul>
+                <div class="bg-white p-6 rounded-xl border border-slate-200">
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Step 2: Upload Historical Catalog</h3>
+                  <p class="text-slate-600 mb-4">Click "Upload Historical Catalog" and select a folder containing your
+                    historical product images. You can optionally include a CSV file with product metadata.</p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Supported formats: JPEG, PNG, WebP</li>
+                    <li>Maximum file size: 10 MB per image</li>
+                    <li>Recommended image size: 512x512 to 2048x2048 pixels</li>
+                  </ul>
+                </div>
 
-          <h2 id="results">Understanding Results</h2>
-          <p>Results are displayed in a grid showing each new product with its top matches.</p>
-          
-          <h3>Similarity Scores</h3>
-          <p>Scores are color-coded for easy interpretation:</p>
-          <ul>
-            <li><strong style="color: #00c9a7;">90-100 (Green):</strong> Potential duplicate - very high similarity</li>
-            <li><strong style="color: #0077be;">70-89 (Blue):</strong> Strong match - visually similar</li>
-            <li><strong style="color: #f39c12;">50-69 (Orange):</strong> Moderate match - some similarities</li>
-            <li><strong style="color: #e74c3c;">Below 50 (Red):</strong> Weak match - limited similarity</li>
-          </ul>
-          
-          <h3>Score Breakdown</h3>
-          <p>Click any match to see detailed scoring:</p>
-          <ul>
-            <li><strong>Color Score:</strong> How similar the color distributions are (50% weight)</li>
-            <li><strong>Shape Score:</strong> How similar the shapes and contours are (30% weight)</li>
-            <li><strong>Texture Score:</strong> How similar the patterns and textures are (20% weight)</li>
-          </ul>
-          
-          <h3>Exporting Results</h3>
-          <p>Click "Export to CSV" to save all results. The export includes:</p>
-          <ul>
-            <li>New product information</li>
-            <li>Matched product information</li>
-            <li>Overall similarity score</li>
-            <li>Individual feature scores (color, shape, texture)</li>
-          </ul>
+                <div class="bg-white p-6 rounded-xl border border-slate-200">
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Step 3: Upload New Products</h3>
+                  <p class="text-slate-600">Click "Upload New Products" and select a folder containing the products you
+                    want to match. Again, you can include a CSV file with metadata.</p>
+                </div>
 
-          <h2 id="license">License Activation</h2>
-          <p>The free version allows up to 50 products. Upgrade to Pro for unlimited products.</p>
-          
-          <h3>Activating Pro License</h3>
-          <ol>
-            <li>Purchase a Pro license from the <a href="pricing.html">pricing page</a></li>
-            <li>You'll receive a license key via email</li>
-            <li>In the app, go to <strong>Help → Enter License Key</strong></li>
-            <li>Paste your license key and click "Activate"</li>
-            <li>The app will unlock all Pro features immediately</li>
-          </ol>
-          
-          <h3>License Key Format</h3>
-          <p>License keys look like: <code>XXXX-XXXX-XXXX-XXXX</code></p>
-          
-          <h3>Multiple Computers</h3>
-          <p>Your Pro license can be used on up to 3 computers. Simply enter the same license key on each machine.</p>
+                <div class="bg-white p-6 rounded-xl border border-slate-200">
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Step 4: Configure and Match</h3>
+                  <p class="text-slate-600 mb-4">Set your matching preferences:</p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-4">
+                    <li><strong>Similarity Threshold:</strong> Minimum score (0-100) for matches to appear</li>
+                    <li><strong>Result Limit:</strong> Maximum number of matches per product (1-50)</li>
+                  </ul>
+                  <p class="text-slate-600">Click "Start Matching" to begin the process.</p>
+                </div>
 
-          <h2 id="faq">Frequently Asked Questions</h2>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">What image formats are supported?</h3>
-            <p class="faq-answer">JPEG (.jpg, .jpeg), PNG (.png), and WebP (.webp) formats are supported. Maximum file size is 10 MB per image.</p>
-          </div>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">How accurate is the matching?</h3>
-            <p class="faq-answer">Matching accuracy depends on image quality and product similarity. The system analyzes color, shape, and texture features. Products with similar visual characteristics will score higher. For best results, use clear, well-lit product photos with minimal background.</p>
-          </div>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">Can I match products without categories?</h3>
-            <p class="faq-answer">Yes! If you don't specify categories, products will be matched against the entire historical catalog. However, using categories improves accuracy and speed by limiting comparisons to relevant products.</p>
-          </div>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">Where is my data stored?</h3>
-            <p class="faq-answer">All data is stored locally on your computer. Windows: <code>%APPDATA%\ProductMatcher\</code>, macOS: <code>~/Library/Application Support/ProductMatcher/</code>. No data is sent to external servers.</p>
-          </div>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">Can I delete products from my catalog?</h3>
-            <p class="faq-answer">Currently, the app doesn't have a built-in delete feature. To reset your catalog, close the app and delete the database file from the data folder. A delete feature will be added in a future update.</p>
-          </div>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">How do I update the app?</h3>
-            <p class="faq-answer">Check the <a href="download.html">download page</a> for the latest version. Download and run the new version - your existing data will be preserved. Auto-update functionality is coming in a future release.</p>
-          </div>
-          
-          <div class="faq-item">
-            <h3 class="faq-question">What's the difference between Free and Pro?</h3>
-            <p class="faq-answer">The free version limits you to 50 products total (historical + new). Pro removes this limit, allowing unlimited products. All other features are identical. See the <a href="pricing.html">pricing page</a> for details.</p>
-          </div>
+                <div class="bg-white p-6 rounded-xl border border-slate-200">
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Step 5: View Results</h3>
+                  <p class="text-slate-600">Browse your results in the grid view. Click any match to see a detailed
+                    side-by-side comparison with score breakdowns.</p>
+                </div>
+              </div>
+            </section>
 
-          <h2 id="troubleshooting">Troubleshooting</h2>
-          
-          <h3>App Won't Launch</h3>
-          <p><strong>Windows:</strong> If Windows SmartScreen blocks the app, click "More info" then "Run anyway". The app is safe but not yet code-signed.</p>
-          <p><strong>macOS:</strong> If macOS blocks the app, go to System Preferences → Security & Privacy → click "Open Anyway".</p>
-          
-          <h3>Images Not Processing</h3>
-          <ul>
-            <li>Check that images are in supported formats (JPEG, PNG, WebP)</li>
-            <li>Verify images are under 10 MB</li>
-            <li>Ensure images aren't corrupted (try opening them in an image viewer)</li>
-            <li>Check the app logs for specific error messages</li>
-          </ul>
-          
-          <h3>Matching Takes Too Long</h3>
-          <ul>
-            <li>Use categories to reduce the number of comparisons</li>
-            <li>Process products in smaller batches</li>
-            <li>Ensure your computer meets the minimum system requirements</li>
-            <li>Close other resource-intensive applications</li>
-          </ul>
-          
-          <h3>No Matches Found</h3>
-          <ul>
-            <li>Lower your similarity threshold (try 50 instead of 80)</li>
-            <li>Check that categories match between new and historical products</li>
-            <li>Verify that historical products were uploaded successfully</li>
-            <li>Ensure images are clear and show the actual products</li>
-          </ul>
-          
-          <h3>CSV Not Recognized</h3>
-          <ul>
-            <li>Ensure the CSV file is named <code>products.csv</code> or <code>metadata.csv</code></li>
-            <li>Verify the CSV has a header row with column names</li>
-            <li>Check that the <code>filename</code> column exists and matches your image files</li>
-            <li>Save the CSV with UTF-8 encoding</li>
-          </ul>
-          
-          <h3>License Key Not Working</h3>
-          <ul>
-            <li>Check for typos - license keys are case-sensitive</li>
-            <li>Ensure you're copying the entire key (format: XXXX-XXXX-XXXX-XXXX)</li>
-            <li>Verify your internet connection (required for activation)</li>
-            <li>Contact support if the key still doesn't work</li>
-          </ul>
-          
-          <h3>Still Having Issues?</h3>
-          <p>If you're still experiencing problems:</p>
-          <ul>
-            <li>Check the <a href="https://github.com/g1mliii/image-match/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a> page for known issues</li>
-            <li><a href="contact.html">Contact support</a> with details about your problem</li>
-            <li>Include your operating system, app version, and any error messages</li>
-          </ul>
+            <!-- Uploading Products -->
+            <section id="uploading-products" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">Uploading Products</h2>
+              <p class="text-lg text-slate-600 mb-6">CatalogMatch supports two ways to upload products: folder upload
+                and CSV metadata.</p>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Folder Upload</h3>
+              <p class="text-slate-600 mb-4">Simply drag and drop a folder containing product images onto the upload
+                area. The app will:</p>
+              <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-6">
+                <li>Scan all images in the folder</li>
+                <li>Extract visual features automatically</li>
+                <li>Use the filename as the product identifier</li>
+              </ul>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">With CSV Metadata</h3>
+              <p class="text-slate-600">Include a CSV file in your folder to provide additional product information. The
+                CSV file should be named <code
+                  class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">products.csv</code> or <code
+                  class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">metadata.csv</code>.</p>
+            </section>
+
+            <!-- CSV Format -->
+            <section id="csv-format" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">CSV Format</h2>
+              <p class="text-lg text-slate-600 mb-6">Your CSV file should include the following columns (all optional
+                except filename):</p>
+
+              <div class="bg-slate-900 text-slate-300 p-4 rounded-lg font-mono text-sm mb-6 overflow-x-auto">
+                filename,category,sku,name<br>
+                product1.jpg,placemats,SKU-001,Blue Placemat<br>
+                product2.jpg,dinnerware,SKU-002,White Plate<br>
+                product3.jpg,textiles,,Cotton Napkin
+              </div>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Column Descriptions</h3>
+              <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-6">
+                <li><strong>filename</strong> (required): Name of the image file</li>
+                <li><strong>category</strong> (optional): Product category for filtering</li>
+                <li><strong>sku</strong> (optional): Product SKU or identifier</li>
+                <li><strong>name</strong> (optional): Human-readable product name</li>
+              </ul>
+
+              <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                <p class="font-bold text-yellow-800 mb-2">Notes:</p>
+                <ul class="list-disc list-inside text-yellow-700 space-y-1">
+                  <li>The CSV must include a header row</li>
+                  <li>Empty fields are allowed (leave blank or use empty quotes)</li>
+                  <li>Values with commas should be quoted: <code
+                      class="bg-yellow-100 px-1 rounded">"Red, Blue Placemat"</code></li>
+                  <li>If no category is provided, products will match against all categories</li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- Running Matches -->
+            <section id="matching" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">Running Matches</h2>
+              <p class="text-lg text-slate-600 mb-6">The matching process compares new products against your historical
+                catalog using visual similarity analysis.</p>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">How Matching Works</h3>
+              <ol class="list-decimal list-inside text-slate-600 space-y-2 ml-4 mb-6">
+                <li><strong>Feature Extraction:</strong> The app analyzes each image for color, shape, and texture
+                  features</li>
+                <li><strong>Category Filtering:</strong> Products are only compared within the same category (if
+                  specified)</li>
+                <li><strong>Similarity Scoring:</strong> Each comparison generates a score from 0-100</li>
+                <li><strong>Ranking:</strong> Matches are sorted by similarity score (highest first)</li>
+                <li><strong>Filtering:</strong> Only matches above your threshold are shown</li>
+              </ol>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Matching Parameters</h3>
+              <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-6">
+                <li><strong>Similarity Threshold (0-100):</strong> Set higher (e.g., 80) to see only very similar
+                  products, or lower (e.g., 50) for more matches</li>
+                <li><strong>Result Limit (1-50):</strong> Control how many matches to show per product</li>
+              </ul>
+
+              <div class="bg-indigo-50 border-l-4 border-indigo-500 p-4">
+                <p class="font-bold text-indigo-900 mb-2">Performance Tips:</p>
+                <ul class="list-disc list-inside text-indigo-800 space-y-1">
+                  <li>Matching 100 products against 1,000 historical items takes ~30 seconds</li>
+                  <li>Use categories to speed up matching (fewer comparisons needed)</li>
+                  <li>Features are cached - re-matching is faster than initial upload</li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- Understanding Results -->
+            <section id="results" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">Understanding Results</h2>
+              <p class="text-lg text-slate-600 mb-6">Results are displayed in a grid showing each new product with its
+                top matches.</p>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Similarity Scores</h3>
+              <p class="text-slate-600 mb-4">Scores are color-coded for easy interpretation:</p>
+              <div class="grid sm:grid-cols-2 gap-4 mb-6">
+                <div class="p-4 bg-emerald-50 border border-emerald-100 rounded-lg">
+                  <strong class="text-emerald-700 block mb-1">90-100 (Green)</strong>
+                  <span class="text-emerald-600 text-sm">Potential duplicate - very high similarity</span>
+                </div>
+                <div class="p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                  <strong class="text-blue-700 block mb-1">70-89 (Blue)</strong>
+                  <span class="text-blue-600 text-sm">Strong match - visually similar</span>
+                </div>
+                <div class="p-4 bg-orange-50 border border-orange-100 rounded-lg">
+                  <strong class="text-orange-700 block mb-1">50-69 (Orange)</strong>
+                  <span class="text-orange-600 text-sm">Moderate match - some similarities</span>
+                </div>
+                <div class="p-4 bg-red-50 border border-red-100 rounded-lg">
+                  <strong class="text-red-700 block mb-1">Below 50 (Red)</strong>
+                  <span class="text-red-600 text-sm">Weak match - limited similarity</span>
+                </div>
+              </div>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Score Breakdown</h3>
+              <p class="text-slate-600 mb-4">Click any match to see detailed scoring:</p>
+              <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-6">
+                <li><strong>Color Score:</strong> How similar the color distributions are (50% weight)</li>
+                <li><strong>Shape Score:</strong> How similar the shapes and contours are (30% weight)</li>
+                <li><strong>Texture Score:</strong> How similar the patterns and textures are (20% weight)</li>
+              </ul>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Exporting Results</h3>
+              <p class="text-slate-600 mb-4">Click "Export to CSV" to save all results. The export includes:</p>
+              <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                <li>New product information</li>
+                <li>Matched product information</li>
+                <li>Overall similarity score</li>
+                <li>Individual feature scores (color, shape, texture)</li>
+              </ul>
+            </section>
+
+            <!-- License Activation -->
+            <section id="license" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">License Activation</h2>
+              <p class="text-lg text-slate-600 mb-6">The free version allows up to 50 products. Upgrade to Pro for
+                unlimited products.</p>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Activating Pro License</h3>
+              <ol class="list-decimal list-inside text-slate-600 space-y-2 ml-4 mb-6">
+                <li>Purchase a Pro license from the <a href="pricing.html"
+                    class="text-indigo-600 hover:underline">pricing page</a></li>
+                <li>You'll receive a license key via email</li>
+                <li>In the app, go to <strong>Help → Enter License Key</strong></li>
+                <li>Paste your license key and click "Activate"</li>
+                <li>The app will unlock all Pro features immediately</li>
+              </ol>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">License Key Format</h3>
+              <p class="text-slate-600 mb-6">License keys look like: <code
+                  class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">XXXX-XXXX-XXXX-XXXX</code></p>
+
+              <h3 class="text-xl font-bold text-slate-900 mb-3">Multiple Computers</h3>
+              <p class="text-slate-600">Your Pro license can be used on up to 3 computers. Simply enter the same license
+                key on each machine.</p>
+            </section>
+
+            <!-- FAQ -->
+            <section id="faq" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">Frequently Asked Questions</h2>
+
+              <div class="space-y-6">
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">What image formats are supported?</h3>
+                  <p class="text-slate-600">JPEG (.jpg, .jpeg), PNG (.png), and WebP (.webp) formats are supported.
+                    Maximum file size is 10 MB per image.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">How accurate is the matching?</h3>
+                  <p class="text-slate-600">Matching accuracy depends on image quality and product similarity. The
+                    system analyzes color, shape, and texture features. Products with similar visual characteristics
+                    will score higher. For best results, use clear, well-lit product photos with minimal background.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">Can I match products without categories?</h3>
+                  <p class="text-slate-600">Yes! If you don't specify categories, products will be matched against the
+                    entire historical catalog. However, using categories improves accuracy and speed by limiting
+                    comparisons to relevant products.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">Where is my data stored?</h3>
+                  <p class="text-slate-600">All data is stored locally on your computer. Windows: <code
+                      class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">%APPDATA%\ProductMatcher\</code>,
+                    macOS: <code
+                      class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">~/Library/Application Support/ProductMatcher/</code>.
+                    No data is sent to external servers.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">Can I delete products from my catalog?</h3>
+                  <p class="text-slate-600">Currently, the app doesn't have a built-in delete feature. To reset your
+                    catalog, close the app and delete the database file from the data folder. A delete feature will be
+                    added in a future update.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">How do I update the app?</h3>
+                  <p class="text-slate-600">Check the <a href="download.html"
+                      class="text-indigo-600 hover:underline">download page</a> for the latest version. Download and run
+                    the new version - your existing data will be preserved. Auto-update functionality is coming in a
+                    future release.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">What's the difference between Free and Pro?</h3>
+                  <p class="text-slate-600">The free version limits you to 50 products total (historical + new). Pro
+                    removes this limit, allowing unlimited products. All other features are identical. See the <a
+                      href="pricing.html" class="text-indigo-600 hover:underline">pricing page</a> for details.</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- Troubleshooting -->
+            <section id="troubleshooting" class="mb-16 scroll-mt-24">
+              <h2 class="text-3xl font-bold text-slate-900 mb-6">Troubleshooting</h2>
+
+              <div class="space-y-8">
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">App Won't Launch</h3>
+                  <p class="text-slate-600 mb-2"><strong>Windows:</strong> If Windows SmartScreen blocks the app, click
+                    "More info" then "Run anyway". The app is safe but not yet code-signed.</p>
+                  <p class="text-slate-600"><strong>macOS:</strong> If macOS blocks the app, go to System Preferences →
+                    Security & Privacy → click "Open Anyway".</p>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Images Not Processing</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Check that images are in supported formats (JPEG, PNG, WebP)</li>
+                    <li>Verify images are under 10 MB</li>
+                    <li>Ensure images aren't corrupted (try opening them in an image viewer)</li>
+                    <li>Check the app logs for specific error messages</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Matching Takes Too Long</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Use categories to reduce the number of comparisons</li>
+                    <li>Process products in smaller batches</li>
+                    <li>Ensure your computer meets the minimum system requirements</li>
+                    <li>Close other resource-intensive applications</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">No Matches Found</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Lower your similarity threshold (try 50 instead of 80)</li>
+                    <li>Check that categories match between new and historical products</li>
+                    <li>Verify that historical products were uploaded successfully</li>
+                    <li>Ensure images are clear and show the actual products</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">CSV Not Recognized</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Ensure the CSV file is named <code
+                        class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">products.csv</code> or <code
+                        class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">metadata.csv</code></li>
+                    <li>Verify the CSV has a header row with column names</li>
+                    <li>Check that the <code class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">filename</code>
+                      column exists and matches your image files</li>
+                    <li>Save the CSV with UTF-8 encoding</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">License Key Not Working</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Check for typos - license keys are case-sensitive</li>
+                    <li>Ensure you're copying the entire key (format: XXXX-XXXX-XXXX-XXXX)</li>
+                    <li>Verify your internet connection (required for activation)</li>
+                    <li>Contact support if the key still doesn't work</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div class="mt-12 bg-slate-900 text-white p-8 rounded-2xl text-center">
+                <h3 class="text-2xl font-bold mb-4">Still Having Issues?</h3>
+                <p class="text-slate-300 mb-8">If you're still experiencing problems, our support team is here to help.
+                </p>
+                <div class="flex flex-col sm:flex-row justify-center gap-4">
+                  <a href="https://github.com/g1mliii/image-match/issues" target="_blank" rel="noopener noreferrer"
+                    class="px-6 py-3 bg-white text-slate-900 rounded-lg font-semibold hover:bg-slate-100 transition-colors">
+                    Check GitHub Issues
+                  </a>
+                  <a href="contact.html"
+                    class="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors">
+                    Contact Support
+                  </a>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </div>
-  </section>
+
+  </main>
 
   <!-- Footer -->
-  <footer class="footer">
-    <div class="container">
-      <div class="footer-content">
-        <div class="footer-section">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="index.html">Home</a></li>
-            <li><a href="pricing.html">Pricing</a></li>
-            <li><a href="download.html">Download</a></li>
-            <li><a href="docs.html">Documentation</a></li>
+  <footer class="bg-slate-900 text-slate-300 py-12 border-t border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        <div class="col-span-1 md:col-span-2">
+          <div class="flex items-center space-x-2 mb-4">
+            <div class="p-2 bg-indigo-600 rounded-lg">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-white">Catalog Match</span>
+          </div>
+          <p class="text-slate-400 max-w-xs">
+            Empowering businesses to manage visual inventory with next-generation computer vision technology.
+          </p>
+        </div>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Product</h4>
+          <ul class="space-y-2">
+            <li><a href="download.html" class="hover:text-white transition-colors">Download</a></li>
+            <li><a href="pricing.html" class="hover:text-white transition-colors">Pricing</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
+            <li><a href="docs.html" class="hover:text-white transition-colors">Docs</a></li>
           </ul>
         </div>
-        
-        <div class="footer-section">
-          <h4>Support</h4>
-          <ul>
-            <li><a href="docs.html#faq">FAQ</a></li>
-            <li><a href="docs.html#troubleshooting">Troubleshooting</a></li>
-            <li><a href="contact.html">Contact Us</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Legal</h4>
-          <ul>
-            <li><a href="privacy.html">Privacy Policy</a></li>
-            <li><a href="terms.html">Terms of Service</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Connect</h4>
-          <ul>
-            <li><a href="https://github.com/g1mliii/image-match" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-            <li><a href="https://twitter.com/productmatcher" target="_blank" rel="noopener noreferrer">Twitter</a></li>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Company</h4>
+          <ul class="space-y-2">
+            <li><a href="#" class="hover:text-white transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
+            <li><a href="contact.html" class="hover:text-white transition-colors">Contact</a></li>
+            <li><a href="privacy.html" class="hover:text-white transition-colors">Privacy</a></li>
           </ul>
         </div>
       </div>
-      
-      <div class="footer-bottom">
-        <p>&copy; 2024 CatalogMatch. All rights reserved.</p>
+
+      <div class="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+        <p class="text-sm text-slate-500">© 2024 Catalog Match Inc. All rights reserved.</p>
+        <div class="flex space-x-6 mt-4 md:mt-0">
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="twitter"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="github"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="linkedin"
+              class="w-5 h-5"></i></a>
+        </div>
       </div>
     </div>
   </footer>
 
   <script src="scripts.js"></script>
 </body>
+
 </html>

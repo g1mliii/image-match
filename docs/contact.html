@@ -1,165 +1,277 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Contact CatalogMatch support team. Get help with technical issues, licensing, or general inquiries.">
-  
-  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-src https://docs.google.com; base-uri 'self'; form-action 'self' mailto:;">
-  
-  <title>Contact - CatalogMatch</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="icon" type="image/png" href="images/favicon.png">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contact - Catalog Match</title>
+  <meta name="description"
+    content="Contact CatalogMatch support team. Get help with technical issues, licensing, or general inquiries.">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+  </style>
 </head>
-<body>
-  <!-- Navigation -->
-  <nav class="navbar">
-    <div class="container">
-      <a href="index.html" class="navbar-brand">🔍 CatalogMatch</a>
-      <ul class="navbar-nav">
-        <li><a href="index.html">Home</a></li>
-        <li><a href="pricing.html">Pricing</a></li>
-        <li><a href="docs.html">Docs</a></li>
-        <li><a href="download.html">Download</a></li>
-        <li><a href="contact.html">Contact</a></li>
-      </ul>
+
+<body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- Navbar -->
+  <nav id="navbar"
+    class="fixed top-0 w-full z-50 transition-all duration-300 bg-white/80 backdrop-blur-md border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between items-center h-16">
+        <div class="flex items-center">
+          <a href="index.html" class="flex items-center space-x-2 group">
+            <div class="p-2 bg-indigo-600 rounded-lg group-hover:bg-indigo-700 transition-colors">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-slate-900">Catalog Match</span>
+          </a>
+        </div>
+
+        <!-- Desktop Nav -->
+        <div class="hidden md:flex items-center space-x-8">
+          <a href="index.html#features"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Features</a>
+          <a href="index.html#workflow"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How it Works</a>
+          <a href="pricing.html"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</a>
+          <a href="download.html"
+            class="px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-full hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/20">
+            Download Beta
+          </a>
+        </div>
+
+        <!-- Mobile Toggle -->
+        <div class="md:hidden">
+          <button id="mobile-menu-btn" class="p-2 text-slate-600 hover:text-slate-900">
+            <i data-lucide="menu" id="menu-icon" class="h-6 w-6"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Menu -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-slate-100">
+      <div class="px-4 pt-2 pb-6 space-y-1">
+        <a href="index.html#features"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Features</a>
+        <a href="index.html#workflow"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">How
+          it Works</a>
+        <a href="pricing.html"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Pricing</a>
+        <div class="pt-4">
+          <a href="download.html"
+            class="block w-full text-center px-4 py-3 text-base font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+            Download Beta
+          </a>
+        </div>
+      </div>
     </div>
   </nav>
 
-  <!-- Hero Section -->
-  <section class="hero">
-    <div class="container">
-      <h1>Get In Touch</h1>
-      <p>We're here to help with any questions or issues you may have.</p>
-    </div>
-  </section>
-
-  <!-- Contact Options -->
-  <section>
-    <div class="container">
-      <div class="grid grid-2">
-        <div class="card text-center">
-          <div class="card-icon" style="margin: 0 auto;">🐛</div>
-          <h3 class="card-title">Bug Reports</h3>
-          <p class="card-text">Report technical issues</p>
-          <p><a href="https://github.com/g1mliii/image-match/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a></p>
-          <p class="mt-2" style="font-size: 0.875rem; color: var(--text-light);">Public issue tracker</p>
-        </div>
-        
-        <div class="card text-center">
-          <div class="card-icon" style="margin: 0 auto;">💼</div>
-          <h3 class="card-title">Business Inquiries</h3>
-          <p class="card-text">Partnerships and enterprise</p>
-          <p><a href="mailto:info@anchored.site">info@anchored.site</a></p>
-          <p class="mt-2" style="font-size: 0.875rem; color: var(--text-light);">Custom solutions available</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Contact Form -->
-  <section class="features">
-    <div class="container-narrow">
-      <h2 class="section-title">Send Us a Message</h2>
-      
-      <div style="background: var(--bg-white); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: var(--spacing-md); margin-bottom: var(--spacing-md);">
-        <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSePyHqUazsZza3Ci4qey9dp0VUGekSkJDCuCXnnEuKUe3zjMg/viewform?embedded=true" width="100%" height="1200" frameborder="0" marginheight="0" marginwidth="0" style="border-radius: var(--radius-sm);">Loading…</iframe>
-        
-        <p class="text-center mt-2" style="font-size: 0.875rem;">
-          <strong>Prefer to open in a new tab?</strong> <a href="https://forms.gle/BJpmtiVWk7ic3ezX8" target="_blank" rel="noopener noreferrer">Click here to open the form</a>
-        </p>
-      </div>
-      
-      <p class="text-center" style="font-size: 0.875rem; color: var(--text-light);">
-        We typically respond within 24-48 hours. For urgent business inquiries, email us at <a href="mailto:info@anchored.site">info@anchored.site</a>.
-      </p>
-    </div>
-  </section>
-
-  <!-- FAQ Section -->
-  <section>
-    <div class="container-narrow">
-      <h2 class="section-title">Before You Contact Us</h2>
-      <p class="text-center mb-3">Check if your question is already answered:</p>
-      
-      <div class="grid grid-2">
-        <div class="card">
-          <h3>📚 Documentation</h3>
-          <p>Comprehensive guides, tutorials, and troubleshooting tips.</p>
-          <a href="docs.html" class="btn btn-outline mt-2">View Docs</a>
-        </div>
-        
-        <div class="card">
-          <h3>❓ FAQ</h3>
-          <p>Answers to the most common questions about Product Matcher.</p>
-          <a href="docs.html#faq" class="btn btn-outline mt-2">Read FAQ</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Support Hours -->
-  <section class="features">
-    <div class="container-narrow">
-      <div class="card text-center">
-        <h2>Support Hours</h2>
-        <p>Our support team is available:</p>
-        <p><strong>Monday - Friday:</strong> 9:00 AM - 5:00 PM EST</p>
-        <p><strong>Saturday - Sunday:</strong> Closed</p>
-        <p class="mt-2" style="font-size: 0.875rem; color: var(--text-light);">
-          Pro license holders receive priority support with faster response times.
+  <main class="flex-grow pt-24 pb-20">
+    <!-- Hero Section -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-16">
+      <div class="text-center max-w-3xl mx-auto">
+        <h1 class="text-4xl md:text-5xl font-bold text-slate-900 mb-6">Get In Touch</h1>
+        <p class="text-xl text-slate-600 leading-relaxed">
+          We're here to help with any questions or issues you may have.
         </p>
       </div>
     </div>
-  </section>
+
+    <!-- Contact Options -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-20">
+      <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        <!-- Bug Reports -->
+        <div
+          class="bg-white p-8 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-lg transition-all text-center group">
+          <div
+            class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
+            <i data-lucide="bug" class="w-8 h-8 text-red-500"></i>
+          </div>
+          <h3 class="text-xl font-bold text-slate-900 mb-2">Bug Reports</h3>
+          <p class="text-slate-600 mb-6">Report technical issues or bugs</p>
+          <a href="https://github.com/g1mliii/image-match/issues" target="_blank" rel="noopener noreferrer"
+            class="inline-flex items-center text-indigo-600 font-semibold hover:text-indigo-700">
+            GitHub Issues <i data-lucide="external-link" class="ml-2 w-4 h-4"></i>
+          </a>
+          <p class="mt-2 text-sm text-slate-400">Public issue tracker</p>
+        </div>
+
+        <!-- Business Inquiries -->
+        <div
+          class="bg-white p-8 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-lg transition-all text-center group">
+          <div
+            class="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
+            <i data-lucide="briefcase" class="w-8 h-8 text-blue-500"></i>
+          </div>
+          <h3 class="text-xl font-bold text-slate-900 mb-2">Business Inquiries</h3>
+          <p class="text-slate-600 mb-6">Partnerships and enterprise</p>
+          <a href="mailto:info@anchored.site"
+            class="inline-flex items-center text-indigo-600 font-semibold hover:text-indigo-700">
+            info@anchored.site <i data-lucide="mail" class="ml-2 w-4 h-4"></i>
+          </a>
+          <p class="mt-2 text-sm text-slate-400">Custom solutions available</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Contact Form -->
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 mb-20">
+      <div class="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+        <div class="p-6 border-b border-slate-100 bg-slate-50/50">
+          <h2 class="text-2xl font-bold text-slate-900 text-center">Send Us a Message</h2>
+        </div>
+        <div class="p-6 md:p-8">
+          <iframe
+            src="https://docs.google.com/forms/d/e/1FAIpQLSePyHqUazsZza3Ci4qey9dp0VUGekSkJDCuCXnnEuKUe3zjMg/viewform?embedded=true"
+            width="640" height="1000" frameborder="0" marginheight="0" marginwidth="0"
+            class="w-full rounded-lg">Loading…</iframe>
+
+          <div class="mt-6 text-center">
+            <p class="text-slate-600">
+              <strong>Prefer to open in a new tab?</strong>
+              <a href="https://forms.gle/BJpmtiVWk7ic3ezX8" target="_blank" rel="noopener noreferrer"
+                class="text-indigo-600 hover:underline ml-1">Click here to open the form</a>
+            </p>
+            <p class="text-sm text-slate-400 mt-4">
+              We typically respond within 24-48 hours. For urgent business inquiries, email us directly.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAQ & Support -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-20">
+      <div class="grid md:grid-cols-2 gap-8">
+        <!-- Before You Contact -->
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900 mb-6">Before You Contact Us</h2>
+          <div class="grid gap-4">
+            <a href="docs.html"
+              class="block p-6 bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all group">
+              <div class="flex items-center mb-2">
+                <i data-lucide="book-open" class="w-5 h-5 text-indigo-600 mr-2"></i>
+                <h3 class="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">Documentation</h3>
+              </div>
+              <p class="text-slate-600 text-sm">Comprehensive guides, tutorials, and troubleshooting tips.</p>
+            </a>
+
+            <a href="docs.html#faq"
+              class="block p-6 bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all group">
+              <div class="flex items-center mb-2">
+                <i data-lucide="help-circle" class="w-5 h-5 text-indigo-600 mr-2"></i>
+                <h3 class="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">FAQ</h3>
+              </div>
+              <p class="text-slate-600 text-sm">Answers to the most common questions about Product Matcher.</p>
+            </a>
+          </div>
+        </div>
+
+        <!-- Support Hours -->
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900 mb-6">Support Hours</h2>
+          <div class="bg-white p-8 rounded-2xl shadow-lg border border-slate-200">
+            <div class="flex items-center mb-6">
+              <i data-lucide="clock" class="w-6 h-6 text-indigo-600 mr-3"></i>
+              <h3 class="text-xl font-bold text-slate-900">Availability</h3>
+            </div>
+            <div class="space-y-4">
+              <div class="flex justify-between border-b border-slate-200 pb-2">
+                <span class="text-slate-600">Monday - Friday</span>
+                <span class="font-mono text-indigo-600">9:00 AM - 5:00 PM EST</span>
+              </div>
+              <div class="flex justify-between border-b border-slate-200 pb-2">
+                <span class="text-slate-600">Saturday - Sunday</span>
+                <span class="font-mono text-slate-400">Closed</span>
+              </div>
+            </div>
+            <div class="mt-6 flex items-start gap-3 p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+              <i data-lucide="star" class="w-5 h-5 text-indigo-600 shrink-0 mt-0.5"></i>
+              <p class="text-sm text-slate-700">Pro license holders receive priority support with faster response times.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
 
   <!-- Footer -->
-  <footer class="footer">
-    <div class="container">
-      <div class="footer-content">
-        <div class="footer-section">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="index.html">Home</a></li>
-            <li><a href="pricing.html">Pricing</a></li>
-            <li><a href="download.html">Download</a></li>
-            <li><a href="docs.html">Documentation</a></li>
+  <footer class="bg-slate-900 text-slate-300 py-12 border-t border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        <div class="col-span-1 md:col-span-2">
+          <div class="flex items-center space-x-2 mb-4">
+            <div class="p-2 bg-indigo-600 rounded-lg">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-white">Catalog Match</span>
+          </div>
+          <p class="text-slate-400 max-w-xs">
+            Empowering businesses to manage visual inventory with next-generation computer vision technology.
+          </p>
+        </div>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Product</h4>
+          <ul class="space-y-2">
+            <li><a href="download.html" class="hover:text-white transition-colors">Download</a></li>
+            <li><a href="pricing.html" class="hover:text-white transition-colors">Pricing</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
+            <li><a href="docs.html" class="hover:text-white transition-colors">Docs</a></li>
           </ul>
         </div>
-        
-        <div class="footer-section">
-          <h4>Support</h4>
-          <ul>
-            <li><a href="docs.html#faq">FAQ</a></li>
-            <li><a href="docs.html#troubleshooting">Troubleshooting</a></li>
-            <li><a href="contact.html">Contact Us</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Legal</h4>
-          <ul>
-            <li><a href="privacy.html">Privacy Policy</a></li>
-            <li><a href="terms.html">Terms of Service</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Connect</h4>
-          <ul>
-            <li><a href="https://github.com/g1mliii/image-match" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-            <li><a href="https://twitter.com/productmatcher" target="_blank" rel="noopener noreferrer">Twitter</a></li>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Company</h4>
+          <ul class="space-y-2">
+            <li><a href="#" class="hover:text-white transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
+            <li><a href="contact.html" class="hover:text-white transition-colors">Contact</a></li>
+            <li><a href="privacy.html" class="hover:text-white transition-colors">Privacy</a></li>
           </ul>
         </div>
       </div>
-      
-      <div class="footer-bottom">
-        <p>&copy; 2024 CatalogMatch. All rights reserved.</p>
+
+      <div class="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+        <p class="text-sm text-slate-500">© 2024 Catalog Match Inc. All rights reserved.</p>
+        <div class="flex space-x-6 mt-4 md:mt-0">
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="twitter"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="github"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="linkedin"
+              class="w-5 h-5"></i></a>
+        </div>
       </div>
     </div>
   </footer>
 
   <script src="scripts.js"></script>
 </body>
+
 </html>

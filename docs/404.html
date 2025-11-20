@@ -1,120 +1,190 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Content Security Policy (frame-ancestors not supported in meta tag) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self' mailto:;">
-  
-  <title>404 - Page Not Found | CatalogMatch</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="icon" type="image/png" href="images/favicon.png">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 - Page Not Found | Catalog Match</title>
+  <meta name="description" content="Page not found.">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+  </style>
 </head>
-<body>
-  <!-- Navigation -->
-  <nav class="navbar">
-    <div class="container">
-      <a href="index.html" class="navbar-brand">🔍 CatalogMatch</a>
-      <ul class="navbar-nav">
-        <li><a href="index.html">Home</a></li>
-        <li><a href="pricing.html">Pricing</a></li>
-        <li><a href="docs.html">Docs</a></li>
-        <li><a href="download.html">Download</a></li>
-        <li><a href="contact.html">Contact</a></li>
-      </ul>
+
+<body
+  class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white flex flex-col min-h-screen">
+
+  <!-- Navbar -->
+  <nav id="navbar"
+    class="fixed top-0 w-full z-50 transition-all duration-300 bg-white/80 backdrop-blur-md border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between items-center h-16">
+        <div class="flex items-center">
+          <a href="index.html" class="flex items-center space-x-2 group">
+            <div class="p-2 bg-indigo-600 rounded-lg group-hover:bg-indigo-700 transition-colors">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-slate-900">Catalog Match</span>
+          </a>
+        </div>
+
+        <!-- Desktop Nav -->
+        <div class="hidden md:flex items-center space-x-8">
+          <a href="index.html#features"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Features</a>
+          <a href="index.html#workflow"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How it Works</a>
+          <a href="pricing.html"
+            class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</a>
+          <a href="download.html"
+            class="px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-full hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/20">
+            Download Beta
+          </a>
+        </div>
+
+        <!-- Mobile Toggle -->
+        <div class="md:hidden">
+          <button id="mobile-menu-btn" class="p-2 text-slate-600 hover:text-slate-900">
+            <i data-lucide="menu" id="menu-icon" class="h-6 w-6"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Menu -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-slate-100">
+      <div class="px-4 pt-2 pb-6 space-y-1">
+        <a href="index.html#features"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Features</a>
+        <a href="index.html#workflow"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">How
+          it Works</a>
+        <a href="pricing.html"
+          class="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-md">Pricing</a>
+        <div class="pt-4">
+          <a href="download.html"
+            class="block w-full text-center px-4 py-3 text-base font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+            Download Beta
+          </a>
+        </div>
+      </div>
     </div>
   </nav>
 
-  <!-- 404 Content -->
-  <section class="hero" style="min-height: 60vh; display: flex; align-items: center;">
-    <div class="container text-center">
-      <h1 style="font-size: 6rem; margin-bottom: 1rem;">404</h1>
-      <h2>Page Not Found</h2>
-      <p style="font-size: 1.25rem; margin-bottom: 2rem;">
+  <main class="flex-grow flex items-center justify-center pt-24 pb-20">
+    <div class="text-center px-4">
+      <h1 class="text-9xl font-bold text-indigo-100 mb-4">404</h1>
+      <h2 class="text-3xl font-bold text-slate-900 mb-4">Page Not Found</h2>
+      <p class="text-xl text-slate-600 mb-8 max-w-md mx-auto">
         Oops! The page you're looking for doesn't exist or has been moved.
       </p>
-      <div class="hero-cta">
-        <a href="index.html" class="btn btn-accent btn-lg">🏠 Go Home</a>
-        <a href="docs.html" class="btn btn-outline-white btn-lg">📚 View Documentation</a>
-      </div>
-    </div>
-  </section>
 
-  <!-- Helpful Links -->
-  <section>
-    <div class="container">
-      <h2 class="section-title">Maybe you were looking for...</h2>
-      <div class="grid grid-3">
-        <div class="card text-center">
-          <div class="card-icon" style="margin: 0 auto;">⬇️</div>
-          <h3 class="card-title">Download</h3>
-          <p class="card-text">Get the latest version of CatalogMatch</p>
-          <a href="download.html" class="btn btn-outline mt-2">Download</a>
-        </div>
-        
-        <div class="card text-center">
-          <div class="card-icon" style="margin: 0 auto;">📚</div>
-          <h3 class="card-title">Documentation</h3>
-          <p class="card-text">Learn how to use CatalogMatch</p>
-          <a href="docs.html" class="btn btn-outline mt-2">Read Docs</a>
-        </div>
-        
-        <div class="card text-center">
-          <div class="card-icon" style="margin: 0 auto;">💬</div>
-          <h3 class="card-title">Contact</h3>
-          <p class="card-text">Get help from our support team</p>
-          <a href="contact.html" class="btn btn-outline mt-2">Contact Us</a>
-        </div>
+      <div class="flex flex-col sm:flex-row justify-center gap-4 mb-12">
+        <a href="index.html"
+          class="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors">
+          Go Home
+        </a>
+        <a href="docs.html"
+          class="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-lg font-semibold hover:bg-slate-50 transition-colors">
+          View Documentation
+        </a>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto text-left">
+        <a href="download.html"
+          class="p-6 bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all group">
+          <div class="flex items-center mb-2">
+            <i data-lucide="download" class="w-5 h-5 text-indigo-600 mr-2"></i>
+            <h3 class="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">Download</h3>
+          </div>
+          <p class="text-slate-600 text-sm">Get the latest version of CatalogMatch</p>
+        </a>
+
+        <a href="pricing.html"
+          class="p-6 bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all group">
+          <div class="flex items-center mb-2">
+            <i data-lucide="credit-card" class="w-5 h-5 text-indigo-600 mr-2"></i>
+            <h3 class="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">Pricing</h3>
+          </div>
+          <p class="text-slate-600 text-sm">View our simple pricing plans</p>
+        </a>
+
+        <a href="contact.html"
+          class="p-6 bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all group">
+          <div class="flex items-center mb-2">
+            <i data-lucide="mail" class="w-5 h-5 text-indigo-600 mr-2"></i>
+            <h3 class="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">Contact</h3>
+          </div>
+          <p class="text-slate-600 text-sm">Get help from our support team</p>
+        </a>
       </div>
     </div>
-  </section>
+  </main>
 
   <!-- Footer -->
-  <footer class="footer">
-    <div class="container">
-      <div class="footer-content">
-        <div class="footer-section">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="index.html">Home</a></li>
-            <li><a href="pricing.html">Pricing</a></li>
-            <li><a href="download.html">Download</a></li>
-            <li><a href="docs.html">Documentation</a></li>
+  <footer class="bg-slate-900 text-slate-300 py-12 border-t border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        <div class="col-span-1 md:col-span-2">
+          <div class="flex items-center space-x-2 mb-4">
+            <div class="p-2 bg-indigo-600 rounded-lg">
+              <i data-lucide="layers" class="h-6 w-6 text-white"></i>
+            </div>
+            <span class="text-xl font-bold text-white">CatalogSync AI</span>
+          </div>
+          <p class="text-slate-400 max-w-xs">
+            Empowering businesses to manage visual inventory with next-generation computer vision technology.
+          </p>
+        </div>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Product</h4>
+          <ul class="space-y-2">
+            <li><a href="download.html" class="hover:text-white transition-colors">Download</a></li>
+            <li><a href="pricing.html" class="hover:text-white transition-colors">Pricing</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
+            <li><a href="docs.html" class="hover:text-white transition-colors">Docs</a></li>
           </ul>
         </div>
-        
-        <div class="footer-section">
-          <h4>Support</h4>
-          <ul>
-            <li><a href="docs.html#faq">FAQ</a></li>
-            <li><a href="docs.html#troubleshooting">Troubleshooting</a></li>
-            <li><a href="contact.html">Contact Us</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Legal</h4>
-          <ul>
-            <li><a href="privacy.html">Privacy Policy</a></li>
-            <li><a href="terms.html">Terms of Service</a></li>
-          </ul>
-        </div>
-        
-        <div class="footer-section">
-          <h4>Connect</h4>
-          <ul>
-            <li><a href="https://github.com/g1mliii/image-match" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-            <li><a href="https://twitter.com/productmatcher" target="_blank" rel="noopener noreferrer">Twitter</a></li>
+
+        <div>
+          <h4 class="text-white font-semibold mb-4">Company</h4>
+          <ul class="space-y-2">
+            <li><a href="#" class="hover:text-white transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
+            <li><a href="contact.html" class="hover:text-white transition-colors">Contact</a></li>
+            <li><a href="privacy.html" class="hover:text-white transition-colors">Privacy</a></li>
           </ul>
         </div>
       </div>
-      
-      <div class="footer-bottom">
-        <p>&copy; 2024 CatalogMatch. All rights reserved.</p>
+
+      <div class="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+        <p class="text-sm text-slate-500">© 2024 CatalogSync AI Inc. All rights reserved.</p>
+        <div class="flex space-x-6 mt-4 md:mt-0">
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="twitter"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="github"
+              class="w-5 h-5"></i></a>
+          <a href="#" class="text-slate-400 hover:text-white transition-colors"><i data-lucide="linkedin"
+              class="w-5 h-5"></i></a>
+        </div>
       </div>
     </div>
   </footer>
 
   <script src="scripts.js"></script>
 </body>
+
 </html>
