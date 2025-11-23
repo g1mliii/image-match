@@ -534,21 +534,15 @@
 
 - [ ] 25.1. GPU acceleration performance monitoring and metrics
   - Log processing times for GPU vs CPU operations
-  - Display GPU status in UI: "GPU Acceleration: Active (CUDA/ROCm/MPS/OpenCL)" or "CPU Mode"
   - Add optional performance metrics to help menu
   - Track and display: images/sec, embeddings extracted/sec
-  - Show performance comparison: with/without GPU
-  - Log which backend is being used: PyTorch GPU (CUDA/ROCm/MPS), OpenCL, or CPU
-  - Detect and display specific GPU type: "NVIDIA GPU (CUDA)", "AMD GPU (ROCm)", "Apple Silicon (MPS)", "Intel/Other (OpenCL)"
+
 
 - [ ] 25.2. GPU acceleration testing and validation
   - Test on Windows with NVIDIA GPUs (CUDA)
   - Test on Windows with AMD GPUs (ROCm via PyTorch ROCm build)
-  - Test on Windows with Intel GPUs (OpenCL fallback)
   - Test on macOS with Apple Silicon (M1/M2/M3/M4/M5 via MPS)
   - Test fallback behavior when no GPU available
-  - Verify performance improvements (expect 10-50x speedup with CLIP on GPU)
-  - Test with large folders (100, 500, 1000, 5000 images)
   - Ensure ARM compatibility is maintained
   - Verify Mode 2 (Metadata) unaffected by GPU settings
   - Test CLIP batch processing with different batch sizes (8, 16, 32, 64)
