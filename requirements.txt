@@ -1,7 +1,31 @@
+# Product Matching System - Main Requirements
+#
+# QUICK START:
+# 1. Install base requirements: pip install -r requirements.txt
+# 2. For GPU acceleration: python gpu/setup_gpu.py
+#
+# GPU USERS - IMPORTANT:
+# - AMD ROCm (Windows): Requires Python 3.12
+#   Run: py -3.12 gpu/setup_gpu.py
+# - NVIDIA/Apple Silicon: Any Python 3.8+
+#   Run: python gpu/setup_gpu.py
+#
+# This installs CPU-only version. For GPU, run setup_gpu.py after this.
+
+# Web Framework
 Flask==3.0.0
 flask-cors==4.0.0
-opencv-python==4.8.1.78
+
+# Core Libraries
 numpy==1.26.2
+opencv-python==4.8.1.78
 Pillow==10.1.0
 scikit-image==0.22.0
+scipy>=1.11.3
+
+# Desktop Wrapper (optional - for standalone app)
 pywebview==4.4.1
+
+# Deep Learning (install via gpu/setup_gpu.py for GPU support)
+torch>=2.0.0
+sentence-transformers>=2.7.0,<3.0.0

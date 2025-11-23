@@ -7,6 +7,23 @@ let historicalProducts = [];
 let newProducts = [];
 let matchResults = [];
 
+// Mode state
+let historicalAdvancedMode = false;
+let newAdvancedMode = false;
+
+// Advanced features state
+// Note: CLIP mode doesn't need color/shape/texture weights - handled by AI
+let searchQuery = '';
+let filterCategory = 'all';
+let filterDuplicatesOnly = false;
+let sortBy = 'similarity'; // similarity, price, performance
+let sortOrder = 'desc';
+
+// Undo/Redo state
+let historyStack = [];
+let historyIndex = -1;
+const MAX_HISTORY = 50;
+
 // Retry configuration
 const RETRY_CONFIG = {
     maxRetries: 3,
@@ -22,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initMatching();
     initResults();
     initTooltips();
+    initGPUStatus();
 });
 
 // Historical Catalog Upload
@@ -104,19 +122,42 @@ function handleHistoricalFiles(files) {
         : '<div style="margin-top: 10px; color: #ed8936;">No subfolders detected - all images will be uncategorized</div>';
 
     const info = document.getElementById('historicalInfo');
+    const displayLimit = 50;
+    const hasMore = imageFiles.length > displayLimit;
+    
     info.innerHTML = `
+        <button class="btn clear-btn" onclick="clearFolderUpload('historical')" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
         <h4>✓ ${imageFiles.length} images loaded</h4>
         ${categorySummary}
-        <div class="file-list">
-            ${filesWithCategories.slice(0, 10).map(({ file, category }) => 
+        <div class="file-list" id="historicalFileList">
+            ${filesWithCategories.slice(0, displayLimit).map(({ file, category }) => 
                 `<div>${escapeHtml(file.name)}${category ? ` <span style="color: #667eea;">[${category}]</span>` : ''}</div>`
             ).join('')}
-            ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
         </div>
+        ${hasMore ? `
+            <div style="text-align: center; margin-top: 10px;">
+                <button class="btn" onclick="showAllFiles('historical', ${imageFiles.length})" style="font-size: 12px; padding: 5px 15px;">
+                    SHOW ALL ${imageFiles.length} FILES
+                </button>
+            </div>
+        ` : ''}
     `;
     info.classList.add('show');
 
-    document.getElementById('processHistoricalBtn').disabled = false;
+    // Enable process button based on mode
+    if (historicalAdvancedMode) {
+        // In advanced mode, only enable if CSV is uploaded (images optional)
+        document.getElementById('processHistoricalBtn').disabled = !historicalCsv;
+        
+        // If CSV not uploaded yet, prompt user
+        if (!historicalCsv) {
+            setTimeout(() => promptCsvBuilder('historical'), 500);
+        }
+    } else {
+        // In simple mode, enable immediately
+        document.getElementById('processHistoricalBtn').disabled = false;
+    }
+    
     showToast(`${imageFiles.length} historical images loaded from ${Object.keys(categoryCount).length || 0} categories`, 'success');
 }
 
@@ -369,19 +410,42 @@ function handleNewFiles(files) {
         : '<div style="margin-top: 10px; color: #ed8936;">No subfolders detected - all images will be uncategorized</div>';
 
     const info = document.getElementById('newInfo');
+    const displayLimit = 50;
+    const hasMore = imageFiles.length > displayLimit;
+    
     info.innerHTML = `
+        <button class="btn clear-btn" onclick="clearFolderUpload('new')" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
         <h4>✓ ${imageFiles.length} images loaded</h4>
         ${categorySummary}
-        <div class="file-list">
-            ${filesWithCategories.slice(0, 10).map(({ file, category }) => 
+        <div class="file-list" id="newFileList">
+            ${filesWithCategories.slice(0, displayLimit).map(({ file, category }) => 
                 `<div>${escapeHtml(file.name)}${category ? ` <span style="color: #667eea;">[${category}]</span>` : ''}</div>`
             ).join('')}
-            ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
         </div>
+        ${hasMore ? `
+            <div style="text-align: center; margin-top: 10px;">
+                <button class="btn" onclick="showAllFiles('new', ${imageFiles.length})" style="font-size: 12px; padding: 5px 15px;">
+                    SHOW ALL ${imageFiles.length} FILES
+                </button>
+            </div>
+        ` : ''}
     `;
     info.classList.add('show');
 
-    document.getElementById('processNewBtn').disabled = false;
+    // Enable process button based on mode
+    if (newAdvancedMode) {
+        // In advanced mode, only enable if CSV is uploaded (images optional)
+        document.getElementById('processNewBtn').disabled = !newCsv;
+        
+        // If CSV not uploaded yet, prompt user
+        if (!newCsv) {
+            setTimeout(() => promptCsvBuilder('new'), 500);
+        }
+    } else {
+        // In simple mode, enable immediately
+        document.getElementById('processNewBtn').disabled = false;
+    }
+    
     showToast(`${imageFiles.length} new product images loaded from ${Object.keys(categoryCount).length || 0} categories`, 'success');
 }
 
@@ -602,7 +666,10 @@ async function startMatching() {
                 body: JSON.stringify({
                     product_id: product.id,
                     threshold: threshold,
-                    limit: limit
+                    limit: limit,
+                    color_weight: similarityWeights.color,
+                    shape_weight: similarityWeights.shape,
+                    texture_weight: similarityWeights.texture
                 })
             });
 
@@ -672,7 +739,7 @@ async function startMatching() {
 
 // Results
 function initResults() {
-    document.getElementById('exportBtn').addEventListener('click', exportResults);
+    document.getElementById('exportCsvBtn').addEventListener('click', exportResults);
     document.getElementById('resetBtn').addEventListener('click', resetApp);
     document.getElementById('modalClose').addEventListener('click', closeModal);
 }
@@ -681,10 +748,18 @@ function displayResults() {
     const summaryDiv = document.getElementById('resultsSummary');
     const listDiv = document.getElementById('resultsList');
 
+    // Populate category filter
+    populateCategoryFilter();
+    
+    // Apply filters and sorting
+    const filteredResults = filterAndSortResults(matchResults);
+    
     const totalProducts = matchResults.length;
     const totalMatches = matchResults.reduce((sum, r) => sum + r.matches.length, 0);
     const productsWithMatches = matchResults.filter(r => r.matches.length > 0).length;
     const avgMatches = productsWithMatches > 0 ? (totalMatches / productsWithMatches).toFixed(1) : 0;
+    
+    const filteredCount = filteredResults.length;
 
     summaryDiv.innerHTML = `
         <h3>Match Results Summary</h3>
@@ -705,10 +780,30 @@ function displayResults() {
                 <span class="stat-value">${avgMatches}</span>
                 <span class="stat-label">Avg Matches/Product</span>
             </div>
+            ${filteredCount < totalProducts ? `
+            <div class="stat-item" style="background: rgba(102, 126, 234, 0.15);">
+                <span class="stat-value">${filteredCount}</span>
+                <span class="stat-label">Filtered Results</span>
+            </div>
+            ` : ''}
         </div>
     `;
 
-    listDiv.innerHTML = matchResults.map((result, index) => {
+    if (filteredResults.length === 0) {
+        listDiv.innerHTML = `
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <h3>No Results Found</h3>
+                <p>Try adjusting your filters or search query</p>
+            </div>
+        `;
+        return;
+    }
+
+    listDiv.innerHTML = filteredResults.map((result, index) => {
         const product = result.product;
         const matches = result.matches;
 
@@ -1538,12 +1633,12 @@ function closeCsvHelp() {
 }
 
 function downloadSampleCsv() {
-    const csv = `filename,category,sku,name,price,performance_history
-product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160;2024-03-15:200:1800:11.1:2400
-product2.jpg,dinnerware,DW-002,White Plate Set,45.00,2024-01-15:200:2000:10.0:9000;2024-02-15:220:2200:10.0:9900;2024-03-15:240:2400:10.0:10800
-product3.jpg,textiles,TX-003,Cotton Napkins,15.99,100:800:12.5:1200;120:900:13.3:1440;110:850:12.9:1320
-product4.jpg,placemats,PM-004,Red Placemat,32.00,
-product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,80:600:13.3:960;90:650:13.8:1080`;
+    const csv = `filename,category,sku,name,price,price_history,performance_history
+product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:29.99;2024-02-15:31.50;2024-03-15:28.75,2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160;2024-03-15:200:1800:11.1:2400
+product2.jpg,dinnerware,DW-002,White Plate Set,45.00,2024-01-15:45.00;2024-02-15:42.50;2024-03-15:44.00,2024-01-15:200:2000:10.0:9000;2024-02-15:220:2200:10.0:9900;2024-03-15:240:2400:10.0:10800
+product3.jpg,textiles,TX-003,Cotton Napkins,15.99,15.99;16.50;15.75,100:800:12.5:1200;120:900:13.3:1440;110:850:12.9:1320
+product4.jpg,placemats,PM-004,Red Placemat,32.00,,
+product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,2024-01-15:22.50;2024-02-15:23.00,80:600:13.3:960;90:650:13.8:1080`;
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -1585,6 +1680,22 @@ function showToastWithAction(message, type, actionText, actionCallback) {
 
 // Price History Visualization Functions
 
+// Chart color management
+let chartColor = localStorage.getItem('chartColor') || '#0066FF';
+
+function getChartColor() {
+    return chartColor;
+}
+
+function setChartColor(color) {
+    chartColor = color;
+    localStorage.setItem('chartColor', color);
+    // Refresh any visible charts
+    if (document.getElementById('resultsSection').style.display !== 'none') {
+        displayResults();
+    }
+}
+
 function generateSparkline(priceHistory) {
     // Generate a simple SVG sparkline chart
     if (!priceHistory || priceHistory.length === 0) {
@@ -1604,8 +1715,8 @@ function generateSparkline(priceHistory) {
         return `${x},${y}`;
     }).join(' ');
     
-    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-        <polyline points="${points}" fill="none" stroke="#667eea" stroke-width="2"/>
+    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
+        <polyline points="${points}" fill="none" stroke="${getChartColor()}" stroke-width="2"/>
     </svg>`;
 }
 
@@ -1628,8 +1739,8 @@ function generatePerformanceSparkline(performanceHistory) {
         return `${x},${y}`;
     }).join(' ');
     
-    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-        <polyline points="${points}" fill="none" stroke="#48bb78" stroke-width="2"/>
+    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
+        <polyline points="${points}" fill="none" stroke="${getChartColor()}" stroke-width="2"/>
     </svg>`;
 }
 
@@ -1674,7 +1785,7 @@ function generatePerformanceChart(performanceHistory, containerId) {
     
     // Generate circles for data points
     const circles = points.map(p => 
-        `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#48bb78" class="performance-point" data-sales="${p.sale}" data-date="${p.date}"/>`
+        `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${getChartColor()}" class="performance-point" data-sales="${p.sale}" data-date="${p.date}"/>`
     ).join('');
     
     // Generate axis labels
@@ -1682,13 +1793,13 @@ function generatePerformanceChart(performanceHistory, containerId) {
     const maxLabel = `<text x="${padding}" y="${padding - 10}" font-size="12" fill="#666">${max}</text>`;
     
     return `
-        <svg class="performance-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <svg class="performance-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
             <!-- Grid lines -->
             <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
             <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
             
             <!-- Sales line -->
-            <polyline points="${linePoints}" fill="none" stroke="#48bb78" stroke-width="3"/>
+            <polyline points="${linePoints}" fill="none" stroke="${getChartColor()}" stroke-width="3"/>
             
             <!-- Data points -->
             ${circles}
@@ -1732,7 +1843,7 @@ function generatePriceChart(priceHistory, containerId) {
     
     // Generate circles for data points
     const circles = points.map(p => 
-        `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#667eea" class="price-point" data-price="${p.price}" data-date="${p.date}"/>`
+        `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${getChartColor()}" class="price-point" data-price="${p.price}" data-date="${p.date}"/>`
     ).join('');
     
     // Generate axis labels
@@ -1740,13 +1851,13 @@ function generatePriceChart(priceHistory, containerId) {
     const maxLabel = `<text x="${padding}" y="${padding - 10}" font-size="12" fill="#666">$${max.toFixed(2)}</text>`;
     
     return `
-        <svg class="price-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <svg class="price-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
             <!-- Grid lines -->
             <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
             <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
             
             <!-- Price line -->
-            <polyline points="${linePoints}" fill="none" stroke="#667eea" stroke-width="3"/>
+            <polyline points="${linePoints}" fill="none" stroke="${getChartColor()}" stroke-width="3"/>
             
             <!-- Data points -->
             ${circles}
@@ -1759,4 +1870,1303 @@ function generatePriceChart(priceHistory, containerId) {
             <span>Showing ${prices.length} price point${prices.length !== 1 ? 's' : ''}</span>
         </div>
     `;
+}
+
+// Advanced Features Implementation
+
+// Toggle Advanced Settings
+function toggleAdvancedSettings() {
+    const panel = document.getElementById('advancedSettings');
+    const btn = document.getElementById('advancedSettingsBtn');
+    
+    if (panel.style.display === 'none') {
+        // Detect mode and show appropriate weight section
+        detectAndShowWeightSection();
+        panel.style.display = 'block';
+        btn.textContent = '⚙️ Hide Advanced Settings';
+    } else {
+        panel.style.display = 'none';
+        btn.textContent = '⚙️ Advanced Settings';
+    }
+}
+
+// Detect matching mode and show appropriate weight section
+function detectAndShowWeightSection() {
+    const visualSection = document.getElementById('visualWeightsSection');
+    const metadataSection = document.getElementById('metadataWeightsSection');
+    const hybridSection = document.getElementById('hybridWeightsSection');
+    
+    // Hide all sections first
+    visualSection.style.display = 'none';
+    metadataSection.style.display = 'none';
+    hybridSection.style.display = 'none';
+    
+    // Detect mode based on what's uploaded
+    const hasHistoricalImages = historicalFiles.length > 0;
+    const hasNewImages = newFiles.length > 0;
+    const hasImages = hasHistoricalImages || hasNewImages;
+    
+    const hasHistoricalCsv = historicalCsv !== null;
+    const hasNewCsv = newCsv !== null;
+    const hasCsv = hasHistoricalCsv || hasNewCsv;
+    
+    const isAdvancedMode = historicalAdvancedMode || newAdvancedMode;
+    
+    if (isAdvancedMode) {
+        if (hasImages && hasCsv) {
+            // Mode 3: Hybrid (Images + CSV)
+            hybridSection.style.display = 'block';
+        } else if (hasCsv && !hasImages) {
+            // Mode 2: Metadata only (CSV, no images)
+            metadataSection.style.display = 'block';
+        } else {
+            // Fallback to visual (shouldn't happen in advanced mode without CSV)
+            visualSection.style.display = 'block';
+        }
+    } else {
+        // Mode 1: Visual only (Simple mode)
+        visualSection.style.display = 'block';
+    }
+}
+
+// Update Similarity Weights
+function updateWeights() {
+    const colorWeight = parseInt(document.getElementById('colorWeightSlider').value);
+    const shapeWeight = parseInt(document.getElementById('shapeWeightSlider').value);
+    const textureWeight = parseInt(document.getElementById('textureWeightSlider').value);
+    
+    document.getElementById('colorWeightValue').textContent = colorWeight;
+    document.getElementById('shapeWeightValue').textContent = shapeWeight;
+    document.getElementById('textureWeightValue').textContent = textureWeight;
+    
+    const total = colorWeight + shapeWeight + textureWeight;
+    document.getElementById('weightTotal').textContent = total;
+    
+    const warning = document.getElementById('weightWarning');
+    const totalDiv = document.querySelector('.weight-total');
+    
+    if (total !== 100) {
+        warning.style.display = 'inline';
+        totalDiv.classList.add('invalid');
+    } else {
+        warning.style.display = 'none';
+        totalDiv.classList.remove('invalid');
+        
+        // Update state
+        similarityWeights = {
+            color: colorWeight / 100,
+            shape: shapeWeight / 100,
+            texture: textureWeight / 100
+        };
+        
+        // Save to history
+        saveToHistory('weights_changed', { weights: similarityWeights });
+    }
+}
+
+// Update Metadata Weights (Mode 2)
+function updateMetadataWeights() {
+    const skuWeight = parseInt(document.getElementById('skuWeightSlider').value);
+    const nameWeight = parseInt(document.getElementById('nameWeightSlider').value);
+    const categoryWeight = parseInt(document.getElementById('categoryWeightSlider').value);
+    const priceWeight = parseInt(document.getElementById('priceWeightSlider').value);
+    const performanceWeight = parseInt(document.getElementById('performanceWeightSlider').value);
+    
+    document.getElementById('skuWeightValue').textContent = skuWeight;
+    document.getElementById('nameWeightValue').textContent = nameWeight;
+    document.getElementById('categoryWeightValue').textContent = categoryWeight;
+    document.getElementById('priceWeightValue').textContent = priceWeight;
+    document.getElementById('performanceWeightValue').textContent = performanceWeight;
+    
+    const total = skuWeight + nameWeight + categoryWeight + priceWeight + performanceWeight;
+    document.getElementById('metadataWeightTotal').textContent = total;
+    
+    const warning = document.getElementById('metadataWeightWarning');
+    
+    if (total !== 100) {
+        warning.style.display = 'inline';
+    } else {
+        warning.style.display = 'none';
+    }
+}
+
+// Update Hybrid Weights (Mode 3)
+function updateHybridWeights() {
+    const visualWeight = parseInt(document.getElementById('hybridVisualWeightSlider').value);
+    const metadataWeight = parseInt(document.getElementById('hybridMetadataWeightSlider').value);
+    
+    document.getElementById('hybridVisualWeightValue').textContent = visualWeight;
+    document.getElementById('hybridMetadataWeightValue').textContent = metadataWeight;
+    
+    const total = visualWeight + metadataWeight;
+    document.getElementById('hybridWeightTotal').textContent = total;
+    
+    const warning = document.getElementById('hybridWeightWarning');
+    
+    if (total !== 100) {
+        warning.style.display = 'inline';
+    } else {
+        warning.style.display = 'none';
+    }
+}
+
+// Update Hybrid Visual Sub-Weights
+function updateHybridVisualSubWeights() {
+    const colorWeight = parseInt(document.getElementById('hybridColorWeightSlider').value);
+    const shapeWeight = parseInt(document.getElementById('hybridShapeWeightSlider').value);
+    const textureWeight = parseInt(document.getElementById('hybridTextureWeightSlider').value);
+    
+    document.getElementById('hybridColorWeightValue').textContent = colorWeight;
+    document.getElementById('hybridShapeWeightValue').textContent = shapeWeight;
+    document.getElementById('hybridTextureWeightValue').textContent = textureWeight;
+    
+    const total = colorWeight + shapeWeight + textureWeight;
+    document.getElementById('hybridVisualSubWeightTotal').textContent = total;
+    
+    const warning = document.getElementById('hybridVisualSubWeightWarning');
+    
+    if (total !== 100) {
+        warning.style.display = 'inline';
+    } else {
+        warning.style.display = 'none';
+    }
+}
+
+// Update Hybrid Metadata Sub-Weights
+function updateHybridMetadataSubWeights() {
+    const skuWeight = parseInt(document.getElementById('hybridSkuWeightSlider').value);
+    const nameWeight = parseInt(document.getElementById('hybridNameWeightSlider').value);
+    const categoryWeight = parseInt(document.getElementById('hybridCategoryWeightSlider').value);
+    const priceWeight = parseInt(document.getElementById('hybridPriceWeightSlider').value);
+    const performanceWeight = parseInt(document.getElementById('hybridPerformanceWeightSlider').value);
+    
+    document.getElementById('hybridSkuWeightValue').textContent = skuWeight;
+    document.getElementById('hybridNameWeightValue').textContent = nameWeight;
+    document.getElementById('hybridCategoryWeightValue').textContent = categoryWeight;
+    document.getElementById('hybridPriceWeightValue').textContent = priceWeight;
+    document.getElementById('hybridPerformanceWeightValue').textContent = performanceWeight;
+    
+    const total = skuWeight + nameWeight + categoryWeight + priceWeight + performanceWeight;
+    document.getElementById('hybridMetadataSubWeightTotal').textContent = total;
+    
+    const warning = document.getElementById('hybridMetadataSubWeightWarning');
+    
+    if (total !== 100) {
+        warning.style.display = 'inline';
+    } else {
+        warning.style.display = 'none';
+    }
+}
+
+// Reset Weights to Default
+function resetWeights() {
+    // Detect which mode is active and reset accordingly
+    const visualSection = document.getElementById('visualWeightsSection');
+    const metadataSection = document.getElementById('metadataWeightsSection');
+    const hybridSection = document.getElementById('hybridWeightsSection');
+    
+    if (visualSection.style.display !== 'none') {
+        // Reset Mode 1 (Visual)
+        document.getElementById('colorWeightSlider').value = 50;
+        document.getElementById('shapeWeightSlider').value = 30;
+        document.getElementById('textureWeightSlider').value = 20;
+        updateWeights();
+    }
+    
+    if (metadataSection.style.display !== 'none') {
+        // Reset Mode 2 (Metadata)
+        document.getElementById('skuWeightSlider').value = 30;
+        document.getElementById('nameWeightSlider').value = 25;
+        document.getElementById('categoryWeightSlider').value = 20;
+        document.getElementById('priceWeightSlider').value = 15;
+        document.getElementById('performanceWeightSlider').value = 10;
+        updateMetadataWeights();
+    }
+    
+    if (hybridSection.style.display !== 'none') {
+        // Reset Mode 3 (Hybrid)
+        document.getElementById('hybridVisualWeightSlider').value = 60;
+        document.getElementById('hybridMetadataWeightSlider').value = 40;
+        updateHybridWeights();
+        
+        // Reset sub-weights
+        document.getElementById('hybridColorWeightSlider').value = 50;
+        document.getElementById('hybridShapeWeightSlider').value = 30;
+        document.getElementById('hybridTextureWeightSlider').value = 20;
+        updateHybridVisualSubWeights();
+        
+        document.getElementById('hybridSkuWeightSlider').value = 30;
+        document.getElementById('hybridNameWeightSlider').value = 25;
+        document.getElementById('hybridCategoryWeightSlider').value = 20;
+        document.getElementById('hybridPriceWeightSlider').value = 15;
+        document.getElementById('hybridPerformanceWeightSlider').value = 10;
+        updateHybridMetadataSubWeights();
+    }
+    
+    showToast('Weights reset to default values', 'success');
+}
+
+// Initialize Advanced Features
+function initAdvancedFeatures() {
+    // Advanced Settings Button
+    document.getElementById('advancedSettingsBtn').addEventListener('click', toggleAdvancedSettings);
+    document.getElementById('resetWeightsBtn').addEventListener('click', resetWeights);
+    
+    // Weight Sliders - Mode 1 (Visual)
+    document.getElementById('colorWeightSlider').addEventListener('input', updateWeights);
+    document.getElementById('shapeWeightSlider').addEventListener('input', updateWeights);
+    document.getElementById('textureWeightSlider').addEventListener('input', updateWeights);
+    
+    // Weight Sliders - Mode 2 (Metadata)
+    document.getElementById('skuWeightSlider').addEventListener('input', updateMetadataWeights);
+    document.getElementById('nameWeightSlider').addEventListener('input', updateMetadataWeights);
+    document.getElementById('categoryWeightSlider').addEventListener('input', updateMetadataWeights);
+    document.getElementById('priceWeightSlider').addEventListener('input', updateMetadataWeights);
+    document.getElementById('performanceWeightSlider').addEventListener('input', updateMetadataWeights);
+    
+    // Weight Sliders - Mode 3 (Hybrid Main)
+    document.getElementById('hybridVisualWeightSlider').addEventListener('input', updateHybridWeights);
+    document.getElementById('hybridMetadataWeightSlider').addEventListener('input', updateHybridWeights);
+    
+    // Weight Sliders - Mode 3 (Hybrid Visual Sub)
+    document.getElementById('hybridColorWeightSlider').addEventListener('input', updateHybridVisualSubWeights);
+    document.getElementById('hybridShapeWeightSlider').addEventListener('input', updateHybridVisualSubWeights);
+    document.getElementById('hybridTextureWeightSlider').addEventListener('input', updateHybridVisualSubWeights);
+    
+    // Weight Sliders - Mode 3 (Hybrid Metadata Sub)
+    document.getElementById('hybridSkuWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
+    document.getElementById('hybridNameWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
+    document.getElementById('hybridCategoryWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
+    document.getElementById('hybridPriceWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
+    document.getElementById('hybridPerformanceWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
+    
+    // Export Buttons
+    document.getElementById('exportCsvBtn').addEventListener('click', exportResults);
+    document.getElementById('exportWithImagesBtn').addEventListener('click', exportWithImages);
+    document.getElementById('duplicateReportBtn').addEventListener('click', showDuplicateReport);
+    
+    // Session Management
+    document.getElementById('saveSessionBtn').addEventListener('click', saveSession);
+    document.getElementById('loadSessionBtn').addEventListener('click', loadSession);
+    
+    // Search and Filter
+    document.getElementById('searchInput').addEventListener('input', applyFilters);
+    document.getElementById('categoryFilter').addEventListener('change', applyFilters);
+    document.getElementById('sortBySelect').addEventListener('change', applyFilters);
+    document.getElementById('duplicatesOnlyCheckbox').addEventListener('change', applyFilters);
+    document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+}
+
+// Export with Images
+async function exportWithImages() {
+    if (matchResults.length === 0) {
+        showToast('No results to export', 'warning');
+        return;
+    }
+    
+    showToast('Preparing export with images... This may take a moment.', 'info');
+    
+    try {
+        // Create a zip file using JSZip (we'll need to include this library)
+        // For now, we'll create a folder structure guide
+        
+        let exportData = {
+            timestamp: new Date().toISOString(),
+            weights: similarityWeights,
+            threshold: parseInt(document.getElementById('thresholdSlider').value),
+            results: []
+        };
+        
+        for (const result of matchResults) {
+            const product = result.product;
+            const matches = result.matches;
+            
+            exportData.results.push({
+                product: {
+                    id: product.id,
+                    filename: product.filename,
+                    category: product.category,
+                    sku: product.sku,
+                    name: product.name
+                },
+                matches: matches.map(m => ({
+                    product_id: m.product_id,
+                    product_name: m.product_name,
+                    similarity_score: m.similarity_score,
+                    color_score: m.color_score,
+                    shape_score: m.shape_score,
+                    texture_score: m.texture_score,
+                    priceStatistics: m.priceStatistics,
+                    performanceStatistics: m.performanceStatistics
+                }))
+            });
+        }
+        
+        // Export JSON with instructions
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `match_results_full_${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        showToast('Export complete! JSON file includes all match data. Images can be downloaded separately via API.', 'success');
+    } catch (error) {
+        showToast('Failed to export with images: ' + error.message, 'error');
+    }
+}
+
+// Show Duplicate Report
+function showDuplicateReport() {
+    if (matchResults.length === 0) {
+        showToast('No results to analyze', 'warning');
+        return;
+    }
+    
+    // Find all duplicates (similarity > 90%)
+    const duplicates = [];
+    
+    matchResults.forEach(result => {
+        const product = result.product;
+        const highMatches = result.matches.filter(m => m.similarity_score > 90);
+        
+        if (highMatches.length > 0) {
+            duplicates.push({
+                product: product,
+                matches: highMatches
+            });
+        }
+    });
+    
+    if (duplicates.length === 0) {
+        showToast('No potential duplicates found (similarity > 90%)', 'info');
+        return;
+    }
+    
+    // Create modal content
+    const modal = document.getElementById('detailModal');
+    const modalBody = document.getElementById('modalBody');
+    
+    let html = `
+        <div class="duplicate-report-modal">
+            <div class="duplicate-report-header">
+                <h2>🔍 Duplicate Detection Report</h2>
+                <p style="color: #64748b; font-size: 16px;">${duplicates.length} product(s) with potential duplicates found</p>
+            </div>
+            
+            <div class="rank-filters">
+                <div class="rank-filter-group">
+                    <label>Sort By:</label>
+                    <select id="duplicateSortSelect" onchange="sortDuplicates()">
+                        <option value="similarity">Highest Similarity</option>
+                        <option value="price">Price (if available)</option>
+                        <option value="performance">Performance (if available)</option>
+                    </select>
+                </div>
+                
+                <div class="rank-filter-group">
+                    <label>Min Similarity:</label>
+                    <select id="duplicateThresholdSelect" onchange="filterDuplicates()">
+                        <option value="90">90%+</option>
+                        <option value="95">95%+</option>
+                        <option value="98">98%+</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div id="duplicatesList">
+    `;
+    
+    duplicates.forEach(dup => {
+        const product = dup.product;
+        
+        dup.matches.forEach(match => {
+            html += `
+                <div class="duplicate-item" data-similarity="${match.similarity_score}">
+                    <div class="duplicate-images">
+                        <img src="/api/products/${product.id}/image" alt="${product.filename}">
+                        <img src="/api/products/${match.product_id}/image" alt="${match.product_name}">
+                    </div>
+                    <div class="duplicate-info">
+                        <h4>Potential Duplicate Detected</h4>
+                        <div class="duplicate-score">${match.similarity_score.toFixed(1)}% Similar</div>
+                        <div class="duplicate-details">
+                            <p><strong>New Product:</strong> ${escapeHtml(product.filename)} ${product.category ? `(${product.category})` : ''}</p>
+                            <p><strong>Matched Product:</strong> ${escapeHtml(match.product_name || 'Unknown')} ${match.category ? `(${match.category})` : ''}</p>
+                            ${match.priceStatistics ? `
+                                <p><strong>Price:</strong> ${match.priceStatistics.current} (Trend: ${match.priceStatistics.trend})</p>
+                            ` : ''}
+                            ${match.performanceStatistics ? `
+                                <p><strong>Performance:</strong> ${match.performanceStatistics.total_sales} sales, ${match.performanceStatistics.total_revenue} revenue</p>
+                            ` : ''}
+                            <p><strong>Recommendation:</strong> ${match.similarity_score > 95 ? 'Very likely duplicate - review carefully' : 'Possible duplicate - manual review recommended'}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    });
+    
+    html += `
+            </div>
+            
+            <div style="margin-top: 24px; text-align: center;">
+                <button class="btn btn-primary" onclick="exportDuplicateReport()">📄 Export Duplicate Report</button>
+            </div>
+        </div>
+    `;
+    
+    modalBody.innerHTML = html;
+    modal.classList.add('show');
+}
+
+// Export Duplicate Report
+function exportDuplicateReport() {
+    const duplicates = [];
+    
+    matchResults.forEach(result => {
+        const product = result.product;
+        const highMatches = result.matches.filter(m => m.similarity_score > 90);
+        
+        if (highMatches.length > 0) {
+            highMatches.forEach(match => {
+                duplicates.push({
+                    new_product: product.filename,
+                    new_category: product.category || 'Uncategorized',
+                    matched_product: match.product_name || 'Unknown',
+                    matched_category: match.category || 'Uncategorized',
+                    similarity_score: match.similarity_score.toFixed(1),
+                    price_current: match.priceStatistics?.current || 'N/A',
+                    price_trend: match.priceStatistics?.trend || 'N/A',
+                    total_sales: match.performanceStatistics?.total_sales || 'N/A',
+                    total_revenue: match.performanceStatistics?.total_revenue || 'N/A',
+                    recommendation: match.similarity_score > 95 ? 'Very likely duplicate' : 'Possible duplicate'
+                });
+            });
+        }
+    });
+    
+    let csv = 'New Product,New Category,Matched Product,Matched Category,Similarity Score,Price Current,Price Trend,Total Sales,Total Revenue,Recommendation\n';
+    
+    duplicates.forEach(dup => {
+        csv += `"${dup.new_product}","${dup.new_category}","${dup.matched_product}","${dup.matched_category}",${dup.similarity_score},"${dup.price_current}","${dup.price_trend}","${dup.total_sales}","${dup.total_revenue}","${dup.recommendation}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `duplicate_report_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showToast('Duplicate report exported to CSV', 'success');
+}
+
+// Save Session
+function saveSession() {
+    if (matchResults.length === 0) {
+        showToast('No session data to save', 'warning');
+        return;
+    }
+    
+    const sessionData = {
+        version: '1.0',
+        timestamp: new Date().toISOString(),
+        weights: similarityWeights,
+        threshold: parseInt(document.getElementById('thresholdSlider').value),
+        limit: parseInt(document.getElementById('limitSelect').value),
+        historicalProducts: historicalProducts,
+        newProducts: newProducts,
+        matchResults: matchResults
+    };
+    
+    const blob = new Blob([JSON.stringify(sessionData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `matching_session_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showToast('Session saved successfully', 'success');
+}
+
+// Load Session
+function loadSession() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            const text = await file.text();
+            const sessionData = JSON.parse(text);
+            
+            // Validate session data
+            if (!sessionData.version || !sessionData.matchResults) {
+                throw new Error('Invalid session file format');
+            }
+            
+            // Restore state
+            similarityWeights = sessionData.weights || { color: 0.5, shape: 0.3, texture: 0.2 };
+            historicalProducts = sessionData.historicalProducts || [];
+            newProducts = sessionData.newProducts || [];
+            matchResults = sessionData.matchResults || [];
+            
+            // Update UI
+            if (sessionData.threshold) {
+                document.getElementById('thresholdSlider').value = sessionData.threshold;
+                document.getElementById('thresholdValue').textContent = sessionData.threshold;
+            }
+            
+            if (sessionData.limit) {
+                document.getElementById('limitSelect').value = sessionData.limit;
+            }
+            
+            // Update weights UI
+            document.getElementById('colorWeightSlider').value = Math.round(similarityWeights.color * 100);
+            document.getElementById('shapeWeightSlider').value = Math.round(similarityWeights.shape * 100);
+            document.getElementById('textureWeightSlider').value = Math.round(similarityWeights.texture * 100);
+            updateWeights();
+            
+            // Display results
+            displayResults();
+            document.getElementById('resultsSection').style.display = 'block';
+            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+            
+            showToast(`Session loaded: ${matchResults.length} products with matches`, 'success');
+            
+            // Save to history
+            saveToHistory('session_loaded', { timestamp: sessionData.timestamp });
+        } catch (error) {
+            showToast('Failed to load session: ' + error.message, 'error');
+        }
+    };
+    
+    input.click();
+}
+
+// Apply Filters
+function applyFilters() {
+    searchQuery = document.getElementById('searchInput').value.toLowerCase();
+    filterCategory = document.getElementById('categoryFilter').value;
+    filterDuplicatesOnly = document.getElementById('duplicatesOnlyCheckbox').checked;
+    sortBy = document.getElementById('sortBySelect').value;
+    
+    // Re-render results with filters
+    displayResults();
+    
+    // Save to history
+    saveToHistory('filters_applied', { searchQuery, filterCategory, filterDuplicatesOnly, sortBy });
+}
+
+// Clear Filters
+function clearFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('categoryFilter').value = 'all';
+    document.getElementById('duplicatesOnlyCheckbox').checked = false;
+    document.getElementById('sortBySelect').value = 'similarity';
+    
+    applyFilters();
+    showToast('Filters cleared', 'success');
+}
+
+// Populate Category Filter
+function populateCategoryFilter() {
+    const categories = new Set();
+    
+    matchResults.forEach(result => {
+        if (result.product.category) {
+            categories.add(result.product.category);
+        }
+    });
+    
+    const select = document.getElementById('categoryFilter');
+    select.innerHTML = '<option value="all">All Categories</option>';
+    
+    Array.from(categories).sort().forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        select.appendChild(option);
+    });
+}
+
+// Filter and Sort Results
+function filterAndSortResults(results) {
+    let filtered = results.filter(result => {
+        const product = result.product;
+        
+        // Search filter
+        if (searchQuery) {
+            const searchText = `${product.filename} ${product.name || ''} ${product.sku || ''} ${product.category || ''}`.toLowerCase();
+            if (!searchText.includes(searchQuery)) {
+                return false;
+            }
+        }
+        
+        // Category filter
+        if (filterCategory !== 'all' && product.category !== filterCategory) {
+            return false;
+        }
+        
+        // Duplicates only filter
+        if (filterDuplicatesOnly) {
+            const hasDuplicate = result.matches.some(m => m.similarity_score > 90);
+            if (!hasDuplicate) {
+                return false;
+            }
+        }
+        
+        return true;
+    });
+    
+    // Sort results
+    filtered.sort((a, b) => {
+        const aMatch = a.matches[0];
+        const bMatch = b.matches[0];
+        
+        if (!aMatch && !bMatch) return 0;
+        if (!aMatch) return 1;
+        if (!bMatch) return -1;
+        
+        switch (sortBy) {
+            case 'similarity':
+                return bMatch.similarity_score - aMatch.similarity_score;
+            
+            case 'price':
+                const aPrice = aMatch.priceStatistics?.current_numeric || 0;
+                const bPrice = bMatch.priceStatistics?.current_numeric || 0;
+                return bPrice - aPrice;
+            
+            case 'performance':
+                const aPerf = aMatch.performanceStatistics?.total_sales || 0;
+                const bPerf = bMatch.performanceStatistics?.total_sales || 0;
+                return bPerf - aPerf;
+            
+            case 'name':
+                return (a.product.filename || '').localeCompare(b.product.filename || '');
+            
+            default:
+                return 0;
+        }
+    });
+    
+    return filtered;
+}
+
+// History Management (Undo/Redo)
+function saveToHistory(action, data) {
+    // Remove any history after current index
+    historyStack = historyStack.slice(0, historyIndex + 1);
+    
+    // Add new history entry
+    historyStack.push({
+        action: action,
+        data: data,
+        timestamp: Date.now(),
+        state: {
+            weights: { ...similarityWeights },
+            searchQuery: searchQuery,
+            filterCategory: filterCategory,
+            filterDuplicatesOnly: filterDuplicatesOnly,
+            sortBy: sortBy
+        }
+    });
+    
+    // Limit history size
+    if (historyStack.length > MAX_HISTORY) {
+        historyStack.shift();
+    } else {
+        historyIndex++;
+    }
+    
+    updateUndoRedoButtons();
+}
+
+function undo() {
+    if (historyIndex > 0) {
+        historyIndex--;
+        const entry = historyStack[historyIndex];
+        restoreState(entry.state);
+        showToast(`Undo: ${entry.action}`, 'info');
+    }
+}
+
+function redo() {
+    if (historyIndex < historyStack.length - 1) {
+        historyIndex++;
+        const entry = historyStack[historyIndex];
+        restoreState(entry.state);
+        showToast(`Redo: ${entry.action}`, 'info');
+    }
+}
+
+function restoreState(state) {
+    similarityWeights = { ...state.weights };
+    searchQuery = state.searchQuery;
+    filterCategory = state.filterCategory;
+    filterDuplicatesOnly = state.filterDuplicatesOnly;
+    sortBy = state.sortBy;
+    
+    // Update UI
+    document.getElementById('colorWeightSlider').value = Math.round(similarityWeights.color * 100);
+    document.getElementById('shapeWeightSlider').value = Math.round(similarityWeights.shape * 100);
+    document.getElementById('textureWeightSlider').value = Math.round(similarityWeights.texture * 100);
+    updateWeights();
+    
+    document.getElementById('searchInput').value = searchQuery;
+    document.getElementById('categoryFilter').value = filterCategory;
+    document.getElementById('duplicatesOnlyCheckbox').checked = filterDuplicatesOnly;
+    document.getElementById('sortBySelect').value = sortBy;
+    
+    applyFilters();
+}
+
+function updateUndoRedoButtons() {
+    // This would update undo/redo button states if we add them to the UI
+    // For now, we'll just track the state
+}
+
+// Initialize advanced features on page load
+document.addEventListener('DOMContentLoaded', () => {
+    initAdvancedFeatures();
+});
+
+// Toggle help text in CSV format modal
+function toggleHelp(helpId) {
+    const helpElement = document.getElementById(helpId);
+    if (helpElement) {
+        helpElement.style.display = helpElement.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+// Color picker for charts
+function showColorPicker(event) {
+    event.preventDefault();
+    
+    // Remove existing picker if any
+    const existing = document.getElementById('chartColorPicker');
+    if (existing) existing.remove();
+    
+    // Create color picker popup
+    const picker = document.createElement('div');
+    picker.id = 'chartColorPicker';
+    picker.style.position = 'fixed';
+    picker.style.left = event.clientX + 'px';
+    picker.style.top = event.clientY + 'px';
+    picker.style.background = '#fff';
+    picker.style.border = '3px solid #000';
+    picker.style.padding = '15px';
+    picker.style.zIndex = '10000';
+    
+    picker.innerHTML = `
+        <div style="font-family: 'Courier New', monospace; font-weight: bold; margin-bottom: 10px;">CHART COLOR</div>
+        <input type="color" id="colorInput" value="${getChartColor()}" style="width: 100px; height: 40px; border: 2px solid #000; cursor: pointer;">
+        <div style="margin-top: 10px; display: flex; gap: 5px; flex-wrap: wrap;">
+            <button onclick="setChartColor('#FF0000'); document.getElementById('chartColorPicker').remove();" style="width: 30px; height: 30px; background: #FF0000; border: 2px solid #000; cursor: pointer;"></button>
+            <button onclick="setChartColor('#0066FF'); document.getElementById('chartColorPicker').remove();" style="width: 30px; height: 30px; background: #0066FF; border: 2px solid #000; cursor: pointer;"></button>
+            <button onclick="setChartColor('#00FF00'); document.getElementById('chartColorPicker').remove();" style="width: 30px; height: 30px; background: #00FF00; border: 2px solid #000; cursor: pointer;"></button>
+            <button onclick="setChartColor('#FF00FF'); document.getElementById('chartColorPicker').remove();" style="width: 30px; height: 30px; background: #FF00FF; border: 2px solid #000; cursor: pointer;"></button>
+            <button onclick="setChartColor('#FFFF00'); document.getElementById('chartColorPicker').remove();" style="width: 30px; height: 30px; background: #FFFF00; border: 2px solid #000; cursor: pointer;"></button>
+            <button onclick="setChartColor('#FF6600'); document.getElementById('chartColorPicker').remove();" style="width: 30px; height: 30px; background: #FF6600; border: 2px solid #000; cursor: pointer;"></button>
+        </div>
+        <button onclick="document.getElementById('chartColorPicker').remove();" style="margin-top: 10px; padding: 8px 15px; background: #000; color: #fff; border: none; font-family: 'Courier New', monospace; font-weight: bold; cursor: pointer; width: 100%;">CLOSE</button>
+    `;
+    
+    document.body.appendChild(picker);
+    
+    // Handle color input change
+    document.getElementById('colorInput').addEventListener('change', (e) => {
+        setChartColor(e.target.value);
+        picker.remove();
+    });
+    
+    // Close on click outside
+    setTimeout(() => {
+        document.addEventListener('click', function closePickerOutside(e) {
+            if (!picker.contains(e.target)) {
+                picker.remove();
+                document.removeEventListener('click', closePickerOutside);
+            }
+        });
+    }, 100);
+}
+
+// Update file input label when file is selected
+function updateFileLabel(input, labelId) {
+    const label = document.getElementById(labelId);
+    if (input.files && input.files.length > 0) {
+        label.textContent = '✓ ' + input.files[0].name;
+        label.classList.add('has-file');
+    } else {
+        label.textContent = 'Use BUILD CSV or see CSV FORMAT to create your file';
+        label.classList.remove('has-file');
+    }
+}
+
+// Mode Toggle Functions
+function setMode(section, mode) {
+    const isAdvanced = mode === 'advanced';
+    
+    if (section === 'historical') {
+        historicalAdvancedMode = isAdvanced;
+        const toggle = document.getElementById('historicalModeToggle');
+        const csvBox = document.getElementById('historicalCsvBox');
+        const processBtn = document.getElementById('processHistoricalBtn');
+        
+        // Update toggle buttons
+        const buttons = toggle.querySelectorAll('.mode-option');
+        buttons.forEach(btn => {
+            btn.classList.remove('active');
+            if ((btn.textContent === 'SIMPLE' && !isAdvanced) || 
+                (btn.textContent === 'ADVANCED' && isAdvanced)) {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Show/hide CSV box and reorder sections
+        csvBox.style.display = isAdvanced ? 'block' : 'none';
+        const uploadBox = document.querySelector('#historicalSection .upload-box');
+        if (isAdvanced) {
+            uploadBox.classList.add('advanced-mode-active');
+        } else {
+            uploadBox.classList.remove('advanced-mode-active');
+        }
+        
+        // Update process button
+        if (isAdvanced) {
+            // In advanced mode, require CSV (images optional)
+            processBtn.disabled = !historicalCsv;
+            if (!historicalCsv) {
+                showToast('Advanced mode requires CSV. Upload CSV or use CSV Builder.', 'info');
+            }
+        } else {
+            // In simple mode, enable process if files are loaded
+            if (historicalFiles.length > 0) {
+                processBtn.disabled = false;
+            }
+        }
+    } else if (section === 'new') {
+        newAdvancedMode = isAdvanced;
+        const toggle = document.getElementById('newModeToggle');
+        const csvBox = document.getElementById('newCsvBox');
+        const processBtn = document.getElementById('processNewBtn');
+        
+        // Update toggle buttons
+        const buttons = toggle.querySelectorAll('.mode-option');
+        buttons.forEach(btn => {
+            btn.classList.remove('active');
+            if ((btn.textContent === 'SIMPLE' && !isAdvanced) || 
+                (btn.textContent === 'ADVANCED' && isAdvanced)) {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Show/hide CSV box and reorder sections
+        csvBox.style.display = isAdvanced ? 'block' : 'none';
+        const uploadBox = document.querySelector('#newSection .upload-box');
+        if (isAdvanced) {
+            uploadBox.classList.add('advanced-mode-active');
+        } else {
+            uploadBox.classList.remove('advanced-mode-active');
+        }
+        
+        // Update process button
+        if (isAdvanced) {
+            // In advanced mode, require CSV (images optional)
+            processBtn.disabled = !newCsv;
+            if (!newCsv) {
+                showToast('Advanced mode requires CSV. Upload CSV or use CSV Builder.', 'info');
+            }
+        } else {
+            // In simple mode, enable process if files are loaded
+            if (newFiles.length > 0) {
+                processBtn.disabled = false;
+            }
+        }
+    }
+    
+    // Save state to localStorage
+    saveMainAppState();
+}
+
+// Prompt for CSV Builder after folder upload in advanced mode
+async function promptCsvBuilder(section) {
+    const files = section === 'historical' ? historicalFiles : newFiles;
+    
+    if (files.length === 0) return;
+    
+    // Create custom modal for prompt
+    const modal = document.createElement('div');
+    modal.className = 'modal show';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <h2>Add Product Metadata?</h2>
+            <p>You've uploaded ${files.length} images in Advanced Mode.</p>
+            <p><strong>Would you like to add metadata now?</strong></p>
+            <ul style="text-align: left; margin: 20px 0;">
+                <li>SKU and product names</li>
+                <li>Price history</li>
+                <li>Sales performance data</li>
+            </ul>
+            <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
+                <button class="btn" onclick="openIntegratedCsvBuilder('${section}')">YES, ADD METADATA</button>
+                <button class="btn" onclick="closePromptModal()">NO, I'LL UPLOAD CSV</button>
+            </div>
+            <p style="margin-top: 15px; font-size: 0.9em; color: #718096;">You can also upload a CSV file manually or click "BUILD CSV" button.</p>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    
+    // Store modal reference for cleanup
+    window.currentPromptModal = modal;
+}
+
+function closePromptModal() {
+    if (window.currentPromptModal) {
+        window.currentPromptModal.remove();
+        window.currentPromptModal = null;
+    }
+}
+
+// Open Integrated CSV Builder
+function openIntegratedCsvBuilder(section) {
+    closePromptModal();
+    
+    const files = section === 'historical' ? historicalFiles : newFiles;
+    
+    // Store files in sessionStorage for CSV builder
+    const fileData = files.map(({ file, category }) => ({
+        filename: file.name,
+        category: category || '',
+        size: file.size,
+        type: file.type
+    }));
+    
+    sessionStorage.setItem('csvBuilderFiles', JSON.stringify(fileData));
+    sessionStorage.setItem('csvBuilderSource', section);
+    
+    // Open CSV builder in new tab
+    const builderWindow = window.open('/csv-builder', '_blank');
+    
+    // Listen for CSV data from builder
+    window.addEventListener('message', function csvBuilderListener(event) {
+        if (event.data && event.data.type === 'CSV_BUILDER_COMPLETE') {
+            const csvContent = event.data.csvContent;
+            const targetSection = event.data.section;
+            
+            // Create a Blob and File object from CSV content
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const file = new File([blob], 'products.csv', { type: 'text/csv' });
+            
+            // Set the CSV in the appropriate section
+            if (targetSection === 'historical') {
+                historicalCsv = file;
+                document.getElementById('historicalFileLabel').textContent = 'products.csv (from CSV Builder)';
+                document.getElementById('processHistoricalBtn').disabled = false;
+                removeWorkflowIndicators('historical');
+                showToast('CSV loaded from builder! Ready to process.', 'success');
+            } else if (targetSection === 'new') {
+                newCsv = file;
+                document.getElementById('newFileLabel').textContent = 'products.csv (from CSV Builder)';
+                document.getElementById('processNewBtn').disabled = false;
+                removeWorkflowIndicators('new');
+                showToast('CSV loaded from builder! Ready to process.', 'success');
+            }
+            
+            // Remove listener after receiving data
+            window.removeEventListener('message', csvBuilderListener);
+        }
+    });
+    
+    showToast('CSV Builder opened. Complete the form and click "SEND TO APP".', 'info');
+}
+
+// Update file label when CSV is selected
+function updateFileLabel(input, labelId) {
+    const label = document.getElementById(labelId);
+    if (input.files && input.files[0]) {
+        label.textContent = input.files[0].name;
+        
+        // Update CSV state
+        if (labelId === 'historicalFileLabel') {
+            historicalCsv = input.files[0];
+            if (historicalAdvancedMode && historicalFiles.length > 0) {
+                document.getElementById('processHistoricalBtn').disabled = false;
+                // Remove workflow indicators since CSV is now uploaded
+                removeWorkflowIndicators('historical');
+            }
+        } else if (labelId === 'newFileLabel') {
+            newCsv = input.files[0];
+            if (newAdvancedMode && newFiles.length > 0) {
+                document.getElementById('processNewBtn').disabled = false;
+                // Remove workflow indicators since CSV is now uploaded
+                removeWorkflowIndicators('new');
+            }
+        }
+    } else {
+        label.textContent = 'Use BUILD CSV or see CSV FORMAT to create your file';
+    }
+}
+
+// Clear Folder Upload
+function clearFolderUpload(section) {
+    if (!confirm('Clear uploaded folder? This will reset all data for this section.')) {
+        return;
+    }
+    
+    if (section === 'historical') {
+        // Clear state
+        historicalFiles = [];
+        historicalCsv = null;
+        historicalProducts = [];
+        
+        // Clear UI
+        document.getElementById('historicalInfo').innerHTML = '';
+        document.getElementById('historicalInfo').classList.remove('show');
+        document.getElementById('historicalFileLabel').textContent = 'Use BUILD CSV or see CSV FORMAT to create your file';
+        document.getElementById('processHistoricalBtn').disabled = true;
+        document.getElementById('historicalStatus').innerHTML = '';
+        document.getElementById('historicalStatus').classList.remove('show');
+        
+        // Reset file input
+        document.getElementById('historicalInput').value = '';
+        document.getElementById('historicalCsvInput').value = '';
+        
+        showToast('Historical folder cleared', 'success');
+        
+    } else if (section === 'new') {
+        // Clear state
+        newFiles = [];
+        newCsv = null;
+        newProducts = [];
+        
+        // Clear UI
+        document.getElementById('newInfo').innerHTML = '';
+        document.getElementById('newInfo').classList.remove('show');
+        document.getElementById('newFileLabel').textContent = 'Use BUILD CSV or see CSV FORMAT to create your file';
+        document.getElementById('processNewBtn').disabled = true;
+        document.getElementById('newStatus').innerHTML = '';
+        document.getElementById('newStatus').classList.remove('show');
+        
+        // Reset file input
+        document.getElementById('newInput').value = '';
+        document.getElementById('newCsvInput').value = '';
+        
+        showToast('New products folder cleared', 'success');
+    }
+}
+
+// Save state to localStorage
+function saveMainAppState() {
+    const state = {
+        historicalAdvancedMode,
+        newAdvancedMode,
+        timestamp: new Date().toISOString()
+    };
+    localStorage.setItem('mainAppState', JSON.stringify(state));
+}
+
+// Load state from localStorage
+function loadMainAppState() {
+    const saved = localStorage.getItem('mainAppState');
+    if (saved) {
+        try {
+            const state = JSON.parse(saved);
+            
+            // Restore mode settings
+            if (state.historicalAdvancedMode) {
+                setMode('historical', 'advanced');
+            }
+            if (state.newAdvancedMode) {
+                setMode('new', 'advanced');
+            }
+        } catch (e) {
+            console.error('Failed to load main app state:', e);
+        }
+    }
+}
+
+// Call on page load
+document.addEventListener('DOMContentLoaded', () => {
+    loadMainAppState();
+});
+
+// Show all files in the list
+function showAllFiles(section, totalCount) {
+    const files = section === 'historical' ? historicalFiles : newFiles;
+    const listId = section === 'historical' ? 'historicalFileList' : 'newFileList';
+    const list = document.getElementById(listId);
+    
+    if (!list) return;
+    
+    // Show all files
+    list.innerHTML = files.map(({ file, category }) => 
+        `<div>${escapeHtml(file.name)}${category ? ` <span style="color: #667eea;">[${category}]</span>` : ''}</div>`
+    ).join('');
+    
+    // Remove the "Show All" button
+    const button = list.nextElementSibling;
+    if (button && button.querySelector('button')) {
+        button.remove();
+    }
+    
+    showToast(`Showing all ${totalCount} files`, 'success');
+}
+
+// Add visual workflow indicators for advanced mode
+function addWorkflowIndicators(section) {
+    const dropZoneId = section === 'historical' ? 'historicalDropZone' : 'newDropZone';
+    const csvBoxId = section === 'historical' ? 'historicalCsvBox' : 'newCsvBox';
+    
+    // Dim the upload area (files already uploaded)
+    const dropZone = document.getElementById(dropZoneId);
+    if (dropZone) {
+        dropZone.classList.add('upload-area-completed');
+    }
+    
+    // Highlight the CSV box
+    const csvBox = document.getElementById(csvBoxId);
+    if (csvBox && !document.querySelector(`#${csvBoxId} .next-step-indicator`)) {
+        // Add next step indicator
+        const indicator = document.createElement('div');
+        indicator.className = 'next-step-indicator';
+        indicator.innerHTML = 'NEXT STEP: Add product metadata using CSV Builder or upload CSV file';
+        csvBox.insertBefore(indicator, csvBox.firstChild);
+        
+        // Add highlight animation
+        csvBox.classList.add('csv-box-highlight');
+        
+        // Remove animation after it completes
+        setTimeout(() => {
+            csvBox.classList.remove('csv-box-highlight');
+        }, 6000);
+    }
+}
+
+// Remove workflow indicators when CSV is uploaded
+function removeWorkflowIndicators(section) {
+    const dropZoneId = section === 'historical' ? 'historicalDropZone' : 'newDropZone';
+    const csvBoxId = section === 'historical' ? 'historicalCsvBox' : 'newCsvBox';
+    
+    // Remove dim from upload area
+    const dropZone = document.getElementById(dropZoneId);
+    if (dropZone) {
+        dropZone.classList.remove('upload-area-completed');
+    }
+    
+    // Remove next step indicator
+    const csvBox = document.getElementById(csvBoxId);
+    if (csvBox) {
+        const indicator = csvBox.querySelector('.next-step-indicator');
+        if (indicator) {
+            indicator.remove();
+        }
+        csvBox.classList.remove('csv-box-highlight');
+    }
+}
+
+
+// GPU Status Initialization
+function initGPUStatus() {
+    const gpuStatusEl = document.getElementById('gpuStatus');
+    if (!gpuStatusEl) return;
+    
+    // Fetch GPU status from backend
+    fetch('/api/gpu/status')
+        .then(response => response.json())
+        .then(data => {
+            updateGPUStatus(data);
+        })
+        .catch(error => {
+            console.error('Failed to fetch GPU status:', error);
+            updateGPUStatus({
+                available: false,
+                device: 'cpu',
+                error: 'Failed to check GPU status'
+            });
+        });
+}
+
+function updateGPUStatus(status) {
+    const gpuStatusEl = document.getElementById('gpuStatus');
+    if (!gpuStatusEl) return;
+    
+    const statusIcon = gpuStatusEl.querySelector('.status-icon');
+    const statusText = gpuStatusEl.querySelector('.status-text');
+    
+    // Remove all status classes
+    gpuStatusEl.classList.remove('gpu-active', 'gpu-cpu', 'gpu-error');
+    
+    if (status.available && status.device !== 'cpu') {
+        // GPU is active
+        gpuStatusEl.classList.add('gpu-active');
+        statusIcon.textContent = '⚡';
+        
+        let deviceName = 'GPU';
+        let tooltip = 'GPU acceleration active';
+        
+        if (status.device === 'cuda') {
+            deviceName = 'NVIDIA GPU';
+            tooltip = `GPU: ${status.gpu_name || 'NVIDIA'} (CUDA) - ${status.throughput || 'N/A'} img/s`;
+        } else if (status.device === 'rocm') {
+            deviceName = 'AMD GPU';
+            tooltip = `GPU: ${status.gpu_name || 'AMD'} (ROCm) - ${status.throughput || 'N/A'} img/s`;
+        } else if (status.device === 'mps') {
+            deviceName = 'Apple Silicon';
+            tooltip = `GPU: ${status.gpu_name || 'Apple Silicon'} (MPS) - ${status.throughput || 'N/A'} img/s`;
+        }
+        
+        statusText.textContent = `${deviceName} Active`;
+        gpuStatusEl.setAttribute('data-tooltip', tooltip);
+        
+        // Show first-run model download message if applicable (once per session)
+        if (status.first_run && !sessionStorage.getItem('clipDownloadShown')) {
+            showToast('First run: Downloading AI model (~350MB). This may take 1-2 minutes.', 'info', 10000);
+            sessionStorage.setItem('clipDownloadShown', 'true');
+        }
+    } else if (status.error) {
+        // GPU error
+        gpuStatusEl.classList.add('gpu-error');
+        statusIcon.textContent = '⚠️';
+        statusText.textContent = 'GPU Error';
+        gpuStatusEl.setAttribute('data-tooltip', `GPU initialization failed: ${status.error}. Using CPU mode.`);
+    } else {
+        // CPU mode
+        gpuStatusEl.classList.add('gpu-cpu');
+        statusIcon.textContent = '💻';
+        statusText.textContent = 'CPU Mode';
+        
+        let tooltip = 'Running on CPU - ';
+        if (status.throughput) {
+            tooltip += `${status.throughput} img/s. `;
+        }
+        tooltip += 'For faster processing, see GPU Setup Guide.';
+        
+        gpuStatusEl.setAttribute('data-tooltip', tooltip);
+    }
+}
+
+// Add processing speed display during batch operations
+function updateProcessingSpeed(imagesProcessed, timeElapsed) {
+    const gpuStatusEl = document.getElementById('gpuStatus');
+    if (!gpuStatusEl) return;
+    
+    const statusText = gpuStatusEl.querySelector('.status-text');
+    const speed = (imagesProcessed / (timeElapsed / 1000)).toFixed(1);
+    
+    // Temporarily show processing speed
+    const originalText = statusText.textContent;
+    statusText.textContent = `${speed} img/s`;
+    
+    // Restore original text after 3 seconds
+    setTimeout(() => {
+        statusText.textContent = originalText;
+    }, 3000);
 }

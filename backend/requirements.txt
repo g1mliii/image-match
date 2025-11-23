@@ -1,7 +1,41 @@
+# Product Matching System - Backend Requirements
+# 
+# IMPORTANT FOR GPU USERS:
+# - AMD ROCm (Windows): Requires Python 3.12 + special PyTorch build
+#   Run: py -3.12 gpu/setup_gpu.py (installs PyTorch 2.8.0 + ROCm 6.4)
+# - NVIDIA CUDA: Any Python 3.8+ works
+#   Run: python gpu/setup_gpu.py (installs PyTorch with CUDA 12.4)
+# - Apple Silicon: Any Python 3.8+ works
+#   Run: python gpu/setup_gpu.py (installs PyTorch with MPS)
+#
+# For CPU-only (no GPU): Just install these requirements normally
+
+# Web Framework
 Flask==3.0.0
 Flask-CORS==4.0.0
+
+# Core Scientific Computing
 numpy>=1.26.2
+scipy>=1.11.3
+
+# Image Processing
 opencv-python>=4.8.1.78
 scikit-image>=0.22.0
-scipy>=1.11.3
 Pillow>=10.1.0
+
+# Deep Learning (GPU users: install via gpu/setup_gpu.py instead)
+# PyTorch - Version depends on GPU:
+#   - AMD ROCm (Windows): 2.8.0 (Python 3.12 only)
+#   - NVIDIA CUDA: 2.x with CUDA 12.4
+#   - Apple Silicon: 2.x with MPS
+#   - CPU: 2.x CPU-only
+torch>=2.0.0
+
+# CLIP Model for Visual Matching
+# CRITICAL: sentence-transformers < 3.0.0 required for AMD ROCm compatibility
+# Version 3.0+ requires torch.distributed.is_initialized() which is missing in ROCm Windows builds
+sentence-transformers>=2.7.0,<3.0.0
+
+# Testing (optional)
+# pytest>=7.0.0
+# pytest-timeout>=2.1.0

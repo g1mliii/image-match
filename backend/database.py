@@ -2,8 +2,12 @@ import sqlite3
 import os
 import numpy as np
 import io
+import logging
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Tuple
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'product_matching.db')
 
@@ -20,6 +24,48 @@ def get_db_connection():
         raise e
     finally:
         conn.close()
+
+def migrate_features_table():
+    """Migrate existing features table to support CLIP embeddings
+    
+    Adds embedding_type and embedding_version columns if they don't exist.
+    Safe to run multiple times - checks if columns exist first.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Check if features table exists first
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='features'")
+        if not cursor.fetchone():
+            # Table doesn't exist yet, skip migration
+            return
+        
+        # Check if embedding_type column exists
+        cursor.execute("PRAGMA table_info(features)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'embedding_type' not in columns:
+            logger.info("Adding embedding_type column to features table")
+            cursor.execute('''
+                ALTER TABLE features 
+                ADD COLUMN embedding_type TEXT DEFAULT 'legacy'
+            ''')
+            # Update existing rows to have 'legacy' type
+            cursor.execute('''
+                UPDATE features 
+                SET embedding_type = 'legacy' 
+                WHERE embedding_type IS NULL
+            ''')
+        
+        if 'embedding_version' not in columns:
+            logger.info("Adding embedding_version column to features table")
+            cursor.execute('''
+                ALTER TABLE features 
+                ADD COLUMN embedding_version TEXT DEFAULT NULL
+            ''')
+        
+        conn.commit()
+        logger.info("Features table migration complete")
 
 def init_db():
     """Initialize database with schema
@@ -45,6 +91,9 @@ def init_db():
         ''')
         
         # Create features table
+        # Supports both legacy (color/shape/texture) and CLIP embeddings
+        # embedding_type: 'legacy' or 'clip'
+        # embedding_version: for future model updates (e.g., 'clip-ViT-B-32')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS features (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +101,8 @@ def init_db():
                 color_features BLOB NOT NULL,
                 shape_features BLOB NOT NULL,
                 texture_features BLOB NOT NULL,
+                embedding_type TEXT DEFAULT 'legacy',
+                embedding_version TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (product_id) REFERENCES products(id)
             )
@@ -161,6 +212,9 @@ def init_db():
         
         conn.commit()
         print("Database initialized successfully with performance indexes")
+    
+    # Run migration to add CLIP support columns if needed
+    migrate_features_table()
 
 def get_product_by_id(product_id):
     """Get product by ID"""
@@ -377,8 +431,21 @@ def deserialize_numpy_array(blob: bytes) -> np.ndarray:
     return np.load(buffer, allow_pickle=False)
 
 def insert_features(product_id: int, color_features: np.ndarray, 
-                    shape_features: np.ndarray, texture_features: np.ndarray) -> int:
-    """Insert feature vectors for a product"""
+                    shape_features: np.ndarray, texture_features: np.ndarray,
+                    embedding_type: str = 'legacy', embedding_version: Optional[str] = None) -> int:
+    """Insert feature vectors for a product
+    
+    Args:
+        product_id: Product ID
+        color_features: Color feature vector (or CLIP embedding for 'clip' type)
+        shape_features: Shape feature vector (or empty for 'clip' type)
+        texture_features: Texture feature vector (or empty for 'clip' type)
+        embedding_type: 'legacy' or 'clip'
+        embedding_version: Model version (e.g., 'clip-ViT-B-32')
+    
+    Returns:
+        Feature record ID
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -388,18 +455,29 @@ def insert_features(product_id: int, color_features: np.ndarray,
         texture_blob = serialize_numpy_array(texture_features)
         
         cursor.execute('''
-            INSERT INTO features (product_id, color_features, shape_features, texture_features)
-            VALUES (?, ?, ?, ?)
-        ''', (product_id, color_blob, shape_blob, texture_blob))
+            INSERT INTO features (product_id, color_features, shape_features, texture_features, 
+                                 embedding_type, embedding_version)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (product_id, color_blob, shape_blob, texture_blob, embedding_type, embedding_version))
         
         return cursor.lastrowid
 
-def get_features_by_product_id(product_id: int) -> Optional[Dict[str, np.ndarray]]:
-    """Get feature vectors for a product"""
+def get_features_by_product_id(product_id: int) -> Optional[Dict[str, Any]]:
+    """Get feature vectors for a product
+    
+    Returns:
+        Dictionary with feature arrays and metadata:
+        - color_features: Color features or CLIP embedding
+        - shape_features: Shape features (empty for CLIP)
+        - texture_features: Texture features (empty for CLIP)
+        - embedding_type: 'legacy' or 'clip'
+        - embedding_version: Model version string
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT color_features, shape_features, texture_features 
+            SELECT color_features, shape_features, texture_features, 
+                   embedding_type, embedding_version
             FROM features 
             WHERE product_id = ?
         ''', (product_id,))
@@ -411,7 +489,9 @@ def get_features_by_product_id(product_id: int) -> Optional[Dict[str, np.ndarray
         return {
             'color_features': deserialize_numpy_array(row['color_features']),
             'shape_features': deserialize_numpy_array(row['shape_features']),
-            'texture_features': deserialize_numpy_array(row['texture_features'])
+            'texture_features': deserialize_numpy_array(row['texture_features']),
+            'embedding_type': row['embedding_type'] or 'legacy',
+            'embedding_version': row['embedding_version']
         }
 
 def update_features(product_id: int, color_features: Optional[np.ndarray] = None,
@@ -451,7 +531,8 @@ def delete_features(product_id: int) -> bool:
         return cursor.rowcount > 0
 
 def get_all_features_by_category(category: Optional[str] = None, is_historical: bool = True,
-                                include_uncategorized: bool = False) -> List[Tuple[int, Dict[str, np.ndarray]]]:
+                                include_uncategorized: bool = False, 
+                                embedding_type: Optional[str] = None) -> List[Tuple[int, Dict[str, Any]]]:
     """Get all feature vectors for products in a category
     
     PERFORMANCE OPTIMIZED (Task 14):
@@ -464,37 +545,57 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
         category: Category to filter by (None returns all products)
         is_historical: Filter for historical vs new products
         include_uncategorized: If True and category specified, also include NULL category products
+        embedding_type: Filter by embedding type ('legacy', 'clip', or None for all)
     
     Returns:
         List of tuples (product_id, features_dict)
+        features_dict includes: color_features, shape_features, texture_features, 
+                                embedding_type, embedding_version, category
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
+        # Build base query with embedding type filter
+        embedding_filter = ""
+        params = []
+        
         if category is None:
             # Get all products regardless of category
-            cursor.execute('''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features
+            query = '''
+                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+                       f.embedding_type, f.embedding_version
                 FROM products p
                 JOIN features f ON p.id = f.product_id
                 WHERE p.is_historical = ?
-            ''', (is_historical,))
+            '''
+            params.append(is_historical)
         elif include_uncategorized:
             # Get products in category OR with NULL category
-            cursor.execute('''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features
+            query = '''
+                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+                       f.embedding_type, f.embedding_version
                 FROM products p
                 JOIN features f ON p.id = f.product_id
                 WHERE (p.category = ? OR p.category IS NULL) AND p.is_historical = ?
-            ''', (category, is_historical))
+            '''
+            params.extend([category, is_historical])
         else:
             # Get products in specific category only
-            cursor.execute('''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features
+            query = '''
+                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+                       f.embedding_type, f.embedding_version
                 FROM products p
                 JOIN features f ON p.id = f.product_id
                 WHERE p.category = ? AND p.is_historical = ?
-            ''', (category, is_historical))
+            '''
+            params.extend([category, is_historical])
+        
+        # Add embedding type filter if specified
+        if embedding_type is not None:
+            query += ' AND f.embedding_type = ?'
+            params.append(embedding_type)
+        
+        cursor.execute(query, params)
         
         results = []
         for row in cursor.fetchall():
@@ -503,6 +604,8 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
                 'color_features': deserialize_numpy_array(row['color_features']),
                 'shape_features': deserialize_numpy_array(row['shape_features']),
                 'texture_features': deserialize_numpy_array(row['texture_features']),
+                'embedding_type': row['embedding_type'] or 'legacy',
+                'embedding_version': row['embedding_version'],
                 'category': row['category']  # Include category in results for reference
             }
             results.append((product_id, features))
@@ -667,6 +770,71 @@ def bulk_update_category(product_ids: List[int], category: str) -> int:
         query = f"UPDATE products SET category = ? WHERE id IN ({placeholders})"
         cursor.execute(query, [category] + product_ids)
         return cursor.rowcount
+
+def re_extract_with_clip(product_id: int) -> bool:
+    """Re-extract features for a product using CLIP embeddings
+    
+    This function is used to upgrade legacy features to CLIP embeddings.
+    It deletes the old features and returns True to indicate re-extraction is needed.
+    The actual CLIP extraction should be done by the caller.
+    
+    Args:
+        product_id: Product ID to re-extract
+    
+    Returns:
+        True if old features were deleted and re-extraction is needed
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Check if product has features
+        cursor.execute('SELECT id FROM features WHERE product_id = ?', (product_id,))
+        if not cursor.fetchone():
+            return False
+        
+        # Delete old features
+        cursor.execute('DELETE FROM features WHERE product_id = ?', (product_id,))
+        return cursor.rowcount > 0
+
+def batch_re_extract_with_clip(category: Optional[str] = None, 
+                               is_historical: Optional[bool] = None) -> List[int]:
+    """Batch re-extraction tool for upgrading entire catalog to CLIP
+    
+    Returns list of product IDs that need re-extraction.
+    
+    Args:
+        category: Optional category filter
+        is_historical: Optional filter for historical vs new products
+    
+    Returns:
+        List of product IDs with legacy features that need re-extraction
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build query to find products with legacy features
+        conditions = ["f.embedding_type = 'legacy'"]
+        params = []
+        
+        if category is not None:
+            conditions.append("p.category = ?")
+            params.append(category)
+        
+        if is_historical is not None:
+            conditions.append("p.is_historical = ?")
+            params.append(is_historical)
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f'''
+            SELECT p.id
+            FROM products p
+            JOIN features f ON p.id = f.product_id
+            WHERE {where_clause}
+        '''
+        
+        cursor.execute(query, params)
+        return [row['id'] for row in cursor.fetchall()]
 
 
 # SKU-specific utility functions for real-world data handling
@@ -1181,19 +1349,19 @@ def delete_price_history(product_id: int) -> bool:
 
 def get_products_with_price_history(category: Optional[str] = None, 
                                    is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
-    """Get all products that have price history data
+    """Get all products with their latest price from price history
     
     Args:
         category: Optional category filter
         is_historical: Optional filter for historical vs new products
     
     Returns:
-        List of products with price history
+        List of rows with product_id and price (latest price for each product)
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        conditions = ['EXISTS (SELECT 1 FROM price_history WHERE product_id = p.id)']
+        conditions = []
         params = []
         
         if category is not None:
@@ -1204,12 +1372,21 @@ def get_products_with_price_history(category: Optional[str] = None,
             conditions.append('p.is_historical = ?')
             params.append(is_historical)
         
-        where_clause = ' AND '.join(conditions)
+        where_clause = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
         
+        # Get latest price for each product using subquery
         cursor.execute(f'''
-            SELECT p.* FROM products p
-            WHERE {where_clause}
-            ORDER BY p.created_at DESC
+            SELECT 
+                p.id as product_id,
+                ph.price
+            FROM products p
+            INNER JOIN price_history ph ON p.id = ph.product_id
+            INNER JOIN (
+                SELECT product_id, MAX(date) as max_date
+                FROM price_history
+                GROUP BY product_id
+            ) latest ON ph.product_id = latest.product_id AND ph.date = latest.max_date
+            {where_clause}
         ''', params)
         
         return cursor.fetchall()
@@ -1427,19 +1604,19 @@ def delete_performance_history(product_id: int) -> bool:
 
 def get_products_with_performance_history(category: Optional[str] = None, 
                                          is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
-    """Get all products that have performance history data
+    """Get all products with their latest performance metrics from performance history
     
     Args:
         category: Optional category filter
         is_historical: Optional filter for historical vs new products
     
     Returns:
-        List of products with performance history
+        List of rows with product_id, sales, views, conversion_rate, revenue (latest for each product)
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        conditions = ['EXISTS (SELECT 1 FROM performance_history WHERE product_id = p.id)']
+        conditions = []
         params = []
         
         if category is not None:
@@ -1450,12 +1627,61 @@ def get_products_with_performance_history(category: Optional[str] = None,
             conditions.append('p.is_historical = ?')
             params.append(is_historical)
         
-        where_clause = ' AND '.join(conditions)
+        where_clause = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
         
+        # Get latest performance metrics for each product using subquery
         cursor.execute(f'''
-            SELECT p.* FROM products p
-            WHERE {where_clause}
-            ORDER BY p.created_at DESC
+            SELECT 
+                p.id as product_id,
+                perf.sales,
+                perf.views,
+                perf.conversion_rate,
+                perf.revenue
+            FROM products p
+            INNER JOIN performance_history perf ON p.id = perf.product_id
+            INNER JOIN (
+                SELECT product_id, MAX(date) as max_date
+                FROM performance_history
+                GROUP BY product_id
+            ) latest ON perf.product_id = latest.product_id AND perf.date = latest.max_date
+            {where_clause}
         ''', params)
         
         return cursor.fetchall()
+
+
+
+def get_all_products(is_historical=None):
+    """
+    Get all products, optionally filtered by is_historical flag.
+    
+    Args:
+        is_historical: Filter by historical flag (None = all products)
+    
+    Returns:
+        List of product dictionaries
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        try:
+            if is_historical is None:
+                cursor.execute('''
+                    SELECT id, image_path, category, product_name, sku, is_historical, created_at, metadata
+                    FROM products
+                    ORDER BY created_at DESC
+                ''')
+            else:
+                cursor.execute('''
+                    SELECT id, image_path, category, product_name, sku, is_historical, created_at, metadata
+                    FROM products
+                    WHERE is_historical = ?
+                    ORDER BY created_at DESC
+                ''', (1 if is_historical else 0,))
+            
+            products = cursor.fetchall()
+            return products
+            
+        except Exception as e:
+            logger.error(f"Error getting all products: {e}")
+            raise

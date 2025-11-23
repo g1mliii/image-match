@@ -404,6 +404,39 @@
                     removes this limit, allowing unlimited products. All other features are identical. See the <a
                       href="pricing.html" class="text-indigo-600 hover:underline">pricing page</a> for details.</p>
                 </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">What is CLIP and how does it improve matching?</h3>
+                  <p class="text-slate-600 mb-2">CLIP (Contrastive Language-Image Pre-training) is an AI model that understands images at a deeper level than traditional methods. It provides significantly better accuracy for finding similar products.</p>
+                  <p class="text-slate-600"><strong>CLIP vs Legacy Features:</strong> CLIP analyzes images holistically using deep learning (512-dimensional embeddings), while legacy features use basic color histograms, shape descriptors, and texture patterns. CLIP is more accurate but requires more processing power.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">Do I need a GPU?</h3>
+                  <p class="text-slate-600 mb-2">No! The app works perfectly on CPU for small to medium catalogs (under 1,000 products). GPU acceleration is optional but recommended for large catalogs or frequent batch processing.</p>
+                  <p class="text-slate-600"><strong>Performance comparison:</strong> CPU processes 5-20 images/sec, while GPUs process 100-300 images/sec. For a 500-product catalog, CPU takes ~30 seconds vs 2-5 seconds on GPU.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">Which GPUs are supported?</h3>
+                  <p class="text-slate-600 mb-2"><strong>Fully Supported:</strong></p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-2">
+                    <li>NVIDIA GeForce/RTX series (best support, any recent GPU)</li>
+                    <li>Apple Silicon M1/M2/M3/M4/M5 (excellent performance)</li>
+                  </ul>
+                  <p class="text-slate-600 mb-2"><strong>Limited Support:</strong></p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-2">
+                    <li>AMD Radeon RX 6000/7000/9000 series only (requires Python 3.12 + ROCm 6.4)</li>
+                    <li>Older AMD GPUs (RX 5000 and earlier) are NOT supported</li>
+                  </ul>
+                  <p class="text-slate-600">See our <a href="https://github.com/g1mliii/image-match/tree/main/gpu" class="text-indigo-600 hover:underline">GPU Setup Guide</a> for detailed instructions and troubleshooting.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-lg font-bold text-slate-900 mb-2">How do I enable GPU acceleration?</h3>
+                  <p class="text-slate-600 mb-2">GPU acceleration is automatic! The app detects your GPU on first launch and downloads the CLIP model (~350MB). You'll see a GPU status indicator in the app showing whether GPU acceleration is active.</p>
+                  <p class="text-slate-600"><strong>First-time setup:</strong> The first launch downloads the CLIP model, which takes 1-2 minutes depending on your internet speed. After that, the model is cached locally and loads instantly.</p>
+                </div>
               </div>
             </section>
 
@@ -470,6 +503,58 @@
                     <li>Ensure you're copying the entire key (format: XXXX-XXXX-XXXX-XXXX)</li>
                     <li>Verify your internet connection (required for activation)</li>
                     <li>Contact support if the key still doesn't work</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">GPU Not Detected</h3>
+                  <p class="text-slate-600 mb-2"><strong>Check GPU Status:</strong> Look for the GPU indicator in the app (usually in the status bar or settings). It should show "GPU: Active (CUDA/ROCm/MPS)" or "CPU Mode".</p>
+                  
+                  <p class="text-slate-600 mb-2"><strong>NVIDIA GPUs:</strong></p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-3">
+                    <li>Update to latest NVIDIA drivers from <a href="https://www.nvidia.com/download/index.aspx" class="text-indigo-600 hover:underline">nvidia.com</a></li>
+                    <li>Restart computer after driver installation</li>
+                    <li>Check if other GPU-accelerated apps work (e.g., games)</li>
+                  </ul>
+
+                  <p class="text-slate-600 mb-2"><strong>AMD GPUs:</strong></p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-3">
+                    <li>Verify you have RX 6000/7000/9000 series (older GPUs not supported)</li>
+                    <li>Ensure Python 3.12 is installed (ROCm requires exactly 3.12)</li>
+                    <li>Install ROCm HIP SDK 6.4 from <a href="https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html" class="text-indigo-600 hover:underline">AMD's website</a></li>
+                    <li>Restart computer after ROCm installation</li>
+                    <li>Run the GPU setup script: <code class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">python gpu/setup_gpu.py</code></li>
+                  </ul>
+
+                  <p class="text-slate-600 mb-2"><strong>Apple Silicon:</strong></p>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4 mb-3">
+                    <li>MPS should work automatically on M1/M2/M3/M4/M5 Macs</li>
+                    <li>Ensure macOS is up to date (10.15 or later)</li>
+                    <li>If not working, try reinstalling the app</li>
+                  </ul>
+
+                  <p class="text-slate-600"><strong>Still not working?</strong> The app will automatically fall back to CPU mode, which works perfectly fine for most use cases. See our <a href="https://github.com/g1mliii/image-match/tree/main/gpu" class="text-indigo-600 hover:underline">GPU Setup Guide</a> for detailed troubleshooting.</p>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">CLIP Model Download Fails</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Check your internet connection (model is ~350MB)</li>
+                    <li>Ensure you have 1GB free disk space</li>
+                    <li>Try restarting the app to retry the download</li>
+                    <li>Check if your firewall is blocking the download</li>
+                    <li>Model is cached in: <code class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">~/.cache/torch/sentence_transformers/</code></li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 class="text-xl font-bold text-slate-900 mb-3">Processing is Slow Despite Having GPU</h3>
+                  <ul class="list-disc list-inside text-slate-600 space-y-1 ml-4">
+                    <li>Check GPU status indicator - ensure it shows GPU is active</li>
+                    <li>Close other GPU-intensive applications (games, video editing, etc.)</li>
+                    <li>Check GPU temperature - thermal throttling can slow performance</li>
+                    <li>For AMD GPUs: ROCm on Windows may be slower than NVIDIA CUDA</li>
+                    <li>Try processing smaller batches (50-100 products at a time)</li>
                   </ul>
                 </div>
               </div>

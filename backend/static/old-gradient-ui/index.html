@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catalog Match</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>Catalog Match</h1>
+            <p>Compare new products against historical catalog</p>
+            <a href="/static/csv-builder.html" class="btn btn-secondary" style="position: absolute; top: 20px; right: 20px;">📊 CSV Builder</a>
+        </header>
+
+        <main class="main-content">
+            <!-- Step 1: Upload Historical Catalog -->
+            <section class="upload-section" id="historicalSection">
+                <div class="section-header">
+                    <span class="step-number">1</span>
+                    <h2>Upload Historical Catalog (Old Products)</h2>
+                </div>
+                
+                <div class="upload-area">
+                    <div class="help-box">
+                        <strong>📁 Organize by Category:</strong> Put images in subfolders named by category (e.g., placemats/, dinnerware/, glassware/)
+                        <br><small>Example: historical_products/placemats/image1.jpg → Category: "placemats"</small>
+                    </div>
+                    
+                    <div class="drop-zone" id="historicalDropZone">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        <p>Drop folder with historical product images here</p>
+                        <button class="btn btn-secondary" id="historicalBrowseBtn">Browse Folder</button>
+                        <input type="file" id="historicalInput" webkitdirectory directory multiple hidden>
+                    </div>
+                    
+                    <div class="file-info" id="historicalInfo"></div>
+                    
+                    <div class="csv-upload">
+                        <label>
+                            Optional: Upload CSV with metadata (SKU, name, price & performance history)
+                            <span class="info-icon" id="historicalCsvHelp">ⓘ</span>
+                        </label>
+                        <input type="file" id="historicalCsvInput" accept=".csv,.txt">
+                        <small>Add SKU, names, price history, and performance data (category auto-detected from folders)</small>
+                        <button type="button" class="btn-link" onclick="showCsvHelp('historical')">📖 Show CSV format examples</button>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="processHistoricalBtn" disabled>Process Historical Catalog</button>
+                </div>
+                
+                <div class="processing-status" id="historicalStatus"></div>
+            </section>
+
+            <!-- Step 2: Upload New Products -->
+            <section class="upload-section" id="newSection" style="display: none;">
+                <div class="section-header">
+                    <span class="step-number">2</span>
+                    <h2>Upload New Products to Match</h2>
+                </div>
+                
+                <div class="upload-area">
+                    <div class="help-box">
+                        <strong>📁 Organize by Category:</strong> Put images in subfolders named by category (e.g., placemats/, dinnerware/, glassware/)
+                        <br><small>Matching will prioritize products in the same category</small>
+                    </div>
+                    
+                    <div class="drop-zone" id="newDropZone">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        <p>Drop folder with new product images here</p>
+                        <button class="btn btn-secondary" id="newBrowseBtn">Browse Folder</button>
+                        <input type="file" id="newInput" webkitdirectory directory multiple hidden>
+                    </div>
+                    
+                    <div class="file-info" id="newInfo"></div>
+                    
+                    <div class="csv-upload">
+                        <label>
+                            Optional: Upload CSV with metadata (SKU, name, price & performance history)
+                            <span class="info-icon" id="newCsvHelp">ⓘ</span>
+                        </label>
+                        <input type="file" id="newCsvInput" accept=".csv,.txt">
+                        <small>Add SKU, names, price history, and performance data (category auto-detected from folders)</small>
+                        <button type="button" class="btn-link" onclick="showCsvHelp('new')">📖 Show CSV format examples</button>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="processNewBtn" disabled>Process New Products</button>
+                </div>
+                
+                <div class="processing-status" id="newStatus"></div>
+            </section>
+
+            <!-- Step 3: Match Products -->
+            <section class="match-section" id="matchSection" style="display: none;">
+                <div class="section-header">
+                    <span class="step-number">3</span>
+                    <h2>Find Matches</h2>
+                </div>
+                
+                <div class="match-controls">
+                    <div class="control-group">
+                        <label>Similarity Threshold: <span id="thresholdValue">50</span>%</label>
+                        <input type="range" id="thresholdSlider" min="0" max="100" value="50">
+                        <small class="help-text">Products with similarity below this threshold will be filtered out. Higher values (70-100) show only very similar products.</small>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>Max Matches per Product:</label>
+                        <select id="limitSelect">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="25">25</option>
+                            <option value="50">50</option>
+                        </select>
+                        <small class="help-text">Limit the number of matches shown for each new product to focus on the best results.</small>
+                    </div>
+                    
+                    <div class="control-group">
+                        <button class="btn btn-secondary" id="advancedSettingsBtn">⚙️ Advanced Settings</button>
+                    </div>
+                    
+                    <button class="btn btn-primary btn-large" id="matchBtn">Start Matching</button>
+                </div>
+                
+                <!-- Advanced Settings Panel -->
+                <div class="advanced-settings" id="advancedSettings" style="display: none;">
+                    <h4>🎛️ Similarity Weight Adjustments</h4>
+                    <p class="help-text">Adjust how much each feature type contributes to the overall similarity score. Total must equal 100%.</p>
+                    
+                    <div class="weight-controls">
+                        <div class="weight-control">
+                            <label>Color Weight: <span id="colorWeightValue">50</span>%</label>
+                            <input type="range" id="colorWeightSlider" min="0" max="100" value="50">
+                        </div>
+                        
+                        <div class="weight-control">
+                            <label>Shape Weight: <span id="shapeWeightValue">30</span>%</label>
+                            <input type="range" id="shapeWeightSlider" min="0" max="100" value="30">
+                        </div>
+                        
+                        <div class="weight-control">
+                            <label>Texture Weight: <span id="textureWeightValue">20</span>%</label>
+                            <input type="range" id="textureWeightSlider" min="0" max="100" value="20">
+                        </div>
+                    </div>
+                    
+                    <div class="weight-total">
+                        Total: <span id="weightTotal">100</span>% <span id="weightWarning" style="color: #ef4444; display: none;">⚠️ Must equal 100%</span>
+                    </div>
+                    
+                    <button class="btn btn-secondary" id="resetWeightsBtn">Reset to Default</button>
+                </div>
+                
+                <div class="match-progress" id="matchProgress"></div>
+            </section>
+
+            <!-- Step 4: Results -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <div class="section-header">
+                    <h2>Match Results</h2>
+                    <div class="results-actions">
+                        <button class="btn btn-secondary" id="exportCsvBtn">📄 Export CSV</button>
+                        <button class="btn btn-secondary" id="exportWithImagesBtn">📦 Export with Images</button>
+                        <button class="btn btn-secondary" id="duplicateReportBtn">🔍 Duplicate Report</button>
+                        <button class="btn btn-secondary" id="saveSessionBtn">💾 Save Session</button>
+                        <button class="btn btn-secondary" id="loadSessionBtn">📂 Load Session</button>
+                        <button class="btn btn-secondary" id="resetBtn">🔄 Start Over</button>
+                    </div>
+                </div>
+                
+                <!-- Search and Filter Controls -->
+                <div class="results-filters">
+                    <div class="filter-group">
+                        <input type="text" id="searchInput" placeholder="🔍 Search products..." class="search-input">
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Category:</label>
+                        <select id="categoryFilter" class="filter-select">
+                            <option value="all">All Categories</option>
+                        </select>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Sort By:</label>
+                        <select id="sortBySelect" class="filter-select">
+                            <option value="similarity">Similarity Score</option>
+                            <option value="price">Price (Matched)</option>
+                            <option value="performance">Performance (Matched)</option>
+                            <option value="name">Product Name</option>
+                        </select>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>
+                            <input type="checkbox" id="duplicatesOnlyCheckbox">
+                            Show Duplicates Only (>90%)
+                        </label>
+                    </div>
+                    
+                    <button class="btn btn-secondary" id="clearFiltersBtn">Clear Filters</button>
+                </div>
+                
+                <div class="results-summary" id="resultsSummary"></div>
+                
+                <div class="results-list" id="resultsList"></div>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" id="modalClose">&times;</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+    
+    <div id="csvHelpModal" class="modal">
+        <div class="modal-content csv-help-modal">
+            <span class="modal-close" onclick="closeCsvHelp()">&times;</span>
+            <div id="csvHelpBody">
+                <h2>📊 CSV Format Guide</h2>
+                <p class="help-intro">Your CSV file can include product details, price history, and performance history. All fields except filename are optional!</p>
+                
+                <div class="format-section" style="background: #eef2ff; border: 2px solid #667eea;">
+                    <h3>✨ NEW: Interactive CSV Builder (Recommended!)</h3>
+                    <p style="margin: 10px 0; font-size: 15px;">Skip the manual CSV creation! Use our interactive CSV Builder tool to create your CSV file with a step-by-step wizard.</p>
+                    <a href="/static/csv-builder.html" target="_blank" class="btn btn-primary" style="font-size: 16px; padding: 12px 24px; display: inline-block; text-decoration: none;">
+                        🚀 Open CSV Builder Tool
+                    </a>
+                    <p class="format-note" style="margin-top: 15px;">💡 The CSV Builder auto-detects categories, validates data, and handles price/performance history with an easy-to-use interface!</p>
+                </div>
+                
+                <div class="format-section" style="background: #f8fafc; border: 1px solid #e2e8f0; margin-top: 20px;">
+                    <h3>📥 Or Download Sample CSV Template</h3>
+                    <button class="btn btn-secondary" onclick="downloadSampleCsv()" style="font-size: 14px; padding: 10px 20px;">
+                        ⬇️ Download Sample CSV Template
+                    </button>
+                    <p class="format-note" style="margin-top: 10px;">Download this template and fill in your data manually in Excel or any text editor.</p>
+                </div>
+                
+                <div class="format-section">
+                    <h3>✅ Basic Format (Simplest)</h3>
+                    <div class="csv-example-box">
+                        <div class="csv-header">filename,category,sku,name</div>
+                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat</div>
+                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate Set</div>
+                    </div>
+                    <p class="format-note">💡 Category is optional if you organize images in folders!</p>
+                </div>
+                
+                <div class="format-section">
+                    <h3>💰 With Current Price</h3>
+                    <div class="csv-example-box">
+                        <div class="csv-header">filename,category,sku,name,price</div>
+                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99</div>
+                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00</div>
+                    </div>
+                    <p class="format-note">💡 Just add the current price in the 5th column</p>
+                </div>
+                
+                <div class="format-section">
+                    <h3>📈 With Price History (Recommended)</h3>
+                    <div class="csv-example-box">
+                        <div class="csv-header">filename,category,sku,name,price_history</div>
+                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,2024-01-15:29.99;2024-02-15:31.50;2024-03-15:28.75</div>
+                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,2023-12-01:45.00;2024-01-01:42.50;2024-02-01:44.00</div>
+                    </div>
+                    <p class="format-note">💡 Format: <code>date:price;date:price;date:price</code> (up to 12 months)</p>
+                    <p class="format-note">📅 Date format: YYYY-MM-DD (e.g., 2024-03-15)</p>
+                </div>
+                
+                <div class="format-section">
+                    <h3>🎯 Quick Price History (No Dates)</h3>
+                    <div class="csv-example-box">
+                        <div class="csv-header">filename,category,sku,name,price_history</div>
+                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99;31.50;28.75;32.00</div>
+                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00;42.50;44.00;43.50</div>
+                    </div>
+                    <p class="format-note">💡 Just list prices separated by semicolons - dates will be auto-generated monthly going backwards</p>
+                </div>
+                
+                <div class="format-section">
+                    <h3>📊 With Performance History</h3>
+                    <div class="csv-example-box">
+                        <div class="csv-header">filename,category,sku,name,price,performance_history</div>
+                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160</div>
+                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00,2024-01-15:200:2000:10.0:9000;2024-02-15:220:2200:10.0:9900</div>
+                    </div>
+                    <p class="format-note">💡 Format: <code>date:sales:views:conversion:revenue</code> (up to 12 months)</p>
+                    <p class="format-note">📊 Example: 2024-01-15:150:1200:12.5:1800 = Jan 15, 150 sales, 1200 views, 12.5% conversion, $1800 revenue</p>
+                </div>
+                
+                <div class="format-section">
+                    <h3>🚀 Quick Performance (No Dates)</h3>
+                    <div class="csv-example-box">
+                        <div class="csv-header">filename,category,sku,name,price,performance_history</div>
+                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99,150:1200:12.5:1800;180:1500:12.0:2160;200:1800:11.1:2400</div>
+                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00,200:2000:10.0:9000;220:2200:10.0:9900;240:2400:10.0:10800</div>
+                    </div>
+                    <p class="format-note">💡 Format: <code>sales:views:conversion:revenue</code> - dates auto-generated monthly</p>
+                </div>
+                
+                <div class="format-section important-notes">
+                    <h3>⚠️ Important Notes</h3>
+                    <ul>
+                        <li><strong>Filename is required</strong> - must match your image file exactly</li>
+                        <li><strong>All other fields are optional</strong> - leave blank if you don't have the data</li>
+                        <li><strong>Category auto-detected</strong> - from folder structure (e.g., placemats/image.jpg → category: placemats)</li>
+                        <li><strong>Flexible separators</strong> - use commas or tabs between columns</li>
+                        <li><strong>Headers optional</strong> - first row can be headers or data</li>
+                        <li><strong>Missing data OK</strong> - system handles incomplete data gracefully</li>
+                        <li><strong>Price history limit</strong> - maximum 12 months of price data</li>
+                        <li><strong>Performance history limit</strong> - maximum 12 months of performance data</li>
+                        <li><strong>Performance format</strong> - date:sales:views:conversion_rate:revenue (all numeric except date)</li>
+                        <li><strong>Conversion rate</strong> - enter as percentage (e.g., 12.5 for 12.5%)</li>
+                    </ul>
+                </div>
+                
+
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

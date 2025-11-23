@@ -1,0 +1,36 @@
+# GPU-Accelerated Requirements for Product Matching System
+# 
+# IMPORTANT: Run install_gpu_support.py first to install correct PyTorch version
+# This will automatically detect your GPU and install the right version:
+#   - NVIDIA: CUDA 12.4
+#   - AMD: ROCm 6.2 (Linux) or CUDA compatibility (Windows)
+#   - Apple Silicon: MPS
+#   - CPU: Fallback
+#
+# Usage:
+#   python install_gpu_support.py
+#   pip install -r requirements_gpu.txt
+
+# Core dependencies
+Flask==3.0.0
+Flask-CORS==4.0.0
+numpy>=1.26.2
+opencv-python>=4.8.1.78
+scikit-image>=0.22.0
+scipy>=1.11.3
+Pillow>=10.1.0
+
+# PyTorch - Install via install_gpu_support.py
+# torch>=2.0.0  # Installed by script
+# torchvision>=0.15.0  # Installed by script
+
+# CLIP model
+sentence-transformers>=2.2.0
+
+# Testing
+pytest>=7.0.0
+pytest-timeout>=2.1.0
+
+# Optional: Performance monitoring
+# psutil>=5.9.0  # For system monitoring
+# gputil>=1.4.0  # For GPU monitoring (NVIDIA only)

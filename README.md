@@ -30,13 +30,44 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 4. **Match** new products against your catalog
 5. **Review** results and export to CSV
 
+## 📚 Documentation
+
+### Getting Started
+- **[INSTALLATION.md](INSTALLATION.md)** - Complete installation guide for all platforms
+- **[START_SERVER_README.md](START_SERVER_README.md)** - How to start the server
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Quick reference guide
+
+### User Guides
+- **[Website Documentation](https://g1mliii.github.io/image-match/docs.html)** - Online user guide
+- **[GPU Setup Guide](gpu/GPU_SETUP_GUIDE.md)** - GPU acceleration setup (AMD/NVIDIA/Apple Silicon)
+
+### Developer Documentation
+- **[CLIP Developer Guide](backend/docs/CLIP_DEVELOPER_GUIDE.md)** - Technical guide for CLIP integration
+- **[Database Design](backend/docs/DATABASE_DESIGN.md)** - Database schema and design
+- **[Matching Service](backend/docs/MATCHING_SERVICE.md)** - Matching algorithm details
+
 ## 📋 System Requirements
 
 ### Windows
 - Windows 10 or later (64-bit)
 - 4 GB RAM minimum (8 GB recommended)
-- 500 MB free disk space
+- 500 MB free disk space (1 GB with CLIP model)
 - Display resolution: 1280x720 or higher
+
+### GPU Acceleration (Optional but Recommended)
+- **AMD GPU**: Radeon RX 6000/7000/9000 series + Python 3.12 + ROCm 6.4
+- **NVIDIA GPU**: GeForce/RTX series (any recent GPU)
+- **Apple Silicon**: M1/M2/M3/M4/M5 (built-in MPS support)
+
+**Performance**: GPU provides 10-50x faster processing (150-300 img/s vs 5-20 img/s on CPU)
+
+**Setup GPU**: See [INSTALLATION.md](INSTALLATION.md) or [gpu/GPU_SETUP_GUIDE.md](gpu/GPU_SETUP_GUIDE.md)
+
+**Quick GPU Setup**:
+```bash
+cd gpu
+python setup_gpu.py
+```
 
 ## 💰 Pricing
 

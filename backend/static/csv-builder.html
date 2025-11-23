@@ -3,104 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CSV Builder - Catalog Match</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>CSV BUILDER</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="stylesheet" href="/static/csv-builder.css">
 </head>
 <body>
-    <div class="app-container">
-        <header class="app-header">
-            <h1>📊 CSV Builder</h1>
-            <p>Create product CSV files with metadata, price history, and performance data</p>
-            <a href="/static/index.html" class="btn btn-secondary">← Back to Main App</a>
+    <div class="container">
+        <header>
+            <h1>CSV BUILDER</h1>
+            <div style="display: flex; align-items: center; gap: 10px; justify-content: center;">
+                <p>Create product CSV files with metadata</p>
+                <button class="help-btn" onclick="toggleHelp('builderHelp')" style="position: static;">?</button>
+            </div>
+            <div class="help-text" id="builderHelp" style="display: none; margin-top: 15px; text-align: left;">
+                <p><strong>WHAT IS THE CSV BUILDER?</strong></p>
+                <p>The CSV Builder helps you create a CSV file with product metadata (SKU, names, prices, sales data) that matches your product images.</p>
+                <p><strong>HOW IT WORKS:</strong></p>
+                <p>1. Upload your product images - filenames are automatically extracted</p>
+                <p>2. Add metadata for each product (SKU, name, price, etc.)</p>
+                <p>3. Optionally add price and performance history</p>
+                <p>4. Export the CSV file</p>
+                <p>5. Use this CSV file in the main app when uploading products</p>
+                <p><strong>WHY USE IT?</strong> The CSV Builder ensures your filenames match perfectly and makes it easy to add metadata without manually creating a CSV file.</p>
+            </div>
+            <a href="/" class="btn-link">← BACK TO APP</a>
         </header>
 
-        <main class="main-content">
-            <!-- Progress Indicator -->
-            <div class="progress-indicator">
+        <main>
+            <!-- Progress -->
+            <div class="progress-steps">
                 <div class="progress-step active" data-step="1">
-                    <span class="step-number">1</span>
-                    <span class="step-label">Upload Images</span>
+                    <span class="step">1</span>
+                    <span>UPLOAD</span>
                 </div>
                 <div class="progress-step" data-step="2">
-                    <span class="step-number">2</span>
-                    <span class="step-label">Add Metadata</span>
+                    <span class="step">2</span>
+                    <span>METADATA</span>
                 </div>
                 <div class="progress-step" data-step="3">
-                    <span class="step-number">3</span>
-                    <span class="step-label">Price & Performance</span>
+                    <span class="step">3</span>
+                    <span>HISTORY</span>
                 </div>
                 <div class="progress-step" data-step="4">
-                    <span class="step-number">4</span>
-                    <span class="step-label">Export</span>
+                    <span class="step">4</span>
+                    <span>EXPORT</span>
                 </div>
             </div>
 
-            <!-- Step 1: Upload Images -->
-            <section class="builder-section" id="step1" style="display: block;">
+            <!-- Step 1: Upload -->
+            <section class="section" id="step1" style="display: block;">
                 <div class="section-header">
-                    <h2>Step 1: Upload Product Images</h2>
-                    <p>Select a folder containing your product images. Categories will be auto-detected from folder structure.</p>
+                    <h2>STEP 1: UPLOAD IMAGES</h2>
+                    <button class="help-btn" onclick="toggleHelp('step1Help')">?</button>
+                </div>
+                <div class="help-text" id="step1Help" style="display: none; margin-bottom: 20px;">
+                    <p><strong>HOW TO UPLOAD:</strong></p>
+                    <p>1. Click "BROWSE" or drag and drop a folder</p>
+                    <p>2. Select a folder containing your product images</p>
+                    <p>3. Images can be in subfolders (categories will be auto-detected)</p>
+                    <p>4. Supported formats: JPG, PNG, WebP</p>
+                    <p><strong>WHAT HAPPENS:</strong> The builder will extract filenames from your images and create a table where you can add metadata for each product.</p>
                 </div>
 
-                <div class="upload-area">
+                <div class="upload-box">
                     <div class="drop-zone" id="imageDropZone">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                        </svg>
-                        <p>Drop folder with product images here</p>
-                        <button class="btn btn-secondary" id="imageBrowseBtn">Browse Folder</button>
+                        <p>DROP FOLDER HERE</p>
+                        <button class="btn" id="imageBrowseBtn">BROWSE</button>
                         <input type="file" id="imageInput" webkitdirectory directory multiple hidden>
                     </div>
-
                     <div class="file-info" id="imageInfo"></div>
                 </div>
 
-                <div class="action-buttons">
-                    <button class="btn btn-primary" id="nextToMetadata" disabled>Next: Add Metadata →</button>
+                <div class="actions">
+                    <button class="btn btn-primary" id="nextToMetadata" disabled>NEXT →</button>
                 </div>
             </section>
 
-            <!-- Step 2: Add Metadata -->
-            <section class="builder-section" id="step2" style="display: none;">
+            <!-- Step 2: Metadata -->
+            <section class="section" id="step2" style="display: none;">
                 <div class="section-header">
-                    <h2>Step 2: Add Product Metadata</h2>
-                    <p>Fill in product details. All fields are optional except filename.</p>
+                    <h2>STEP 2: ADD METADATA</h2>
+                    <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
+                </div>
+                <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
+                    <p><strong>FILL IN PRODUCT DETAILS:</strong></p>
+                    <p>• <strong>Filename:</strong> Auto-filled from your images (don't change this!)</p>
+                    <p>• <strong>Category:</strong> Auto-detected from folders or enter manually</p>
+                    <p>• <strong>SKU:</strong> Unique product identifier (optional)</p>
+                    <p>• <strong>Name:</strong> Descriptive product name (optional)</p>
+                    <p>• <strong>Price:</strong> Current price (optional)</p>
+                    <p><strong>BULK EDIT:</strong> Use the tools above the table to apply values to multiple products at once. Select products with checkboxes first.</p>
+                    <p><strong>PASTE FROM EXCEL:</strong> Copy data from Excel and paste it directly into the table!</p>
                 </div>
 
-                <div class="bulk-edit-panel">
-                    <h3>🔧 Bulk Edit Tools</h3>
-                    <div class="bulk-edit-controls">
-                        <div class="bulk-edit-group">
-                            <label>Apply Category to Selected:</label>
+                <div class="bulk-panel">
+                    <h3>BULK EDIT</h3>
+                    <div class="bulk-controls">
+                        <div class="bulk-group">
+                            <label>CATEGORY:</label>
                             <input type="text" id="bulkCategory" placeholder="e.g., placemats">
-                            <button class="btn btn-sm" onclick="applyBulkEdit('category')">Apply</button>
+                            <button class="btn" onclick="applyBulkEdit('category')">APPLY</button>
                         </div>
-                        <div class="bulk-edit-group">
-                            <label>Apply Price to Selected:</label>
-                            <input type="number" id="bulkPrice" placeholder="e.g., 29.99" step="0.01" min="0">
-                            <button class="btn btn-sm" onclick="applyBulkEdit('price')">Apply</button>
+                        <div class="bulk-group">
+                            <label>PRICE:</label>
+                            <input type="number" id="bulkPrice" placeholder="29.99" step="0.01" min="0">
+                            <button class="btn" onclick="applyBulkEdit('price')">APPLY</button>
                         </div>
-                        <div class="bulk-edit-group">
-                            <button class="btn btn-sm" onclick="selectAll()">Select All</button>
-                            <button class="btn btn-sm" onclick="deselectAll()">Deselect All</button>
-                            <button class="btn btn-sm" onclick="pasteFromExcel()">📋 Paste from Excel</button>
+                        <div class="bulk-group">
+                            <button class="btn" onclick="selectAll()">SELECT ALL</button>
+                            <button class="btn" onclick="deselectAll()">DESELECT</button>
+                            <button class="btn" onclick="pasteFromExcel()">PASTE</button>
                         </div>
                     </div>
                 </div>
 
-                <div class="products-table-container">
-                    <table class="products-table" id="productsTable">
+                <div class="table-container">
+                    <table class="data-table" id="productsTable">
                         <thead>
                             <tr>
                                 <th><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()"></th>
-                                <th>Filename</th>
-                                <th>Category</th>
+                                <th>FILENAME</th>
+                                <th>CATEGORY</th>
                                 <th>SKU</th>
-                                <th>Name</th>
-                                <th>Price</th>
-                                <th>Actions</th>
+                                <th>NAME</th>
+                                <th>PRICE</th>
+                                <th>ACTIONS</th>
                             </tr>
                         </thead>
                         <tbody id="productsTableBody">
@@ -108,114 +134,134 @@
                     </table>
                 </div>
 
-                <div class="action-buttons">
-                    <button class="btn btn-secondary" onclick="goToStep(1)">← Back</button>
-                    <button class="btn btn-secondary" onclick="saveDraft()">💾 Save Draft</button>
-                    <button class="btn btn-secondary" onclick="loadDraft()">📂 Load Draft</button>
-                    <button class="btn btn-primary" onclick="goToStep(3)">Next: Price & Performance →</button>
+                <div class="actions">
+                    <button class="btn" onclick="goToStep(1)">← BACK</button>
+                    <button class="btn" onclick="saveDraft()">SAVE</button>
+                    <button class="btn" onclick="loadDraft()">LOAD</button>
+                    <button class="btn btn-primary" onclick="goToStep(3)">NEXT →</button>
                 </div>
             </section>
 
-            <!-- Step 3: Price & Performance History -->
-            <section class="builder-section" id="step3" style="display: none;">
+            <!-- Step 3: History -->
+            <section class="section" id="step3" style="display: none;">
                 <div class="section-header">
-                    <h2>Step 3: Add Price & Performance History (Optional)</h2>
-                    <p>Add historical price and performance data for your products.</p>
+                    <h2>STEP 3: PRICE & PERFORMANCE</h2>
+                    <button class="help-btn" onclick="toggleHelp('step3Help')">?</button>
+                </div>
+                <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
+                    <p><strong>ADD HISTORICAL DATA (OPTIONAL):</strong></p>
+                    <p><strong>Price History:</strong> Track how prices changed over time (up to 12 months). Add date and price for each entry.</p>
+                    <p><strong>Performance History:</strong> Track sales metrics including:</p>
+                    <p>• Sales volume (units sold)</p>
+                    <p>• Page views</p>
+                    <p>• Conversion rate (%)</p>
+                    <p>• Revenue ($)</p>
+                    <p><strong>WHY ADD THIS?</strong> Historical data enables trend charts, analytics, and performance comparisons in the main app.</p>
+                    <p><strong>TIP:</strong> You can skip this step if you only need basic matching.</p>
                 </div>
 
-                <div class="history-selector">
-                    <label>Select Product:</label>
+                <div class="selector">
+                    <label>SELECT PRODUCT:</label>
                     <select id="productSelector" onchange="loadProductHistory()">
-                        <option value="">-- Select a product --</option>
+                        <option value="">-- SELECT --</option>
                     </select>
                     <span id="productProgress"></span>
                 </div>
 
                 <div id="historyEditor" style="display: none;">
-                    <div class="history-tabs">
-                        <button class="tab-btn active" onclick="switchTab('price')">💰 Price History</button>
-                        <button class="tab-btn" onclick="switchTab('performance')">📊 Performance History</button>
+                    <div class="tabs">
+                        <button class="tab active" onclick="switchTab('price')">PRICE</button>
+                        <button class="tab" onclick="switchTab('performance')">PERFORMANCE</button>
                     </div>
 
-                    <!-- Price History Tab -->
-                    <div class="tab-content active" id="priceTab">
-                        <div class="history-controls">
-                            <button class="btn btn-sm" onclick="addPriceEntry()">+ Add Price Entry</button>
-                            <button class="btn btn-sm" onclick="importPriceFromClipboard()">📋 Import from Clipboard</button>
-                            <button class="btn btn-sm" onclick="clearPriceHistory()">🗑️ Clear All</button>
+                    <!-- Price Tab -->
+                    <div class="tab-panel active" id="priceTab">
+                        <div class="controls">
+                            <button class="btn" onclick="addPriceEntry()">+ ADD</button>
+                            <button class="btn" onclick="importPriceFromClipboard()">IMPORT</button>
+                            <button class="btn" onclick="clearPriceHistory()">CLEAR</button>
                         </div>
-
-                        <div class="history-entries" id="priceEntries">
-                            <p class="empty-state">No price history entries. Click "Add Price Entry" to start.</p>
+                        <div class="entries" id="priceEntries">
+                            <p class="empty">No price history. Click "ADD" to start.</p>
                         </div>
                     </div>
 
-                    <!-- Performance History Tab -->
-                    <div class="tab-content" id="performanceTab">
-                        <div class="history-controls">
-                            <button class="btn btn-sm" onclick="addPerformanceEntry()">+ Add Performance Entry</button>
-                            <button class="btn btn-sm" onclick="importPerformanceFromClipboard()">📋 Import from Clipboard</button>
-                            <button class="btn btn-sm" onclick="clearPerformanceHistory()">🗑️ Clear All</button>
+                    <!-- Performance Tab -->
+                    <div class="tab-panel" id="performanceTab">
+                        <div class="controls">
+                            <button class="btn" onclick="addPerformanceEntry()">+ ADD</button>
+                            <button class="btn" onclick="importPerformanceFromClipboard()">IMPORT</button>
+                            <button class="btn" onclick="clearPerformanceHistory()">CLEAR</button>
                         </div>
-
-                        <div class="history-entries" id="performanceEntries">
-                            <p class="empty-state">No performance history entries. Click "Add Performance Entry" to start.</p>
+                        <div class="entries" id="performanceEntries">
+                            <p class="empty">No performance history. Click "ADD" to start.</p>
                         </div>
                     </div>
                 </div>
 
-                <div class="action-buttons">
-                    <button class="btn btn-secondary" onclick="goToStep(2)">← Back</button>
-                    <button class="btn btn-secondary" onclick="skipHistory()">Skip History</button>
-                    <button class="btn btn-primary" onclick="goToStep(4)">Next: Export →</button>
+                <div class="actions">
+                    <button class="btn" onclick="goToStep(2)">← BACK</button>
+                    <button class="btn" onclick="skipHistory()">SKIP</button>
+                    <button class="btn btn-primary" onclick="goToStep(4)">NEXT →</button>
                 </div>
             </section>
 
             <!-- Step 4: Export -->
-            <section class="builder-section" id="step4" style="display: none;">
+            <section class="section" id="step4" style="display: none;">
                 <div class="section-header">
-                    <h2>Step 4: Export Your CSV</h2>
-                    <p>Preview and export your CSV file with all the data you've entered.</p>
+                    <h2>STEP 4: EXPORT CSV</h2>
+                    <button class="help-btn" onclick="toggleHelp('step4Help')">?</button>
+                </div>
+                <div class="help-text" id="step4Help" style="display: none; margin-bottom: 20px;">
+                    <p><strong>EXPORT YOUR CSV FILE:</strong></p>
+                    <p>1. Review the preview to make sure everything looks correct</p>
+                    <p>2. Choose your export options (headers, separator, etc.)</p>
+                    <p>3. Click "DOWNLOAD CSV" to save the file</p>
+                    <p><strong>NEXT STEPS:</strong></p>
+                    <p>1. Go back to the main app</p>
+                    <p>2. Upload your product images (same images you used here)</p>
+                    <p>3. Upload this CSV file in the "Advanced Mode" section</p>
+                    <p>4. The filenames will match automatically!</p>
                 </div>
 
                 <div class="export-options">
-                    <h3>Export Options</h3>
-                    <div class="option-group">
+                    <h3>OPTIONS</h3>
+                    <div class="option">
                         <label>
                             <input type="checkbox" id="includeHeaders" checked>
-                            Include column headers
+                            INCLUDE HEADERS
                         </label>
                     </div>
-                    <div class="option-group">
-                        <label>Separator:</label>
+                    <div class="option">
+                        <label>SEPARATOR:</label>
                         <select id="separatorSelect">
-                            <option value=",">Comma (,)</option>
-                            <option value="\t">Tab</option>
-                            <option value=";">Semicolon (;)</option>
+                            <option value=",">COMMA</option>
+                            <option value="\t">TAB</option>
+                            <option value=";">SEMICOLON</option>
                         </select>
                     </div>
-                    <div class="option-group">
+                    <div class="option">
                         <label>
                             <input type="checkbox" id="includeEmptyFields">
-                            Include empty fields
+                            INCLUDE EMPTY
                         </label>
                     </div>
                 </div>
 
-                <div class="csv-preview">
-                    <h3>CSV Preview</h3>
+                <div class="preview">
+                    <h3>PREVIEW</h3>
                     <div class="preview-controls">
-                        <button class="btn btn-sm" onclick="refreshPreview()">🔄 Refresh Preview</button>
+                        <button class="btn" onclick="refreshPreview()">REFRESH</button>
                         <span id="previewStats"></span>
                     </div>
                     <pre id="csvPreviewContent"></pre>
                 </div>
 
-                <div class="action-buttons">
-                    <button class="btn btn-secondary" onclick="goToStep(3)">← Back</button>
-                    <button class="btn btn-primary" onclick="downloadCSV()">⬇️ Download CSV</button>
-                    <button class="btn btn-secondary" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
-                    <button class="btn btn-secondary" onclick="saveAsTemplate()">💾 Save as Template</button>
+                <div class="actions">
+                    <button class="btn" onclick="goToStep(3)">← BACK</button>
+                    <button class="btn btn-primary" onclick="downloadCSV()">DOWNLOAD</button>
+                    <button class="btn" onclick="copyToClipboard()">COPY</button>
+                    <button class="btn" onclick="saveAsTemplate()">SAVE TEMPLATE</button>
                 </div>
             </section>
         </main>

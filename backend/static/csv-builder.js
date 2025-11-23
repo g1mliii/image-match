@@ -12,6 +12,7 @@ const state = {
 document.addEventListener('DOMContentLoaded', () => {
     initializeStep1();
     loadFromLocalStorage();
+    checkForMainAppData();
 });
 
 // ===== STEP 1: Upload Images =====
@@ -88,15 +89,25 @@ function handleImageFiles(files) {
         : '<div style="margin-top: 10px; color: #ed8936;">No subfolders detected - all images will be uncategorized</div>';
 
     const info = document.getElementById('imageInfo');
+    const displayLimit = 50;
+    const hasMore = imageFiles.length > displayLimit;
+    
     info.innerHTML = `
+        <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
         <h4>✓ ${imageFiles.length} images loaded</h4>
         ${categorySummary}
-        <div class="file-list">
-            ${state.products.slice(0, 10).map(p => 
+        <div class="file-list" id="csvBuilderFileList">
+            ${state.products.slice(0, displayLimit).map(p => 
                 `<div>${escapeHtml(p.filename)}${p.category ? ` <span style="color: #667eea;">[${p.category}]</span>` : ''}</div>`
             ).join('')}
-            ${imageFiles.length > 10 ? `<div>... and ${imageFiles.length - 10} more</div>` : ''}
         </div>
+        ${hasMore ? `
+            <div style="text-align: center; margin-top: 10px;">
+                <button class="btn" onclick="showAllCsvBuilderFiles(${imageFiles.length})" style="font-size: 12px; padding: 5px 15px;">
+                    SHOW ALL ${imageFiles.length} FILES
+                </button>
+            </div>
+        ` : ''}
     `;
     info.classList.add('show');
 
@@ -268,14 +279,16 @@ function updateProductProgress() {
 }
 
 function switchTab(tab) {
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    // Remove active class from all tabs and panels
+    document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(content => content.classList.remove('active'));
     
+    // Add active class to selected tab and panel
     if (tab === 'price') {
-        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+        document.querySelector('.tabs .tab:nth-child(1)').classList.add('active');
         document.getElementById('priceTab').classList.add('active');
-    } else {
-        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+    } else if (tab === 'performance') {
+        document.querySelector('.tabs .tab:nth-child(2)').classList.add('active');
         document.getElementById('performanceTab').classList.add('active');
     }
 }
@@ -773,15 +786,8 @@ function loadFromLocalStorage() {
                 const age = Date.now() - new Date(data.timestamp).getTime();
                 const hours = Math.floor(age / (1000 * 60 * 60));
                 
-                if (confirm(`Found saved work from ${hours} hour(s) ago. Load it?`)) {
-                    state.products = data.products;
-                    if (state.products.length > 0) {
-                        document.getElementById('nextToMetadata').disabled = false;
-                        const info = document.getElementById('imageInfo');
-                        info.innerHTML = `<h4>✓ ${state.products.length} products loaded from saved session</h4>`;
-                        info.classList.add('show');
-                    }
-                }
+                // Show custom modal instead of browser confirm
+                showLoadSavedWorkModal(hours, data);
             }
         } catch (e) {
             console.error('Failed to load saved state:', e);
@@ -852,3 +858,239 @@ window.addEventListener('beforeunload', (e) => {
         saveState();
     }
 });
+
+
+// Toggle help text in CSV builder
+function toggleHelp(helpId) {
+    const helpElement = document.getElementById(helpId);
+    if (helpElement) {
+        helpElement.style.display = helpElement.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+
+// ===== MAIN APP INTEGRATION =====
+
+// Check if data was sent from main app
+function checkForMainAppData() {
+    const fileData = sessionStorage.getItem('csvBuilderFiles');
+    const source = sessionStorage.getItem('csvBuilderSource');
+    
+    if (fileData && source) {
+        const files = JSON.parse(fileData);
+        
+        // Auto-populate products from main app
+        state.products = files.map(file => ({
+            filename: file.filename,
+            category: file.category || '',
+            sku: '',
+            name: '',
+            price: '',
+            priceHistory: [],
+            performanceHistory: [],
+            selected: false
+        }));
+        
+        // Update UI
+        const info = document.getElementById('imageInfo');
+        const categoryCount = {};
+        state.products.forEach(p => {
+            if (p.category) {
+                categoryCount[p.category] = (categoryCount[p.category] || 0) + 1;
+            }
+        });
+        
+        const categorySummary = Object.keys(categoryCount).length > 0
+            ? `<div style="margin-top: 10px;"><strong>Categories found:</strong> ${Object.entries(categoryCount).map(([cat, count]) => `${cat} (${count})`).join(', ')}</div>`
+            : '<div style="margin-top: 10px; color: #ed8936;">No subfolders detected - all images will be uncategorized</div>';
+        
+        const displayLimit = 50;
+        const hasMore = files.length > displayLimit;
+        
+        info.innerHTML = `
+            <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
+            <h4>✓ ${files.length} images loaded from Main App</h4>
+            ${categorySummary}
+            <div class="file-list" id="csvBuilderFileList">
+                ${state.products.slice(0, displayLimit).map(p => 
+                    `<div>${escapeHtml(p.filename)}${p.category ? ` <span style="color: #667eea;">[${p.category}]</span>` : ''}</div>`
+                ).join('')}
+            </div>
+            ${hasMore ? `
+                <div style="text-align: center; margin-top: 10px;">
+                    <button class="btn" onclick="showAllCsvBuilderFiles(${files.length})" style="font-size: 12px; padding: 5px 15px;">
+                        SHOW ALL ${files.length} FILES
+                    </button>
+                </div>
+            ` : ''}
+        `;
+        info.classList.add('show');
+        
+        document.getElementById('nextToMetadata').disabled = false;
+        
+        // Add "Send to App" button in Step 4
+        addSendToAppButton(source);
+        
+        showToast(`${files.length} images loaded from Main App. Add metadata and send back!`, 'success');
+        
+        // Clear sessionStorage
+        sessionStorage.removeItem('csvBuilderFiles');
+        sessionStorage.removeItem('csvBuilderSource');
+        
+        // Store source for later
+        state.mainAppSource = source;
+    }
+}
+
+// Add "Send to App" button in export step
+function addSendToAppButton(source) {
+    // Wait for DOM to be ready
+    setTimeout(() => {
+        const actionsDiv = document.querySelector('#step4 .actions');
+        if (actionsDiv && !document.getElementById('sendToAppBtn')) {
+            const sendBtn = document.createElement('button');
+            sendBtn.id = 'sendToAppBtn';
+            sendBtn.className = 'btn btn-primary';
+            sendBtn.textContent = 'SEND TO APP';
+            sendBtn.onclick = sendToMainApp;
+            
+            // Insert before download button
+            const downloadBtn = actionsDiv.querySelector('button[onclick="downloadCSV()"]');
+            if (downloadBtn) {
+                actionsDiv.insertBefore(sendBtn, downloadBtn);
+            } else {
+                actionsDiv.appendChild(sendBtn);
+            }
+        }
+    }, 100);
+}
+
+// Send CSV data back to main app
+function sendToMainApp() {
+    if (!window.opener) {
+        showToast('Main app window not found. Please download CSV and upload manually.', 'error');
+        return;
+    }
+    
+    const csv = generateCSV();
+    const source = state.mainAppSource;
+    
+    // Send message to parent window
+    window.opener.postMessage({
+        type: 'CSV_BUILDER_COMPLETE',
+        csvContent: csv,
+        section: source
+    }, '*');
+    
+    showToast('CSV sent to Main App! You can close this window.', 'success');
+    
+    // Close window after 2 seconds
+    setTimeout(() => {
+        window.close();
+    }, 2000);
+}
+
+
+// Clear CSV Builder Upload
+function clearCsvBuilderUpload() {
+    if (!confirm('Clear uploaded folder? This will reset all data.')) {
+        return;
+    }
+    
+    // Clear state
+    state.products = [];
+    state.selectedProductIndex = null;
+    state.currentStep = 1;
+    state.mainAppSource = null;
+    
+    // Clear UI
+    document.getElementById('imageInfo').innerHTML = '';
+    document.getElementById('imageInfo').classList.remove('show');
+    document.getElementById('nextToMetadata').disabled = true;
+    
+    // Reset file input
+    document.getElementById('imageInput').value = '';
+    
+    // Go back to step 1
+    goToStep(1);
+    
+    showToast('Folder cleared', 'success');
+}
+
+
+// Show custom modal for loading saved work
+function showLoadSavedWorkModal(hours, data) {
+    const modal = document.createElement('div');
+    modal.className = 'modal show';
+    modal.id = 'loadSavedWorkModal';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <h2>Saved Work Found</h2>
+            <p>Found saved work from <strong>${hours} hour(s) ago</strong> with <strong>${data.products.length} products</strong>.</p>
+            <p>Would you like to load it?</p>
+            <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
+                <button class="btn" onclick="loadSavedWork()">YES, LOAD IT</button>
+                <button class="btn" onclick="dismissSavedWork()">NO, START FRESH</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    
+    // Store data for loading
+    window.savedWorkData = data;
+}
+
+function loadSavedWork() {
+    const data = window.savedWorkData;
+    if (data && data.products) {
+        state.products = data.products;
+        if (state.products.length > 0) {
+            document.getElementById('nextToMetadata').disabled = false;
+            const info = document.getElementById('imageInfo');
+            info.innerHTML = `
+                <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
+                <h4>✓ ${state.products.length} products loaded from saved session</h4>
+            `;
+            info.classList.add('show');
+            showToast('Saved work loaded successfully', 'success');
+        }
+    }
+    
+    // Close modal
+    const modal = document.getElementById('loadSavedWorkModal');
+    if (modal) modal.remove();
+    window.savedWorkData = null;
+}
+
+function dismissSavedWork() {
+    // Clear saved state
+    localStorage.removeItem('csvBuilderState');
+    
+    // Close modal
+    const modal = document.getElementById('loadSavedWorkModal');
+    if (modal) modal.remove();
+    window.savedWorkData = null;
+    
+    showToast('Starting fresh', 'success');
+}
+
+
+// Show all files in CSV builder
+function showAllCsvBuilderFiles(totalCount) {
+    const list = document.getElementById('csvBuilderFileList');
+    
+    if (!list) return;
+    
+    // Show all files
+    list.innerHTML = state.products.map(p => 
+        `<div>${escapeHtml(p.filename)}${p.category ? ` <span style="color: #667eea;">[${p.category}]</span>` : ''}</div>`
+    ).join('');
+    
+    // Remove the "Show All" button
+    const button = list.nextElementSibling;
+    if (button && button.querySelector('button')) {
+        button.remove();
+    }
+    
+    showToast(`Showing all ${totalCount} files`, 'success');
+}

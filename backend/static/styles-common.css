@@ -1,0 +1,111 @@
+/* SHARED STYLES - Common patterns extracted from styles.css */
+
+/* Tooltip Base Styles */
+[data-tooltip] {
+    position: relative;
+    cursor: help;
+}
+
+[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    padding: 10px 15px;
+    background: #000;
+    color: #fff;
+    font-size: 13px;
+    font-family: 'Courier New', monospace;
+    white-space: nowrap;
+    z-index: 10000;
+    border: 2px solid #000;
+    max-width: 300px;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.4;
+}
+
+[data-tooltip]:hover::before {
+    content: '';
+    position: absolute;
+    border: 6px solid transparent;
+    z-index: 10001;
+}
+
+/* Tooltip - Default (downward) */
+[data-tooltip]:not([data-tooltip-pos])::after,
+[data-tooltip][data-tooltip-pos="down"]::after {
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 8px;
+}
+
+[data-tooltip]:not([data-tooltip-pos])::before,
+[data-tooltip][data-tooltip-pos="down"]::before {
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 2px;
+    border-bottom-color: #000;
+}
+
+/* Common Button Base */
+.btn-base {
+    padding: 12px 24px;
+    border: 3px solid #000;
+    background: #fff;
+    color: #000;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+}
+
+.btn-base:hover:not(:disabled) {
+    background: #000;
+    color: #fff;
+}
+
+.btn-base:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Common Input Styles */
+.input-base {
+    padding: 10px;
+    border: 2px solid #000;
+    background: #fff;
+    font-family: 'Courier New', monospace;
+}
+
+.input-base:focus {
+    outline: 3px solid #000;
+    outline-offset: 2px;
+}
+
+/* Common Range Slider */
+.range-base {
+    width: 100%;
+    height: 10px;
+    border: 2px solid #000;
+    background: #fff;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.range-base::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #000;
+    cursor: pointer;
+}
+
+.range-base::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: #000;
+    cursor: pointer;
+    border: none;
+}

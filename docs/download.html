@@ -162,7 +162,7 @@
             </li>
             <li class="flex items-start text-slate-600 text-sm">
               <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5"></i>
-              500 MB free disk space
+              500 MB free disk space (1 GB with CLIP model)
             </li>
             <li class="flex items-start text-slate-600 text-sm">
               <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5"></i>
@@ -182,7 +182,7 @@
             </li>
             <li class="flex items-start text-slate-600 text-sm">
               <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5"></i>
-              Intel or Apple Silicon (M1/M2) processor
+              Intel or Apple Silicon (M1/M2/M3/M4/M5) processor
             </li>
             <li class="flex items-start text-slate-600 text-sm">
               <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5"></i>
@@ -190,9 +190,146 @@
             </li>
             <li class="flex items-start text-slate-600 text-sm">
               <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5"></i>
-              500 MB free disk space
+              500 MB free disk space (1 GB with CLIP model)
             </li>
           </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- GPU Acceleration -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-20">
+      <h2 class="text-2xl font-bold text-slate-900 mb-8 text-center">GPU Acceleration (Optional)</h2>
+      <div class="max-w-4xl mx-auto">
+        <div class="bg-gradient-to-br from-indigo-50 to-purple-50 p-8 rounded-2xl border border-indigo-100 mb-8">
+          <div class="flex items-start mb-6">
+            <div class="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center mr-4 flex-shrink-0">
+              <i data-lucide="zap" class="w-6 h-6 text-white"></i>
+            </div>
+            <div>
+              <h3 class="text-xl font-bold text-slate-900 mb-2">10-50x Faster with GPU</h3>
+              <p class="text-slate-600">CatalogMatch uses CLIP (AI-powered visual matching) which runs dramatically faster on GPUs. Process hundreds of products in seconds instead of minutes.</p>
+            </div>
+          </div>
+          <div class="grid md:grid-cols-3 gap-4 text-center">
+            <div class="bg-white p-4 rounded-lg border border-indigo-100">
+              <div class="text-2xl font-bold text-indigo-600 mb-1">5-20 img/s</div>
+              <div class="text-sm text-slate-600">CPU Mode</div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-indigo-100">
+              <div class="text-2xl font-bold text-emerald-600 mb-1">100-150 img/s</div>
+              <div class="text-sm text-slate-600">Apple Silicon</div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-indigo-100">
+              <div class="text-2xl font-bold text-purple-600 mb-1">150-300 img/s</div>
+              <div class="text-sm text-slate-600">NVIDIA/AMD GPU</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-6">
+          <!-- NVIDIA -->
+          <div class="bg-white p-6 rounded-xl border border-slate-200">
+            <div class="flex items-center mb-4">
+              <div class="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center mr-3">
+                <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600"></i>
+              </div>
+              <h3 class="font-bold text-slate-900">NVIDIA GPUs</h3>
+            </div>
+            <ul class="space-y-2 text-sm text-slate-600">
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                GeForce RTX/GTX series
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                CUDA 12.4 support (automatic)
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                Python 3.8+ compatible
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                Best performance & support
+              </li>
+            </ul>
+          </div>
+
+          <!-- AMD -->
+          <div class="bg-white p-6 rounded-xl border border-slate-200">
+            <div class="flex items-center mb-4">
+              <div class="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center mr-3">
+                <i data-lucide="alert-circle" class="w-5 h-5 text-orange-600"></i>
+              </div>
+              <h3 class="font-bold text-slate-900">AMD GPUs</h3>
+            </div>
+            <ul class="space-y-2 text-sm text-slate-600">
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                RX 6000/7000/9000 series only
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-orange-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                Requires Python 3.12 exactly
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-orange-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                ROCm 6.4 HIP SDK required
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="x" class="w-4 h-4 text-red-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                Older GPUs not supported
+              </li>
+            </ul>
+          </div>
+
+          <!-- Apple Silicon -->
+          <div class="bg-white p-6 rounded-xl border border-slate-200">
+            <div class="flex items-center mb-4">
+              <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center mr-3">
+                <i data-lucide="check-circle" class="w-5 h-5 text-blue-600"></i>
+              </div>
+              <h3 class="font-bold text-slate-900">Apple Silicon</h3>
+            </div>
+            <ul class="space-y-2 text-sm text-slate-600">
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                M1/M2/M3/M4/M5 chips
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                MPS acceleration (automatic)
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                Python 3.8+ compatible
+              </li>
+              <li class="flex items-start">
+                <i data-lucide="check" class="w-4 h-4 text-emerald-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                Excellent performance
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mt-8 bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-r-lg">
+          <div class="flex items-start">
+            <i data-lucide="alert-triangle" class="w-5 h-5 text-yellow-600 mr-3 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <p class="font-bold text-yellow-900 mb-2">AMD GPU Compatibility Notice</p>
+              <p class="text-yellow-800 text-sm mb-2">AMD ROCm support on Windows is limited to newer GPUs (RX 6000/7000/9000 series) and requires Python 3.12 specifically. Older AMD GPUs (RX 5000 series and earlier) are not supported by ROCm and will fall back to CPU mode.</p>
+              <p class="text-yellow-800 text-sm">For best GPU experience, we recommend NVIDIA GPUs or Apple Silicon Macs. See our <a href="https://github.com/g1mliii/image-match/tree/main/gpu" class="underline hover:text-yellow-900">GPU Setup Guide</a> for detailed instructions.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 text-center">
+          <a href="https://github.com/g1mliii/image-match/tree/main/gpu" target="_blank" rel="noopener noreferrer"
+            class="inline-flex items-center px-6 py-3 text-base font-semibold text-indigo-600 bg-white border-2 border-indigo-600 rounded-xl hover:bg-indigo-50 transition-all">
+            <i data-lucide="book-open" class="w-5 h-5 mr-2"></i>
+            View Complete GPU Setup Guide
+          </a>
         </div>
       </div>
     </div>

@@ -3,141 +3,412 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Catalog Match</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>CATALOG MATCH</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <header class="app-header">
-            <h1>Catalog Match</h1>
-            <p>Compare new products against historical catalog</p>
-            <a href="/static/csv-builder.html" class="btn btn-secondary" style="position: absolute; top: 20px; right: 20px;">📊 CSV Builder</a>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-main">
+                    <h1>CATALOG MATCH</h1>
+                    <p>Find similar products in your historical catalog</p>
+                </div>
+                <div class="header-actions">
+                    <div id="gpuStatus" class="gpu-status" data-tooltip="GPU acceleration status - CLIP AI model performance">
+                        <span class="status-icon">⚡</span>
+                        <span class="status-text">Checking GPU...</span>
+                    </div>
+                    <a href="/static/csv-builder.html" class="btn-link" data-tooltip="Open CSV Builder tool to create product metadata files">CSV BUILDER →</a>
+                </div>
+            </div>
         </header>
 
-        <main class="main-content">
-            <!-- Step 1: Upload Historical Catalog -->
-            <section class="upload-section" id="historicalSection">
+        <main>
+            <!-- Step 1: Historical Catalog -->
+            <section class="section" id="historicalSection">
                 <div class="section-header">
-                    <span class="step-number">1</span>
-                    <h2>Upload Historical Catalog (Old Products)</h2>
+                    <span class="step">1</span>
+                    <h2>HISTORICAL CATALOG</h2>
+                    <div class="mode-toggle" id="historicalModeToggle">
+                        <button class="mode-option active" onclick="setMode('historical', 'simple')">SIMPLE</button>
+                        <button class="mode-option" onclick="setMode('historical', 'advanced')">ADVANCED</button>
+                    </div>
+                    <button class="help-btn" onclick="toggleHelp('modeHelp1')">?</button>
+                </div>
+                <div class="help-text" id="modeHelp1" style="display: none; margin-bottom: 20px;">
+                    <p><strong>SIMPLE MODE vs ADVANCED MODE:</strong></p>
+                    <p><strong>Simple Mode:</strong> Upload images → Visual similarity matching. Fast and easy for quick comparisons.</p>
+                    <p><strong>Advanced Mode:</strong> Upload CSV with metadata (required) + optionally images:</p>
+                    <p>&nbsp;&nbsp;• <strong>CSV only:</strong> Metadata analysis (SKU matching, price trends, performance reports)</p>
+                    <p>&nbsp;&nbsp;• <strong>CSV + Images:</strong> Visual matching + Metadata analysis (full business intelligence)</p>
+                    <p><strong>Recommendation:</strong> Start with Simple Mode to test. Use Advanced Mode for production workflows with analytics and reporting.</p>
                 </div>
                 
-                <div class="upload-area">
-                    <div class="help-box">
-                        <strong>📁 Organize by Category:</strong> Put images in subfolders named by category (e.g., placemats/, dinnerware/, glassware/)
-                        <br><small>Example: historical_products/placemats/image1.jpg → Category: "placemats"</small>
+                <div class="upload-box">
+                    <div class="info">
+                        <div class="info-header">
+                            <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
+                            <button class="help-btn" onclick="toggleHelp('uploadHelp1')">?</button>
+                        </div>
+                        <div class="help-text" id="uploadHelp1" style="display: none; margin-top: 15px;">
+                            <p><strong>HOW TO ORGANIZE YOUR FOLDERS:</strong></p>
+                            <p>1. Create a main folder (e.g., "historical-products")</p>
+                            <p>2. Inside it, create subfolders for each category:</p>
+                            <p>&nbsp;&nbsp;&nbsp;• placemats/</p>
+                            <p>&nbsp;&nbsp;&nbsp;• dinnerware/</p>
+                            <p>&nbsp;&nbsp;&nbsp;• glassware/</p>
+                            <p>3. Put product images in their category folders</p>
+                            <p>4. Upload the main "historical-products" folder</p>
+                            <p><strong>NOTE:</strong> You can only upload ONE folder at a time. Make sure all your categories are inside it!</p>
+                        </div>
                     </div>
                     
                     <div class="drop-zone" id="historicalDropZone">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                        </svg>
-                        <p>Drop folder with historical product images here</p>
-                        <button class="btn btn-secondary" id="historicalBrowseBtn">Browse Folder</button>
+                        <p>DROP ONE FOLDER WITH ALL CATEGORIES</p>
+                        <button class="btn" id="historicalBrowseBtn">BROWSE</button>
                         <input type="file" id="historicalInput" webkitdirectory directory multiple hidden>
                     </div>
                     
                     <div class="file-info" id="historicalInfo"></div>
                     
-                    <div class="csv-upload">
-                        <label>
-                            Optional: Upload CSV with metadata (SKU, name, price & performance history)
-                            <span class="info-icon" id="historicalCsvHelp">ⓘ</span>
-                        </label>
-                        <input type="file" id="historicalCsvInput" accept=".csv,.txt">
-                        <small>Add SKU, names, price history, and performance data (category auto-detected from folders)</small>
-                        <button type="button" class="btn-link" onclick="showCsvHelp('historical')">📖 Show CSV format examples</button>
+                    <div class="csv-box advanced" id="historicalCsvBox" style="display: none;">
+                        <div class="csv-header">
+                            <label>ADVANCED MODE: ADD PRODUCT DETAILS</label>
+                            <button class="help-btn" onclick="toggleHelp('advancedHelp1')">?</button>
+                        </div>
+                        <div class="help-text" id="advancedHelp1" style="display: none; margin-bottom: 20px;">
+                            <p><strong>FULL FEATURE SET:</strong></p>
+                            <p><strong>Price Tracking:</strong> Upload historical prices to see trend charts (up/down/stable), min/max/average prices, and price change analysis over time.</p>
+                            <p><strong>Sales Analytics:</strong> Track sales volume, page views, conversion rates, and revenue. See performance trends and identify top performers.</p>
+                            <p><strong>SKU Management:</strong> Assign unique SKUs to products for inventory tracking and cross-referencing with your systems.</p>
+                            <p><strong>Product Names:</strong> Add descriptive names for better organization and reporting.</p>
+                            <p><strong>Detailed Reports:</strong> Export comprehensive CSV reports with all data, charts, and analytics for further analysis.</p>
+                            <p><strong>Visual Charts:</strong> Interactive sparklines and detailed charts show trends at a glance (right-click charts to change color!).</p>
+                        </div>
+                        <div class="csv-info-box">
+                            <p><strong>CSV file required in Advanced Mode. Include:</strong></p>
+                            <p>• Product SKUs and names</p>
+                            <p>• Price history (track price changes over time)</p>
+                            <p>• Sales performance data (views, conversions, revenue)</p>
+                            <p>• Custom metadata</p>
+                            <p style="margin-top: 10px;"><strong>Note:</strong> Images are optional. Upload images for visual matching, or skip for metadata analysis only.</p>
+                        </div>
+                        <div class="csv-actions">
+                            <div class="file-input-wrapper">
+                                <input type="file" id="historicalCsvInput" accept=".csv,.txt" onchange="updateFileLabel(this, 'historicalFileLabel')">
+                                <label for="historicalCsvInput" class="file-label">
+                                    <span class="file-btn" data-tooltip="Select a CSV file from your computer">CHOOSE FILE</span>
+                                    <span class="file-name" id="historicalFileLabel">CSV required - Use BUILD CSV or see CSV FORMAT</span>
+                                </label>
+                            </div>
+                            <button type="button" class="btn" onclick="openIntegratedCsvBuilder('historical')" data-tooltip="Open interactive CSV builder tool to create your CSV file">BUILD CSV</button>
+                            <button type="button" class="btn" onclick="showCsvHelp('historical')" data-tooltip="View CSV format guide with examples">CSV FORMAT</button>
+                        </div>
+                        <div class="csv-comparison">
+                            <strong>What you get:</strong> Price trend charts • Sales analytics • SKU tracking • Metadata matching • Detailed reports
+                        </div>
                     </div>
                     
-                    <button class="btn btn-primary" id="processHistoricalBtn" disabled>Process Historical Catalog</button>
+                    <button class="btn btn-primary" id="processHistoricalBtn" disabled>PROCESS</button>
                 </div>
                 
-                <div class="processing-status" id="historicalStatus"></div>
+                <div class="status" id="historicalStatus"></div>
             </section>
 
-            <!-- Step 2: Upload New Products -->
-            <section class="upload-section" id="newSection" style="display: none;">
+            <!-- Step 2: New Products -->
+            <section class="section" id="newSection" style="display: none;">
                 <div class="section-header">
-                    <span class="step-number">2</span>
-                    <h2>Upload New Products to Match</h2>
+                    <span class="step">2</span>
+                    <h2>NEW PRODUCTS</h2>
+                    <div class="mode-toggle" id="newModeToggle">
+                        <button class="mode-option active" onclick="setMode('new', 'simple')">SIMPLE</button>
+                        <button class="mode-option" onclick="setMode('new', 'advanced')">ADVANCED</button>
+                    </div>
+                    <button class="help-btn" onclick="toggleHelp('modeHelp2')">?</button>
+                </div>
+                <div class="help-text" id="modeHelp2" style="display: none; margin-bottom: 20px;">
+                    <p><strong>SIMPLE MODE vs ADVANCED MODE:</strong></p>
+                    <p><strong>Simple Mode:</strong> Upload images → Visual similarity matching. Fast and easy for quick comparisons.</p>
+                    <p><strong>Advanced Mode:</strong> Upload CSV with metadata (required) + optionally images:</p>
+                    <p>&nbsp;&nbsp;• <strong>CSV only:</strong> Metadata analysis (SKU matching, price trends, performance reports)</p>
+                    <p>&nbsp;&nbsp;• <strong>CSV + Images:</strong> Visual matching + Metadata analysis (full business intelligence)</p>
+                    <p><strong>Recommendation:</strong> Start with Simple Mode to test. Use Advanced Mode for production workflows with analytics and reporting.</p>
                 </div>
                 
-                <div class="upload-area">
-                    <div class="help-box">
-                        <strong>📁 Organize by Category:</strong> Put images in subfolders named by category (e.g., placemats/, dinnerware/, glassware/)
-                        <br><small>Matching will prioritize products in the same category</small>
+                <div class="upload-box">
+                    <div class="info">
+                        <div class="info-header">
+                            <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
+                            <button class="help-btn" onclick="toggleHelp('uploadHelp2')">?</button>
+                        </div>
+                        <div class="help-text" id="uploadHelp2" style="display: none; margin-top: 15px;">
+                            <p><strong>HOW TO ORGANIZE YOUR FOLDERS:</strong></p>
+                            <p>1. Create a main folder (e.g., "new-products")</p>
+                            <p>2. Inside it, create subfolders for each category:</p>
+                            <p>&nbsp;&nbsp;&nbsp;• placemats/</p>
+                            <p>&nbsp;&nbsp;&nbsp;• dinnerware/</p>
+                            <p>&nbsp;&nbsp;&nbsp;• glassware/</p>
+                            <p>3. Put product images in their category folders</p>
+                            <p>4. Upload the main "new-products" folder</p>
+                            <p><strong>NOTE:</strong> Categories help match products more accurately. Products in the same category will be prioritized during matching.</p>
+                        </div>
                     </div>
                     
                     <div class="drop-zone" id="newDropZone">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                        </svg>
-                        <p>Drop folder with new product images here</p>
-                        <button class="btn btn-secondary" id="newBrowseBtn">Browse Folder</button>
+                        <p>DROP ONE FOLDER WITH ALL CATEGORIES</p>
+                        <button class="btn" id="newBrowseBtn">BROWSE</button>
                         <input type="file" id="newInput" webkitdirectory directory multiple hidden>
                     </div>
                     
                     <div class="file-info" id="newInfo"></div>
                     
-                    <div class="csv-upload">
-                        <label>
-                            Optional: Upload CSV with metadata (SKU, name, price & performance history)
-                            <span class="info-icon" id="newCsvHelp">ⓘ</span>
-                        </label>
-                        <input type="file" id="newCsvInput" accept=".csv,.txt">
-                        <small>Add SKU, names, price history, and performance data (category auto-detected from folders)</small>
-                        <button type="button" class="btn-link" onclick="showCsvHelp('new')">📖 Show CSV format examples</button>
+                    <div class="csv-box advanced" id="newCsvBox" style="display: none;">
+                        <div class="csv-header">
+                            <label>ADVANCED MODE: ADD PRODUCT DETAILS</label>
+                            <button class="help-btn" onclick="toggleHelp('advancedHelp2')">?</button>
+                        </div>
+                        <div class="help-text" id="advancedHelp2" style="display: none; margin-bottom: 20px;">
+                            <p><strong>FULL FEATURE SET:</strong></p>
+                            <p><strong>Price Tracking:</strong> Upload historical prices to see trend charts (up/down/stable), min/max/average prices, and price change analysis over time.</p>
+                            <p><strong>Sales Analytics:</strong> Track sales volume, page views, conversion rates, and revenue. See performance trends and identify top performers.</p>
+                            <p><strong>SKU Management:</strong> Assign unique SKUs to products for inventory tracking and cross-referencing with your systems.</p>
+                            <p><strong>Product Names:</strong> Add descriptive names for better organization and reporting.</p>
+                            <p><strong>Detailed Reports:</strong> Export comprehensive CSV reports with all data, charts, and analytics for further analysis.</p>
+                            <p><strong>Visual Charts:</strong> Interactive sparklines and detailed charts show trends at a glance (right-click charts to change color!).</p>
+                        </div>
+                        <div class="csv-info-box">
+                            <p><strong>CSV file required in Advanced Mode. Include:</strong></p>
+                            <p>• Product SKUs and names</p>
+                            <p>• Price history (track price changes over time)</p>
+                            <p>• Sales performance data (views, conversions, revenue)</p>
+                            <p>• Custom metadata</p>
+                            <p style="margin-top: 10px;"><strong>Note:</strong> Images are optional. Upload images for visual matching, or skip for metadata analysis only.</p>
+                        </div>
+                        <div class="csv-actions">
+                            <div class="file-input-wrapper">
+                                <input type="file" id="newCsvInput" accept=".csv,.txt" onchange="updateFileLabel(this, 'newFileLabel')">
+                                <label for="newCsvInput" class="file-label">
+                                    <span class="file-btn" data-tooltip="Select a CSV file from your computer">CHOOSE FILE</span>
+                                    <span class="file-name" id="newFileLabel">CSV required - Use BUILD CSV or see CSV FORMAT</span>
+                                </label>
+                            </div>
+                            <button type="button" class="btn" onclick="openIntegratedCsvBuilder('new')" data-tooltip="Open interactive CSV builder tool to create your CSV file">BUILD CSV</button>
+                            <button type="button" class="btn" onclick="showCsvHelp('new')" data-tooltip="View CSV format guide with examples">CSV FORMAT</button>
+                        </div>
+                        <div class="csv-comparison">
+                            <strong>What you get:</strong> Price trend charts • Sales analytics • SKU tracking • Metadata matching • Detailed reports
+                        </div>
                     </div>
                     
-                    <button class="btn btn-primary" id="processNewBtn" disabled>Process New Products</button>
+                    <button class="btn btn-primary" id="processNewBtn" disabled>PROCESS</button>
                 </div>
                 
-                <div class="processing-status" id="newStatus"></div>
+                <div class="status" id="newStatus"></div>
             </section>
 
-            <!-- Step 3: Match Products -->
-            <section class="match-section" id="matchSection" style="display: none;">
+            <!-- Step 3: Match -->
+            <section class="section" id="matchSection" style="display: none;">
                 <div class="section-header">
-                    <span class="step-number">3</span>
-                    <h2>Find Matches</h2>
+                    <span class="step">3</span>
+                    <h2>FIND MATCHES</h2>
                 </div>
                 
-                <div class="match-controls">
-                    <div class="control-group">
-                        <label>Similarity Threshold: <span id="thresholdValue">50</span>%</label>
-                        <input type="range" id="thresholdSlider" min="0" max="100" value="50">
-                        <small class="help-text">Products with similarity below this threshold will be filtered out. Higher values (70-100) show only very similar products.</small>
+                <div class="controls">
+                    <div class="control">
+                        <label>THRESHOLD: <span id="thresholdValue">50</span>%</label>
+                        <input type="range" id="thresholdSlider" min="0" max="100" value="50" data-tooltip="Minimum similarity score. Higher = only very similar products. Lower = more matches but less similar.">
                     </div>
                     
-                    <div class="control-group">
-                        <label>Max Matches per Product:</label>
-                        <select id="limitSelect">
+                    <div class="control">
+                        <label>MAX MATCHES:</label>
+                        <select id="limitSelect" data-tooltip="Maximum number of similar products to show for each new product">
                             <option value="5">5</option>
                             <option value="10" selected>10</option>
                             <option value="25">25</option>
                             <option value="50">50</option>
                         </select>
-                        <small class="help-text">Limit the number of matches shown for each new product to focus on the best results.</small>
                     </div>
                     
-                    <button class="btn btn-primary btn-large" id="matchBtn">Start Matching</button>
+                    <div class="control">
+                        <button class="btn" id="advancedSettingsBtn" data-tooltip="Adjust color, shape, and texture weights for matching algorithm">ADVANCED</button>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="matchBtn" data-tooltip="Compare new products against historical catalog to find similar items">START MATCHING</button>
                 </div>
                 
-                <div class="match-progress" id="matchProgress"></div>
+                <!-- Advanced Settings -->
+                <div class="advanced" id="advancedSettings" style="display: none;">
+                    
+                    <!-- Mode 1: Visual Matching (Simple Mode) - CLIP embeddings, no weight tuning needed -->
+                    <div id="visualWeightsSection">
+                        <h4>VISUAL SIMILARITY (CLIP AI)
+                            <button class="help-btn" onclick="toggleHelp('clipHelp')">?</button>
+                        </h4>
+                        <div class="help-text" id="clipHelp" style="display: none; margin-bottom: 20px;">
+                            <p><strong>WHAT IS CLIP?</strong></p>
+                            <p>CLIP (Contrastive Language-Image Pre-training) is an AI model that understands images at a deep level, providing superior accuracy compared to traditional methods.</p>
+                            <p><strong>CLIP vs Legacy Features:</strong></p>
+                            <p>• <strong>CLIP:</strong> 512-dimensional AI embeddings, holistic understanding, 94% accuracy</p>
+                            <p>• <strong>Legacy:</strong> Color histograms + shape + texture, 78% accuracy</p>
+                            <p><strong>Performance:</strong></p>
+                            <p>• CPU: 5-20 images/sec</p>
+                            <p>• GPU (NVIDIA/AMD): 150-300 images/sec</p>
+                            <p>• Apple Silicon: 50-150 images/sec</p>
+                            <p><strong>First Run:</strong> CLIP model downloads automatically (~350MB, takes 1-2 minutes). After that, it's cached locally and loads instantly.</p>
+                        </div>
+                        <div class="info" style="margin: 15px 0;">
+                            <p><strong>Using CLIP AI model for visual matching.</strong></p>
+                            <p>CLIP automatically analyzes color, shape, texture, and patterns in a single unified embedding.</p>
+                            <p>No manual weight tuning needed - the AI handles it!</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Mode 2: Metadata Weights (Advanced Mode - CSV Only) -->
+                    <div id="metadataWeightsSection" style="display: none;">
+                        <h4>METADATA MATCHING WEIGHTS</h4>
+                        
+                        <div class="weights">
+                            <div class="weight">
+                                <label>SKU SIMILARITY: <span id="skuWeightValue">30</span>%</label>
+                                <input type="range" id="skuWeightSlider" min="0" max="100" value="30">
+                            </div>
+                            
+                            <div class="weight">
+                                <label>NAME SIMILARITY: <span id="nameWeightValue">25</span>%</label>
+                                <input type="range" id="nameWeightSlider" min="0" max="100" value="25">
+                            </div>
+                            
+                            <div class="weight">
+                                <label>CATEGORY MATCH: <span id="categoryWeightValue">20</span>%</label>
+                                <input type="range" id="categoryWeightSlider" min="0" max="100" value="20">
+                            </div>
+                            
+                            <div class="weight">
+                                <label>PRICE RANGE: <span id="priceWeightValue">15</span>%</label>
+                                <input type="range" id="priceWeightSlider" min="0" max="100" value="15">
+                            </div>
+                            
+                            <div class="weight">
+                                <label>PERFORMANCE: <span id="performanceWeightValue">10</span>%</label>
+                                <input type="range" id="performanceWeightSlider" min="0" max="100" value="10">
+                            </div>
+                        </div>
+                        
+                        <div class="weight-total">
+                            TOTAL: <span id="metadataWeightTotal">100</span>% <span id="metadataWeightWarning" style="display: none;">⚠ MUST = 100%</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Mode 3: Hybrid Weights (Advanced Mode - Images + CSV) -->
+                    <div id="hybridWeightsSection" style="display: none;">
+                        <h4>HYBRID MATCHING WEIGHTS</h4>
+                        
+                        <div class="weights">
+                            <div class="weight">
+                                <label>VISUAL MATCHING: <span id="hybridVisualWeightValue">60</span>%</label>
+                                <input type="range" id="hybridVisualWeightSlider" min="0" max="100" value="60">
+                            </div>
+                            
+                            <div class="weight">
+                                <label>METADATA MATCHING: <span id="hybridMetadataWeightValue">40</span>%</label>
+                                <input type="range" id="hybridMetadataWeightSlider" min="0" max="100" value="40">
+                            </div>
+                        </div>
+                        
+                        <div class="weight-total">
+                            TOTAL: <span id="hybridWeightTotal">100</span>% <span id="hybridWeightWarning" style="display: none;">⚠ MUST = 100%</span>
+                        </div>
+                        
+                        <!-- Visual matching uses CLIP - no sub-weights needed -->
+                        <div class="info" style="margin-top: 20px; padding: 15px; border: 2px solid #000; background: #f9f9f9;">
+                            <p><strong>Visual Component: CLIP AI</strong></p>
+                            <p>CLIP automatically analyzes all visual features (color, shape, texture, patterns) in a unified embedding. No manual tuning required!</p>
+                        </div>
+                        
+                        <details style="margin-top: 10px;">
+                            <summary style="cursor: pointer; font-weight: bold; padding: 10px; background: #f0f0f0; border: 2px solid #000;">
+                                METADATA SUB-WEIGHTS ▼
+                            </summary>
+                            <div style="padding: 15px; border: 2px solid #000; border-top: none;">
+                                <div class="weights">
+                                    <div class="weight">
+                                        <label>SKU: <span id="hybridSkuWeightValue">30</span>%</label>
+                                        <input type="range" id="hybridSkuWeightSlider" min="0" max="100" value="30">
+                                    </div>
+                                    
+                                    <div class="weight">
+                                        <label>NAME: <span id="hybridNameWeightValue">25</span>%</label>
+                                        <input type="range" id="hybridNameWeightSlider" min="0" max="100" value="25">
+                                    </div>
+                                    
+                                    <div class="weight">
+                                        <label>CATEGORY: <span id="hybridCategoryWeightValue">20</span>%</label>
+                                        <input type="range" id="hybridCategoryWeightSlider" min="0" max="100" value="20">
+                                    </div>
+                                    
+                                    <div class="weight">
+                                        <label>PRICE: <span id="hybridPriceWeightValue">15</span>%</label>
+                                        <input type="range" id="hybridPriceWeightSlider" min="0" max="100" value="15">
+                                    </div>
+                                    
+                                    <div class="weight">
+                                        <label>PERFORMANCE: <span id="hybridPerformanceWeightValue">10</span>%</label>
+                                        <input type="range" id="hybridPerformanceWeightSlider" min="0" max="100" value="10">
+                                    </div>
+                                </div>
+                                <div class="weight-total">
+                                    TOTAL: <span id="hybridMetadataSubWeightTotal">100</span>% <span id="hybridMetadataSubWeightWarning" style="display: none;">⚠ MUST = 100%</span>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                    
+                    <button class="btn" id="resetWeightsBtn" style="margin-top: 20px;">RESET</button>
+                </div>
+                
+                <div class="progress" id="matchProgress"></div>
             </section>
 
             <!-- Step 4: Results -->
-            <section class="results-section" id="resultsSection" style="display: none;">
+            <section class="section" id="resultsSection" style="display: none;">
                 <div class="section-header">
-                    <h2>Match Results</h2>
-                    <button class="btn btn-secondary" id="exportBtn">Export to CSV</button>
-                    <button class="btn btn-secondary" id="resetBtn">Start Over</button>
+                    <h2>RESULTS</h2>
+                    <div class="actions">
+                        <button class="btn" id="exportCsvBtn" data-tooltip="Export match results to CSV file with all data">CSV</button>
+                        <button class="btn" id="exportWithImagesBtn" data-tooltip="Export results with images in a ZIP file">EXPORT+IMG</button>
+                        <button class="btn" id="duplicateReportBtn" data-tooltip="Show products with >90% similarity (potential duplicates)">DUPLICATES</button>
+                        <button class="btn" id="saveSessionBtn" data-tooltip="Save current session to continue later">SAVE</button>
+                        <button class="btn" id="loadSessionBtn" data-tooltip="Load a previously saved session">LOAD</button>
+                        <button class="btn" id="resetBtn" data-tooltip="Clear all data and start over">RESET</button>
+                    </div>
                 </div>
                 
-                <div class="results-summary" id="resultsSummary"></div>
+                <!-- Filters -->
+                <div class="filters">
+                    <input type="text" id="searchInput" placeholder="SEARCH..." class="input">
+                    
+                    <select id="categoryFilter" class="select">
+                        <option value="all">ALL CATEGORIES</option>
+                    </select>
+                    
+                    <select id="sortBySelect" class="select">
+                        <option value="similarity">SIMILARITY</option>
+                        <option value="price">PRICE</option>
+                        <option value="performance">PERFORMANCE</option>
+                        <option value="name">NAME</option>
+                    </select>
+                    
+                    <label>
+                        <input type="checkbox" id="duplicatesOnlyCheckbox">
+                        DUPLICATES ONLY
+                    </label>
+                    
+                    <button class="btn" id="clearFiltersBtn">CLEAR</button>
+                </div>
                 
-                <div class="results-list" id="resultsList"></div>
+                <div class="summary" id="resultsSummary"></div>
+                <div class="results" id="resultsList"></div>
             </section>
         </main>
     </div>
@@ -146,114 +417,108 @@
     
     <div id="detailModal" class="modal">
         <div class="modal-content">
-            <span class="modal-close" id="modalClose">&times;</span>
+            <span class="modal-close" id="modalClose">×</span>
             <div id="modalBody"></div>
         </div>
     </div>
     
     <div id="csvHelpModal" class="modal">
-        <div class="modal-content csv-help-modal">
-            <span class="modal-close" onclick="closeCsvHelp()">&times;</span>
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeCsvHelp()" data-tooltip="Close this window">×</span>
             <div id="csvHelpBody">
-                <h2>📊 CSV Format Guide</h2>
-                <p class="help-intro">Your CSV file can include product details, price history, and performance history. All fields except filename are optional!</p>
+                <h2>CSV FORMAT GUIDE</h2>
                 
-                <div class="format-section" style="background: #eef2ff; border: 2px solid #667eea;">
-                    <h3>✨ NEW: Interactive CSV Builder (Recommended!)</h3>
-                    <p style="margin: 10px 0; font-size: 15px;">Skip the manual CSV creation! Use our interactive CSV Builder tool to create your CSV file with a step-by-step wizard.</p>
-                    <a href="/static/csv-builder.html" target="_blank" class="btn btn-primary" style="font-size: 16px; padding: 12px 24px; display: inline-block; text-decoration: none;">
-                        🚀 Open CSV Builder Tool
-                    </a>
-                    <p class="format-note" style="margin-top: 15px;">💡 The CSV Builder auto-detects categories, validates data, and handles price/performance history with an easy-to-use interface!</p>
+                <div class="csv-download">
+                    <button class="btn" onclick="window.open('/csv-builder', '_blank')" data-tooltip="Open interactive tool to build CSV with step-by-step guidance">OPEN CSV BUILDER</button>
+                    <button class="btn" onclick="downloadSampleCsv()" data-tooltip="Download a sample CSV file with example data to use as a template">DOWNLOAD TEMPLATE</button>
+                    <p>Use the interactive CSV Builder tool or download a sample template to fill out manually</p>
                 </div>
                 
-                <div class="format-section" style="background: #f8fafc; border: 1px solid #e2e8f0; margin-top: 20px;">
-                    <h3>📥 Or Download Sample CSV Template</h3>
-                    <button class="btn btn-secondary" onclick="downloadSampleCsv()" style="font-size: 14px; padding: 10px 20px;">
-                        ⬇️ Download Sample CSV Template
-                    </button>
-                    <p class="format-note" style="margin-top: 10px;">Download this template and fill in your data manually in Excel or any text editor.</p>
-                </div>
-                
-                <div class="format-section">
-                    <h3>✅ Basic Format (Simplest)</h3>
-                    <div class="csv-example-box">
-                        <div class="csv-header">filename,category,sku,name</div>
-                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat</div>
-                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate Set</div>
+                <div class="format-box">
+                    <div class="format-header">
+                        <h3>1. BASIC FORMAT</h3>
+                        <button class="help-btn" onclick="toggleHelp('help1')">?</button>
                     </div>
-                    <p class="format-note">💡 Category is optional if you organize images in folders!</p>
-                </div>
-                
-                <div class="format-section">
-                    <h3>💰 With Current Price</h3>
-                    <div class="csv-example-box">
-                        <div class="csv-header">filename,category,sku,name,price</div>
-                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99</div>
-                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00</div>
+                    <div class="help-text" id="help1" style="display: none;">
+                        <p><strong>HOW TO FORMAT:</strong></p>
+                        <p>• First row: Column headers (filename, category, sku, name)</p>
+                        <p>• Each row after: One product per line</p>
+                        <p>• Separate columns with commas</p>
+                        <p>• Filename must match your image file exactly</p>
+                        <p>• Category can be left blank if using folder structure</p>
                     </div>
-                    <p class="format-note">💡 Just add the current price in the 5th column</p>
+                    <pre>filename,category,sku,name
+product1.jpg,placemats,PM-001,Blue Placemat
+product2.jpg,dinnerware,DW-002,White Plate</pre>
                 </div>
                 
-                <div class="format-section">
-                    <h3>📈 With Price History (Recommended)</h3>
-                    <div class="csv-example-box">
-                        <div class="csv-header">filename,category,sku,name,price_history</div>
-                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,2024-01-15:29.99;2024-02-15:31.50;2024-03-15:28.75</div>
-                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,2023-12-01:45.00;2024-01-01:42.50;2024-02-01:44.00</div>
+                <div class="format-box">
+                    <div class="format-header">
+                        <h3>2. WITH CURRENT PRICE</h3>
+                        <button class="help-btn" onclick="toggleHelp('help2')">?</button>
                     </div>
-                    <p class="format-note">💡 Format: <code>date:price;date:price;date:price</code> (up to 12 months)</p>
-                    <p class="format-note">📅 Date format: YYYY-MM-DD (e.g., 2024-03-15)</p>
-                </div>
-                
-                <div class="format-section">
-                    <h3>🎯 Quick Price History (No Dates)</h3>
-                    <div class="csv-example-box">
-                        <div class="csv-header">filename,category,sku,name,price_history</div>
-                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99;31.50;28.75;32.00</div>
-                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00;42.50;44.00;43.50</div>
+                    <div class="help-text" id="help2" style="display: none;">
+                        <p><strong>HOW TO FORMAT:</strong></p>
+                        <p>• Add "price" column header</p>
+                        <p>• Enter price as decimal number (e.g., 29.99)</p>
+                        <p>• Don't include currency symbols ($, €, etc.)</p>
+                        <p>• Use period (.) for decimal separator</p>
                     </div>
-                    <p class="format-note">💡 Just list prices separated by semicolons - dates will be auto-generated monthly going backwards</p>
+                    <pre>filename,category,sku,name,price
+product1.jpg,placemats,PM-001,Blue Placemat,29.99
+product2.jpg,dinnerware,DW-002,White Plate,45.00</pre>
                 </div>
                 
-                <div class="format-section">
-                    <h3>📊 With Performance History</h3>
-                    <div class="csv-example-box">
-                        <div class="csv-header">filename,category,sku,name,price,performance_history</div>
-                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160</div>
-                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00,2024-01-15:200:2000:10.0:9000;2024-02-15:220:2200:10.0:9900</div>
+                <div class="format-box">
+                    <div class="format-header">
+                        <h3>3. WITH PRICE HISTORY</h3>
+                        <button class="help-btn" onclick="toggleHelp('help3')">?</button>
                     </div>
-                    <p class="format-note">💡 Format: <code>date:sales:views:conversion:revenue</code> (up to 12 months)</p>
-                    <p class="format-note">📊 Example: 2024-01-15:150:1200:12.5:1800 = Jan 15, 150 sales, 1200 views, 12.5% conversion, $1800 revenue</p>
-                </div>
-                
-                <div class="format-section">
-                    <h3>🚀 Quick Performance (No Dates)</h3>
-                    <div class="csv-example-box">
-                        <div class="csv-header">filename,category,sku,name,price,performance_history</div>
-                        <div class="csv-row">product1.jpg,placemats,PM-001,Blue Placemat,29.99,150:1200:12.5:1800;180:1500:12.0:2160;200:1800:11.1:2400</div>
-                        <div class="csv-row">product2.jpg,dinnerware,DW-002,White Plate,45.00,200:2000:10.0:9000;220:2200:10.0:9900;240:2400:10.0:10800</div>
+                    <div class="help-text" id="help3" style="display: none;">
+                        <p><strong>HOW TO FORMAT:</strong></p>
+                        <p>• Add "price_history" column header</p>
+                        <p>• Format each entry as: YYYY-MM-DD:price</p>
+                        <p>• Separate multiple entries with semicolons (;)</p>
+                        <p>• Example: 2024-01-15:29.99;2024-02-15:31.50</p>
+                        <p>• Maximum 12 months of history</p>
+                        <p>• Dates must be in YYYY-MM-DD format</p>
                     </div>
-                    <p class="format-note">💡 Format: <code>sales:views:conversion:revenue</code> - dates auto-generated monthly</p>
+                    <pre>filename,category,sku,name,price_history
+product1.jpg,placemats,PM-001,Blue Placemat,2024-01-15:29.99;2024-02-15:31.50;2024-03-15:28.75</pre>
                 </div>
                 
-                <div class="format-section important-notes">
-                    <h3>⚠️ Important Notes</h3>
+                <div class="format-box">
+                    <div class="format-header">
+                        <h3>4. WITH PERFORMANCE DATA</h3>
+                        <button class="help-btn" onclick="toggleHelp('help4')">?</button>
+                    </div>
+                    <div class="help-text" id="help4" style="display: none;">
+                        <p><strong>HOW TO FORMAT:</strong></p>
+                        <p>• Add "performance_history" column header</p>
+                        <p>• Format: date:sales:views:conversion:revenue</p>
+                        <p>• Separate multiple entries with semicolons (;)</p>
+                        <p>• Example breakdown:</p>
+                        <p>&nbsp;&nbsp;- Date: 2024-01-15</p>
+                        <p>&nbsp;&nbsp;- Sales: 150 (number of units sold)</p>
+                        <p>&nbsp;&nbsp;- Views: 1200 (page views)</p>
+                        <p>&nbsp;&nbsp;- Conversion: 12.5 (percentage, no % symbol)</p>
+                        <p>&nbsp;&nbsp;- Revenue: 1800 (total revenue, no $ symbol)</p>
+                        <p>• Full entry: 2024-01-15:150:1200:12.5:1800</p>
+                    </div>
+                    <pre>filename,category,sku,name,price,performance_history
+product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:150:1200:12.5:1800</pre>
+                </div>
+                
+                <div class="notes">
+                    <h3>IMPORTANT NOTES</h3>
                     <ul>
-                        <li><strong>Filename is required</strong> - must match your image file exactly</li>
-                        <li><strong>All other fields are optional</strong> - leave blank if you don't have the data</li>
-                        <li><strong>Category auto-detected</strong> - from folder structure (e.g., placemats/image.jpg → category: placemats)</li>
-                        <li><strong>Flexible separators</strong> - use commas or tabs between columns</li>
-                        <li><strong>Headers optional</strong> - first row can be headers or data</li>
-                        <li><strong>Missing data OK</strong> - system handles incomplete data gracefully</li>
-                        <li><strong>Price history limit</strong> - maximum 12 months of price data</li>
-                        <li><strong>Performance history limit</strong> - maximum 12 months of performance data</li>
-                        <li><strong>Performance format</strong> - date:sales:views:conversion_rate:revenue (all numeric except date)</li>
-                        <li><strong>Conversion rate</strong> - enter as percentage (e.g., 12.5 for 12.5%)</li>
+                        <li>FILENAME is the only required field</li>
+                        <li>CATEGORY is auto-detected from folder structure</li>
+                        <li>Use SEMICOLONS (;) to separate multiple history entries</li>
+                        <li>Maximum 12 months of history data</li>
+                        <li>All other fields are optional</li>
                     </ul>
                 </div>
-                
-
             </div>
         </div>
     </div>

@@ -1,5 +1,9 @@
 # Workspace Organization
 
+Last Updated: November 23, 2025
+
+## Documentation Structure
+
 **Last Updated**: November 20, 2025
 
 ## 📁 Directory Structure
@@ -334,3 +338,124 @@ find . -type f -name "*.pyc" -delete
 - ✅ Ready for development
 
 **Last cleanup**: November 20, 2025
+
+
+### Root Directory Files
+
+**Installation & Setup:**
+- `INSTALLATION.md` - Complete installation guide for all platforms
+- `START_SERVER_README.md` - Server startup guide
+- `start_server.bat` - Windows startup script (auto-detects GPU)
+- `start_server.sh` - macOS/Linux startup script
+- `requirements.txt` - Main Python requirements
+
+**Documentation:**
+- `README.md` - Project overview and quick start
+- `QUICK_REFERENCE.md` - Quick reference guide
+- `SETUP_SIMPLE.md` - Simple setup guide
+- `CONTRIBUTING.md` - Contribution guidelines
+- `WORKSPACE_ORGANIZATION.md` - This file
+- `WORKSPACE_STRUCTURE.md` - Detailed workspace structure
+
+### Documentation Folders
+
+**`docs/` - Website & User Documentation**
+- `index.html`, `download.html`, `docs.html` - Website pages
+- `guides/` - User guides directory
+  - `README.md` - Documentation index
+  - `CLIP_USER_GUIDE.md` - Link to CLIP guide
+
+**`backend/docs/` - Developer Documentation**
+- `CLIP_DEVELOPER_GUIDE.md` - CLIP integration technical guide
+- `DATABASE_DESIGN.md` - Database schema and design
+- `MATCHING_SERVICE.md` - Matching algorithm details
+- `PERFORMANCE_OPTIMIZATIONS.md` - Performance tips
+- `IMAGE_PROCESSING_ERRORS.md` - Error handling
+- `SKU_IMPLEMENTATION.md` - SKU handling
+- `FUZZY_CATEGORY_MATCHING_SUMMARY.md` - Category matching
+- `REAL_WORLD_DATA_HANDLING.md` - Data handling
+- `SIMILARITY_ERROR_HANDLING.md` - Similarity computation
+
+**`gpu/` - GPU Acceleration Documentation**
+- `GPU_SETUP_GUIDE.md` - Complete GPU setup guide
+- `GPU_STATUS.md` - GPU status and compatibility
+- `MEMORY_MANAGEMENT.md` - GPU memory management
+- `WORKFLOW_INTEGRATION.md` - GPU workflow integration
+- `README.md` - GPU folder overview
+
+**`docs-implementation/` - Implementation Guides**
+- `ERROR_HANDLING_IMPLEMENTATION.md` - Error handling
+- `PRICE_HISTORY_GUIDE.md` - Price history feature
+- `UI_FEATURES_GUIDE.md` - UI features
+
+**`docs-backup/` - Archived Documentation**
+- Old documentation and backup files
+
+### Spec Files
+
+**`.kiro/specs/product-matching-system/`**
+- `requirements.md` - Feature requirements
+- `design.md` - System design document
+- `tasks.md` - Implementation tasks
+- `clip-implementation-tasks.md` - CLIP-specific tasks
+
+## Quick Navigation
+
+### For Users
+1. Start here: `README.md`
+2. Install: `INSTALLATION.md`
+3. Run: `start_server.bat` (Windows) or `start_server.sh` (macOS/Linux)
+4. GPU Setup: `gpu/GPU_SETUP_GUIDE.md`
+5. Online docs: https://g1mliii.github.io/image-match/docs.html
+
+### For Developers
+1. Architecture: `backend/docs/CLIP_DEVELOPER_GUIDE.md`
+2. Database: `backend/docs/DATABASE_DESIGN.md`
+3. Matching: `backend/docs/MATCHING_SERVICE.md`
+4. Specs: `.kiro/specs/product-matching-system/`
+
+### For GPU Setup
+1. Quick start: `gpu/README.md`
+2. Detailed guide: `gpu/GPU_SETUP_GUIDE.md`
+3. Check GPU: `python gpu/check_gpu.py`
+4. Benchmark: `python gpu/benchmark_gpu.py`
+
+## File Organization Principles
+
+1. **Root level** - Installation, setup, and startup files
+2. **docs/** - User-facing documentation and website
+3. **backend/docs/** - Technical/developer documentation
+4. **gpu/** - GPU-specific documentation and scripts
+5. **specs/** - Requirements, design, and task specifications
+
+## Recent Additions (Task 26.7)
+
+### New Files Created
+- `INSTALLATION.md` - Comprehensive installation guide
+- `START_SERVER_README.md` - Server startup guide
+- `start_server.bat` - Windows startup script
+- `start_server.sh` - macOS/Linux startup script
+- `backend/docs/CLIP_DEVELOPER_GUIDE.md` - CLIP technical guide
+- `docs/guides/README.md` - Documentation index
+- `docs/guides/CLIP_USER_GUIDE.md` - CLIP user guide link
+
+### Updated Files
+- `docs/download.html` - Added GPU requirements section
+- `docs/index.html` - Updated features with GPU info
+- `docs/docs.html` - Added CLIP FAQ and GPU troubleshooting
+- `backend/requirements.txt` - Updated with GPU requirements
+- `requirements.txt` - Updated with installation instructions
+- `README.md` - Added documentation section
+- `backend/static/index.html` - Added GPU status indicator
+- `backend/static/styles.css` - Added GPU status styling
+- `backend/static/app.js` - Added GPU status JavaScript
+- `backend/app.py` - Added `/api/gpu/status` endpoint
+- `backend/image_processing_clip.py` - Added `get_device_info()` function
+
+## Maintenance
+
+This file should be updated when:
+- New documentation files are added
+- Documentation structure changes
+- Major features are added
+- File organization changes

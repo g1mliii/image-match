@@ -15,12 +15,18 @@ from database import (
     get_performance_statistics, link_performance_history, get_products_with_performance_history
 )
 from image_processing import (
-    extract_all_features, validate_image_file,
+    validate_image_file,
     ImageProcessingError, InvalidImageFormatError, CorruptedImageError,
     ImageTooSmallError, ImageProcessingFailedError
 )
+from feature_extraction_service import (
+    extract_features_unified,
+    get_feature_extraction_info
+)
 from product_matching import (
     find_matches,
+    find_metadata_matches,
+    find_hybrid_matches,
     MatchingError, ProductNotFoundError, MissingFeaturesError,
     EmptyCatalogError, AllMatchesFailedError
 )
@@ -45,6 +51,19 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Initialize database
 init_db()
 
+# Pre-load CLIP model on startup (download if needed)
+logger.info("Initializing CLIP model...")
+try:
+    from image_processing_clip import is_clip_available, get_clip_model
+    if is_clip_available():
+        # This will download the model if not cached (~350MB, one-time)
+        model = get_clip_model()
+        logger.info("CLIP model loaded successfully")
+    else:
+        logger.warning("CLIP not available, will use legacy feature extraction")
+except Exception as e:
+    logger.warning(f"Could not pre-load CLIP model: {e}. Will use legacy feature extraction.")
+
 # Supported image formats
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
 
@@ -68,8 +87,13 @@ def create_error_response(error_code, message, suggestion=None, details=None, st
 
 @app.route('/')
 def index():
-    """Serve the main application"""
+    """Serve the main application (brutalist design)"""
     return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/gradient')
+def gradient():
+    """Serve the old gradient version (archived)"""
+    return send_from_directory(os.path.join(app.static_folder, 'old-gradient-ui'), 'index.html')
 
 @app.route('/csv-builder')
 def csv_builder():
@@ -80,6 +104,80 @@ def csv_builder():
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'message': 'Backend is running'})
+
+@app.route('/api/gpu/status', methods=['GET'])
+def get_gpu_status():
+    """
+    Get GPU acceleration status and performance information.
+    
+    Returns:
+        JSON with GPU status:
+        - available: bool - Whether GPU is available
+        - device: str - Device type (cuda, rocm, mps, cpu)
+        - gpu_name: str - GPU model name (if available)
+        - throughput: str - Estimated throughput (images/sec)
+        - first_run: bool - Whether CLIP model needs to be downloaded
+        - error: str - Error message if GPU initialization failed
+    """
+    try:
+        from image_processing_clip import (
+            get_device_info,
+            is_clip_available,
+            TORCH_AVAILABLE
+        )
+        
+        if not TORCH_AVAILABLE:
+            return jsonify({
+                'available': False,
+                'device': 'cpu',
+                'gpu_name': None,
+                'throughput': '5-20',
+                'first_run': False,
+                'error': 'PyTorch not installed'
+            })
+        
+        device_info = get_device_info()
+        clip_available = is_clip_available()
+        
+        # Estimate throughput based on device
+        throughput = '5-20'  # CPU default
+        if device_info['device'] == 'cuda':
+            throughput = '150-300'  # NVIDIA GPU
+        elif device_info['device'] == 'rocm':
+            throughput = '150-200'  # AMD GPU
+        elif device_info['device'] == 'mps':
+            throughput = '50-150'  # Apple Silicon
+        
+        # Check if this is first run (model not cached)
+        first_run = False
+        try:
+            from pathlib import Path
+            cache_dir = Path.home() / '.cache' / 'torch' / 'sentence_transformers'
+            first_run = not cache_dir.exists() or not any(cache_dir.glob('*clip*'))
+        except:
+            pass
+        
+        return jsonify({
+            'available': device_info['device'] != 'cpu',
+            'device': device_info['device'],
+            'gpu_name': device_info.get('gpu_name'),
+            'vram': device_info.get('vram_gb'),
+            'throughput': throughput,
+            'first_run': first_run,
+            'clip_available': clip_available,
+            'error': None
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting GPU status: {e}")
+        return jsonify({
+            'available': False,
+            'device': 'cpu',
+            'gpu_name': None,
+            'throughput': '5-20',
+            'first_run': False,
+            'error': str(e)
+        })
 
 @app.route('/api/products/<int:product_id>/image', methods=['GET'])
 def get_product_image(product_id):
@@ -292,21 +390,23 @@ def upload_product():
                 status_code=500
             )
         
-        # Extract features from image
+        # Extract features from image (CLIP or legacy)
         feature_extraction_status = 'success'
         feature_error = None
         
         try:
-            features = extract_all_features(filepath)
+            features, embedding_type, embedding_version = extract_features_unified(filepath)
             
-            # Store features in database
+            # Store features in database with embedding type and version
             insert_features(
                 product_id=product_id,
                 color_features=features['color_features'],
                 shape_features=features['shape_features'],
-                texture_features=features['texture_features']
+                texture_features=features['texture_features'],
+                embedding_type=embedding_type,
+                embedding_version=embedding_version
             )
-            logger.info(f"Features extracted and stored for product {product_id}")
+            logger.info(f"Features extracted and stored for product {product_id} (type: {embedding_type}, version: {embedding_version})")
             
         except (InvalidImageFormatError, CorruptedImageError, ImageTooSmallError, ImageProcessingFailedError) as e:
             logger.error(f"Feature extraction failed for product {product_id}: {e.message}")
@@ -446,17 +546,153 @@ def match_products():
         if not isinstance(match_against_all, bool):
             match_against_all = str(match_against_all).lower() in ['true', '1', 'yes']
         
+        # Get optional similarity weights
+        color_weight = data.get('color_weight', 0.5)
+        shape_weight = data.get('shape_weight', 0.3)
+        texture_weight = data.get('texture_weight', 0.2)
+        
+        # Validate weights
+        try:
+            color_weight = float(color_weight)
+            shape_weight = float(shape_weight)
+            texture_weight = float(texture_weight)
+            
+            # Check if weights sum to 1.0 (with tolerance)
+            total_weight = color_weight + shape_weight + texture_weight
+            if not (0.99 <= total_weight <= 1.01):
+                return create_error_response(
+                    'INVALID_WEIGHTS',
+                    f'Similarity weights must sum to 1.0, got {total_weight:.3f}',
+                    'Adjust weights so they sum to 100%',
+                    status_code=400
+                )
+            
+            if color_weight < 0 or shape_weight < 0 or texture_weight < 0:
+                return create_error_response(
+                    'INVALID_WEIGHTS',
+                    'Similarity weights must be non-negative',
+                    'All weights must be >= 0',
+                    status_code=400
+                )
+        except (ValueError, TypeError):
+            return create_error_response(
+                'INVALID_WEIGHTS',
+                'Similarity weights must be numbers',
+                f'Received: color={color_weight}, shape={shape_weight}, texture={texture_weight}',
+                status_code=400
+            )
+        
+        # Get metadata weights if provided
+        sku_weight = data.get('sku_weight', 0.30)
+        name_weight = data.get('name_weight', 0.25)
+        category_weight_meta = data.get('category_weight', 0.20)
+        price_weight = data.get('price_weight', 0.15)
+        performance_weight = data.get('performance_weight', 0.10)
+        
+        # Get hybrid weights if provided
+        visual_weight = data.get('visual_weight', 0.50)
+        metadata_weight = data.get('metadata_weight', 0.50)
+        
+        # Validate hybrid weights
+        try:
+            visual_weight = float(visual_weight)
+            metadata_weight = float(metadata_weight)
+            
+            # Check if weights sum to 1.0 (with tolerance)
+            total_hybrid_weight = visual_weight + metadata_weight
+            if not (0.99 <= total_hybrid_weight <= 1.01):
+                return create_error_response(
+                    'INVALID_HYBRID_WEIGHTS',
+                    f'Hybrid weights must sum to 1.0, got {total_hybrid_weight:.3f}',
+                    'Adjust visual_weight and metadata_weight so they sum to 100%',
+                    status_code=400
+                )
+            
+            if visual_weight < 0 or metadata_weight < 0:
+                return create_error_response(
+                    'INVALID_HYBRID_WEIGHTS',
+                    'Hybrid weights must be non-negative',
+                    'All weights must be >= 0',
+                    status_code=400
+                )
+        except (ValueError, TypeError):
+            return create_error_response(
+                'INVALID_HYBRID_WEIGHTS',
+                'Hybrid weights must be numbers',
+                f'Received: visual={visual_weight}, metadata={metadata_weight}',
+                status_code=400
+            )
+        
+        # Detect matching mode based on:
+        # 1. Visual features presence
+        # 2. Slider weights (if metadata_weight > 0, user wants hybrid)
+        try:
+            features = get_features_by_product_id(product_id)
+            has_features = features is not None
+        except:
+            has_features = False
+        
+        # Determine mode based on features and weights
+        # Mode 1: Has features + metadata_weight = 0 → Pure visual
+        # Mode 2: No features → Pure metadata
+        # Mode 3: Has features + metadata_weight > 0 → Hybrid
+        
+        use_hybrid = has_features and metadata_weight > 0
+        
         # Find matches with comprehensive error handling
         try:
-            result = find_matches(
-                product_id=product_id,
-                threshold=threshold,
-                limit=limit,
-                match_against_all=match_against_all,
-                include_uncategorized=True,
-                store_matches=True,
-                skip_invalid_products=True
-            )
+            if use_hybrid:
+                # Mode 3: Hybrid matching (visual + metadata)
+                logger.info(f"Product {product_id} using hybrid matching (visual: {visual_weight*100}%, metadata: {metadata_weight*100}%)")
+                result = find_hybrid_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    visual_weight=visual_weight,
+                    metadata_weight=metadata_weight,
+                    color_weight=color_weight,
+                    shape_weight=shape_weight,
+                    texture_weight=texture_weight,
+                    sku_weight=sku_weight,
+                    name_weight=name_weight,
+                    category_weight=category_weight_meta,
+                    price_weight=price_weight,
+                    performance_weight=performance_weight,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
+            elif has_features:
+                # Mode 1: Pure visual matching
+                logger.info(f"Product {product_id} using visual matching")
+                result = find_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    match_against_all=match_against_all,
+                    include_uncategorized=True,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    color_weight=color_weight,
+                    shape_weight=shape_weight,
+                    texture_weight=texture_weight
+                )
+            else:
+                # Mode 2: Metadata matching only (no visual features)
+                logger.info(f"Product {product_id} has no visual features, using metadata matching")
+                result = find_metadata_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    sku_weight=sku_weight,
+                    name_weight=name_weight,
+                    category_weight=category_weight_meta,
+                    price_weight=price_weight,
+                    performance_weight=performance_weight,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
             
             # Prepare response
             response = {
@@ -535,374 +771,6 @@ def match_products():
         return create_error_response(
             'UNKNOWN_ERROR',
             'An unexpected error occurred during matching',
-            'Please try again or contact support',
-            {'error': str(e)},
-            status_code=500
-        )
-
-# UNUSED - Folder workflow doesn't need pagination/filtering endpoint
-# @app.route('/api/products/historical', methods=['GET'])
-# def get_historical_products():
-    """
-    Get historical products with pagination and filtering.
-    
-    Query parameters:
-    - category: Filter by category (optional, handles NULL)
-    - include_uncategorized: Include products with NULL category (optional, default: false)
-    - page: Page number (optional, default: 1)
-    - limit: Items per page (optional, default: 25, max: 100)
-    - search: Search query (optional)
-    
-    Returns:
-    - 200: Success with product list
-    - 400: Validation error
-    """
-    try:
-        # Get query parameters
-        category = request.args.get('category', None)
-        include_uncategorized = request.args.get('include_uncategorized', 'false').lower() in ['true', '1', 'yes']
-        search = request.args.get('search', None)
-        
-        # Normalize empty category to None
-        if category and category.strip() == '':
-            category = None
-        
-        # Validate pagination parameters
-        try:
-            page = int(request.args.get('page', 1))
-            if page < 1:
-                return create_error_response(
-                    'INVALID_PAGE',
-                    'page must be >= 1',
-                    f'Received: {page}',
-                    status_code=400
-                )
-        except (ValueError, TypeError):
-            return create_error_response(
-                'INVALID_PAGE',
-                'page must be an integer',
-                f'Received: {request.args.get("page")}',
-                status_code=400
-            )
-        
-        try:
-            limit = int(request.args.get('limit', 25))
-            if limit < 1:
-                return create_error_response(
-                    'INVALID_LIMIT',
-                    'limit must be >= 1',
-                    f'Received: {limit}',
-                    status_code=400
-                )
-            if limit > 100:
-                logger.warning(f"Limit {limit} exceeds maximum, capping at 100")
-                limit = 100
-        except (ValueError, TypeError):
-            return create_error_response(
-                'INVALID_LIMIT',
-                'limit must be an integer',
-                f'Received: {request.args.get("limit")}',
-                status_code=400
-            )
-        
-        # Calculate offset
-        offset = (page - 1) * limit
-        
-        # Get products with error handling
-        try:
-            if search:
-                # Use search function
-                products = search_products(
-                    query=search,
-                    category=category,
-                    is_historical=True,
-                    limit=limit
-                )
-                total_count = len(products)  # Approximate for search
-            else:
-                # Use pagination function
-                products = db_get_historical_products(
-                    category=category,
-                    limit=limit,
-                    offset=offset,
-                    include_uncategorized=include_uncategorized
-                )
-                
-                # Get total count for pagination
-                total_count = count_products(category=category, is_historical=True)
-            
-            # Convert sqlite3.Row objects to dictionaries
-            products_list = []
-            for product in products:
-                product_dict = {
-                    'id': product['id'],
-                    'image_path': product['image_path'],
-                    'category': product['category'],
-                    'product_name': product['product_name'],
-                    'sku': product['sku'],
-                    'is_historical': bool(product['is_historical']),
-                    'created_at': product['created_at']
-                }
-                
-                # Check if product has features
-                try:
-                    features = get_features_by_product_id(product['id'])
-                    product_dict['has_features'] = features is not None
-                except:
-                    product_dict['has_features'] = False
-                
-                products_list.append(product_dict)
-            
-            # Calculate pagination info
-            total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
-            
-            response = {
-                'status': 'success',
-                'products': products_list,
-                'pagination': {
-                    'page': page,
-                    'limit': limit,
-                    'total_count': total_count,
-                    'total_pages': total_pages,
-                    'has_next': page < total_pages,
-                    'has_prev': page > 1
-                },
-                'filters': {
-                    'category': category,
-                    'include_uncategorized': include_uncategorized,
-                    'search': search
-                }
-            }
-            
-            # Return empty results if no matches (not an error)
-            if not products_list:
-                response['message'] = 'No historical products found'
-                if category:
-                    response['suggestion'] = f'Try a different category or add products to "{category}"'
-                elif search:
-                    response['suggestion'] = 'Try a different search query'
-            
-            return jsonify(response), 200
-            
-        except Exception as e:
-            logger.error(f"Database error retrieving historical products: {e}")
-            return create_error_response(
-                'DATABASE_ERROR',
-                'Failed to retrieve historical products',
-                'Please try again',
-                {'error': str(e)},
-                status_code=500
-            )
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in get_historical_products: {e}", exc_info=True)
-        return create_error_response(
-            'UNKNOWN_ERROR',
-            'An unexpected error occurred',
-            'Please try again or contact support',
-            {'error': str(e)},
-            status_code=500
-        )
-
-# UNUSED - Use regular /api/products/upload with is_historical=true instead
-# @app.route('/api/products/historical', methods=['POST'])
-# def add_historical_product():
-    """
-    Add a new historical product to the catalog.
-    
-    Form data:
-    - image: Image file (required) - JPEG, PNG, or WebP
-    - category: Product category (optional, can be NULL)
-    - product_name: Product name (optional)
-    - sku: Product SKU (optional, alphanumeric with hyphens/underscores)
-    
-    Returns:
-    - 200: Success with product_id
-    - 400: Validation error
-    - 500: Server error
-    """
-    try:
-        # Validate image file is present
-        if 'image' not in request.files:
-            return create_error_response(
-                'MISSING_IMAGE',
-                'No image file provided',
-                'Please upload an image file (JPEG, PNG, or WebP)',
-                status_code=400
-            )
-        
-        file = request.files['image']
-        
-        # Check if file was actually selected
-        if file.filename == '':
-            return create_error_response(
-                'EMPTY_FILENAME',
-                'No file selected',
-                'Please select an image file to upload',
-                status_code=400
-            )
-        
-        # Validate file extension
-        if not allowed_file(file.filename):
-            return create_error_response(
-                'INVALID_FORMAT',
-                f'Unsupported file format',
-                'Supported formats: JPEG, PNG, WebP',
-                {'filename': file.filename},
-                status_code=400
-            )
-        
-        # Get optional fields
-        category = request.form.get('category', None)
-        product_name = request.form.get('product_name', None)
-        sku = request.form.get('sku', None)
-        
-        # Normalize empty strings to None
-        if category and category.strip() == '':
-            category = None
-        if product_name and product_name.strip() == '':
-            product_name = None
-        if sku and sku.strip() == '':
-            sku = None
-        
-        # Validate and normalize SKU if provided
-        sku_warning = None
-        if sku:
-            is_valid, error_msg = validate_sku_format(sku)
-            if not is_valid:
-                return create_error_response(
-                    'INVALID_SKU',
-                    error_msg,
-                    'SKU must be alphanumeric with hyphens/underscores, max 50 characters',
-                    {'sku': sku},
-                    status_code=400
-                )
-            
-            # Normalize SKU
-            sku = normalize_sku(sku)
-            
-            # Check for duplicate SKU (warn but allow based on config)
-            if check_sku_exists(sku):
-                logger.warning(f"Duplicate SKU detected for historical product: {sku}")
-                sku_warning = f'SKU "{sku}" already exists in database'
-                # Allow duplicate - just warn
-        
-        # Save uploaded file
-        filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        unique_filename = f"historical_{timestamp}_{filename}"
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        
-        try:
-            file.save(filepath)
-            logger.info(f"Historical product file saved: {filepath}")
-        except Exception as e:
-            logger.error(f"Failed to save file: {e}")
-            return create_error_response(
-                'FILE_SAVE_ERROR',
-                'Failed to save uploaded file',
-                'Please try uploading again',
-                {'error': str(e)},
-                status_code=500
-            )
-        
-        # Validate image file
-        is_valid, error_msg, error_code = validate_image_file(filepath)
-        if not is_valid:
-            # Clean up invalid file
-            try:
-                os.remove(filepath)
-            except:
-                pass
-            
-            return create_error_response(
-                error_code,
-                error_msg,
-                'Please upload a valid image file',
-                status_code=400
-            )
-        
-        # Insert product into database (marked as historical)
-        try:
-            product_id = insert_product(
-                image_path=filepath,
-                category=category,
-                product_name=product_name,
-                sku=sku,
-                is_historical=True  # Mark as historical
-            )
-            logger.info(f"Historical product inserted with ID: {product_id}")
-        except Exception as e:
-            # Clean up file on database error
-            try:
-                os.remove(filepath)
-            except:
-                pass
-            
-            logger.error(f"Database error inserting historical product: {e}")
-            return create_error_response(
-                'DATABASE_ERROR',
-                'Failed to save product to database',
-                'Please try again',
-                {'error': str(e)},
-                status_code=500
-            )
-        
-        # Extract features from image
-        feature_extraction_status = 'success'
-        feature_error = None
-        
-        try:
-            features = extract_all_features(filepath)
-            
-            # Store features in database
-            insert_features(
-                product_id=product_id,
-                color_features=features['color_features'],
-                shape_features=features['shape_features'],
-                texture_features=features['texture_features']
-            )
-            logger.info(f"Features extracted and stored for historical product {product_id}")
-            
-        except (InvalidImageFormatError, CorruptedImageError, ImageTooSmallError, ImageProcessingFailedError) as e:
-            logger.error(f"Feature extraction failed for historical product {product_id}: {e.message}")
-            feature_extraction_status = 'failed'
-            feature_error = {
-                'error': e.message,
-                'error_code': e.error_code,
-                'suggestion': e.suggestion
-            }
-        except Exception as e:
-            logger.error(f"Unexpected error during feature extraction: {e}")
-            feature_extraction_status = 'failed'
-            feature_error = {
-                'error': str(e),
-                'error_code': 'UNKNOWN_ERROR',
-                'suggestion': 'Please try re-uploading the image'
-            }
-        
-        # Prepare response
-        response = {
-            'status': 'success',
-            'product_id': product_id,
-            'is_historical': True,
-            'feature_extraction_status': feature_extraction_status
-        }
-        
-        if feature_error:
-            response['feature_extraction_error'] = feature_error
-            response['warning'] = 'Product saved but feature extraction failed. You can retry feature extraction later.'
-        
-        if sku_warning:
-            response['warning_sku'] = sku_warning
-        
-        return jsonify(response), 200
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in add_historical_product: {e}", exc_info=True)
-        return create_error_response(
-            'UNKNOWN_ERROR',
-            'An unexpected error occurred',
             'Please try again or contact support',
             {'error': str(e)},
             status_code=500
@@ -996,198 +864,6 @@ def get_product(product_id):
             status_code=500
         )
 
-# UNUSED - Frontend does individual matches in a loop
-# @app.route('/api/batch/match', methods=['POST'])
-# def batch_match():
-    """
-    Batch match multiple products.
-    
-    JSON body:
-    - product_ids: List of product IDs to match (required)
-    - threshold: Minimum similarity score 0-100 (optional, default: 0)
-    - limit: Maximum matches per product (optional, default: 10)
-    - match_against_all: Match against all categories (optional, default: false)
-    - continue_on_error: Continue processing on errors (optional, default: true)
-    
-    Returns:
-    - 200: Success with batch results and summary
-    - 400: Validation error
-    - 500: Server error
-    """
-    try:
-        # Parse JSON body
-        data = request.get_json()
-        
-        if not data:
-            return create_error_response(
-                'MISSING_BODY',
-                'Request body is required',
-                'Send JSON body with product_ids array',
-                status_code=400
-            )
-        
-        # Validate product_ids
-        if 'product_ids' not in data:
-            return create_error_response(
-                'MISSING_PRODUCT_IDS',
-                'product_ids is required',
-                'Include product_ids array in request body',
-                status_code=400
-            )
-        
-        product_ids = data['product_ids']
-        
-        if not isinstance(product_ids, list):
-            return create_error_response(
-                'INVALID_PRODUCT_IDS',
-                'product_ids must be an array',
-                f'Received: {type(product_ids).__name__}',
-                status_code=400
-            )
-        
-        if len(product_ids) == 0:
-            return create_error_response(
-                'EMPTY_PRODUCT_IDS',
-                'product_ids array is empty',
-                'Provide at least one product ID',
-                status_code=400
-            )
-        
-        if len(product_ids) > 100:
-            return create_error_response(
-                'TOO_MANY_PRODUCTS',
-                f'Too many products in batch ({len(product_ids)})',
-                'Maximum 100 products per batch',
-                status_code=400
-            )
-        
-        # Validate all product IDs before processing
-        invalid_ids = []
-        for pid in product_ids:
-            try:
-                int(pid)
-            except (ValueError, TypeError):
-                invalid_ids.append(pid)
-        
-        if invalid_ids:
-            return create_error_response(
-                'INVALID_PRODUCT_IDS',
-                'Some product IDs are not valid integers',
-                'All product IDs must be integers',
-                {'invalid_ids': invalid_ids},
-                status_code=400
-            )
-        
-        # Convert to integers
-        product_ids = [int(pid) for pid in product_ids]
-        
-        # Get optional parameters with validation
-        threshold = data.get('threshold', 0.0)
-        try:
-            threshold = float(threshold)
-            if not 0 <= threshold <= 100:
-                return create_error_response(
-                    'INVALID_THRESHOLD',
-                    'threshold must be between 0 and 100',
-                    f'Received: {threshold}',
-                    status_code=400
-                )
-        except (ValueError, TypeError):
-            return create_error_response(
-                'INVALID_THRESHOLD',
-                'threshold must be a number',
-                f'Received: {threshold}',
-                status_code=400
-            )
-        
-        limit = data.get('limit', 10)
-        try:
-            limit = int(limit)
-            if limit < 0:
-                return create_error_response(
-                    'INVALID_LIMIT',
-                    'limit must be non-negative',
-                    f'Received: {limit}',
-                    status_code=400
-                )
-            if limit > 100:
-                logger.warning(f"Limit {limit} exceeds maximum, capping at 100")
-                limit = 100
-        except (ValueError, TypeError):
-            return create_error_response(
-                'INVALID_LIMIT',
-                'limit must be an integer',
-                f'Received: {limit}',
-                status_code=400
-            )
-        
-        match_against_all = data.get('match_against_all', False)
-        if not isinstance(match_against_all, bool):
-            match_against_all = str(match_against_all).lower() in ['true', '1', 'yes']
-        
-        continue_on_error = data.get('continue_on_error', True)
-        if not isinstance(continue_on_error, bool):
-            continue_on_error = str(continue_on_error).lower() in ['true', '1', 'yes']
-        
-        # Process batch with error isolation
-        logger.info(f"Starting batch match for {len(product_ids)} products")
-        
-        try:
-            result = batch_find_matches(
-                product_ids=product_ids,
-                threshold=threshold,
-                limit=limit,
-                match_against_all=match_against_all,
-                include_uncategorized=True,
-                store_matches=True,
-                continue_on_error=continue_on_error,
-                skip_invalid_products=True
-            )
-            
-            # Prepare response with detailed summary
-            response = {
-                'status': 'success',
-                'summary': result['summary'],
-                'results': result['results'],
-                'threshold': threshold,
-                'limit': limit
-            }
-            
-            # Include error details if any
-            if result.get('errors'):
-                response['errors'] = result['errors']
-                response['note'] = 'Some products failed to match. See errors for details.'
-            
-            # Add data quality information
-            total_data_issues = 0
-            for res in result['results']:
-                if res.get('data_quality_issues'):
-                    total_data_issues += sum(res['data_quality_issues'].values())
-            
-            if total_data_issues > 0:
-                response['data_quality_note'] = f'Encountered {total_data_issues} data quality issues across all products'
-            
-            return jsonify(response), 200
-            
-        except Exception as e:
-            logger.error(f"Error during batch matching: {e}", exc_info=True)
-            return create_error_response(
-                'BATCH_MATCH_ERROR',
-                'Batch matching failed',
-                'Please try again with fewer products or check product data',
-                {'error': str(e)},
-                status_code=500
-            )
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in batch_match: {e}", exc_info=True)
-        return create_error_response(
-            'UNKNOWN_ERROR',
-            'An unexpected error occurred',
-            'Please try again or contact support',
-            {'error': str(e)},
-            status_code=500
-        )
 
 # Error handlers for common HTTP errors
 @app.errorhandler(404)
@@ -1620,6 +1296,306 @@ def add_product_performance_history(product_id):
             {'error': str(e)},
             status_code=500
         )
+
+@app.route('/api/features/info', methods=['GET'])
+def get_feature_extraction_info_endpoint():
+    """
+    Get feature extraction configuration and status.
+    
+    Returns information about whether CLIP or legacy features are being used.
+    
+    Returns:
+    - 200: Success with feature extraction info
+    - 500: Server error
+    """
+    try:
+        info = get_feature_extraction_info()
+        
+        return jsonify({
+            'status': 'success',
+            'feature_extraction': info
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting feature extraction info: {e}", exc_info=True)
+        return create_error_response(
+            'FEATURE_INFO_ERROR',
+            'Failed to get feature extraction information',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/info', methods=['GET'])
+def get_clip_info():
+    """
+    Get CLIP model information and status.
+    
+    Returns:
+    - 200: Success with CLIP model info
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import get_model_info, is_clip_available
+        
+        if not is_clip_available():
+            return jsonify({
+                'status': 'unavailable',
+                'message': 'CLIP is not available. PyTorch or sentence-transformers not installed.',
+                'suggestion': 'Install dependencies: pip install torch sentence-transformers'
+            }), 200
+        
+        info = get_model_info()
+        
+        return jsonify({
+            'status': 'success',
+            'clip_info': info
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting CLIP info: {e}", exc_info=True)
+        return create_error_response(
+            'CLIP_INFO_ERROR',
+            'Failed to get CLIP information',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/cache/clear', methods=['POST'])
+def clear_clip_cache():
+    """
+    Clear CLIP model cache.
+    
+    JSON body (optional):
+    - keep_config: Keep configuration file (default: true)
+    
+    Returns:
+    - 200: Success with cache clear info
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import clear_model_cache
+        
+        data = request.get_json() or {}
+        keep_config = data.get('keep_config', True)
+        
+        result = clear_model_cache(keep_config=keep_config)
+        
+        return jsonify({
+            'status': 'success',
+            'result': result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error clearing CLIP cache: {e}", exc_info=True)
+        return create_error_response(
+            'CACHE_CLEAR_ERROR',
+            'Failed to clear CLIP cache',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/cache/size', methods=['GET'])
+def get_clip_cache_size():
+    """
+    Get CLIP cache size information.
+    
+    Returns:
+    - 200: Success with cache size info
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import get_cache_size
+        
+        size_info = get_cache_size()
+        
+        return jsonify({
+            'status': 'success',
+            'cache_size': size_info
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting cache size: {e}", exc_info=True)
+        return create_error_response(
+            'CACHE_SIZE_ERROR',
+            'Failed to get cache size',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/model/set', methods=['POST'])
+def set_clip_model():
+    """
+    Set preferred CLIP model.
+    
+    JSON body:
+    - model_name: CLIP model name (required)
+    
+    Returns:
+    - 200: Success
+    - 400: Invalid model name
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import set_model_preference, AVAILABLE_MODELS
+        
+        data = request.get_json()
+        
+        if not data or 'model_name' not in data:
+            return create_error_response(
+                'MISSING_MODEL_NAME',
+                'model_name is required',
+                'Include model_name in request body',
+                status_code=400
+            )
+        
+        model_name = data['model_name']
+        
+        if model_name not in AVAILABLE_MODELS:
+            return create_error_response(
+                'INVALID_MODEL_NAME',
+                f'Invalid model name: {model_name}',
+                f'Available models: {", ".join(AVAILABLE_MODELS.keys())}',
+                status_code=400
+            )
+        
+        result = set_model_preference(model_name)
+        
+        return jsonify({
+            'status': 'success',
+            'result': result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error setting CLIP model: {e}", exc_info=True)
+        return create_error_response(
+            'MODEL_SET_ERROR',
+            'Failed to set CLIP model',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/config', methods=['GET'])
+def get_clip_config():
+    """
+    Get CLIP configuration.
+    
+    Returns:
+    - 200: Success with config
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import load_clip_config
+        
+        config = load_clip_config()
+        
+        return jsonify({
+            'status': 'success',
+            'config': config
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting CLIP config: {e}", exc_info=True)
+        return create_error_response(
+            'CONFIG_ERROR',
+            'Failed to get CLIP configuration',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/config', methods=['POST'])
+def update_clip_config():
+    """
+    Update CLIP configuration.
+    
+    JSON body:
+    - use_clip: Enable/disable CLIP (optional)
+    - fallback_to_legacy: Enable/disable fallback to legacy features (optional)
+    
+    Returns:
+    - 200: Success
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import enable_clip, set_fallback_to_legacy, load_clip_config
+        
+        data = request.get_json() or {}
+        
+        results = []
+        
+        if 'use_clip' in data:
+            result = enable_clip(data['use_clip'])
+            results.append(result)
+        
+        if 'fallback_to_legacy' in data:
+            result = set_fallback_to_legacy(data['fallback_to_legacy'])
+            results.append(result)
+        
+        # Get updated config
+        config = load_clip_config()
+        
+        return jsonify({
+            'status': 'success',
+            'config': config,
+            'updates': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating CLIP config: {e}", exc_info=True)
+        return create_error_response(
+            'CONFIG_UPDATE_ERROR',
+            'Failed to update CLIP configuration',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/clip/download-instructions', methods=['GET'])
+def get_clip_download_instructions():
+    """
+    Get manual download instructions for CLIP model.
+    
+    Query parameters:
+    - model_name: CLIP model name (optional, default: clip-ViT-B-32)
+    
+    Returns:
+    - 200: Success with instructions
+    - 500: Server error
+    """
+    try:
+        from image_processing_clip import get_manual_download_instructions
+        
+        model_name = request.args.get('model_name', 'clip-ViT-B-32')
+        
+        instructions = get_manual_download_instructions(model_name)
+        
+        return jsonify({
+            'status': 'success',
+            'instructions': instructions
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting download instructions: {e}", exc_info=True)
+        return create_error_response(
+            'INSTRUCTIONS_ERROR',
+            'Failed to get download instructions',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=True)

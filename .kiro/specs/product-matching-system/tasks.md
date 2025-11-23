@@ -196,102 +196,399 @@
     - Mobile-friendly interface
   - _Requirements: New feature - improves usability for Requirements 1, 6, 10_
 
-  - **JSON Metadata Support:**
-    - Extend CSV/JSON upload to include optional price history data per product
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+- [ ] 27. Implement flexible metadata linking system in CSV Builder
+  - **Goal:** Support different business data organization methods - adapt to their system, not force them into ours
+  - **Core Problem:** Businesses store product data differently (SKU in filename, folder structure, separate database, etc.)
+  - **Solution:** Multiple linking strategies with auto-detection and preview
+  
+  - **Linking Strategies:**
+    - **Strategy 1: Filename = SKU** (e.g., PM-001.jpg → SKU: PM-001)
+      - Remove file extension, use as SKU
+      - Match against imported product data
+    - **Strategy 2: Filename contains SKU** (e.g., photo_PM-001_front.jpg → SKU: PM-001)
+      - Regex pattern matching: `[A-Z]+-\d+`, `\d{4,}`, custom patterns
+      - Extract SKU from anywhere in filename
+    - **Strategy 3: Folder name = SKU** (e.g., /PM-001/image.jpg → SKU: PM-001)
+      - Use parent folder name as SKU
+      - Useful for multi-image products
+    - **Strategy 4: Fuzzy name matching** (e.g., blue-plate.jpg → "Blue Ceramic Plate")
+      - Match image filename to product name (case-insensitive, ignore special chars)
+      - Less reliable but useful when no SKU system exists
+    - **Strategy 5: Manual linking** (fallback for unmatched products)
+      - Side-by-side UI: image preview + product list
+      - Click/drag to link
+      - Keyboard shortcuts for speed
+  
+  - **Workflow:**
+    - **Step 1:** User uploads images (filenames + categories auto-detected)
+    - **Step 2:** User imports existing product data (CSV/Excel with SKU, name, price, etc.)
+    - **Step 3:** System analyzes and suggests best linking method
+      - Shows preview: "95/100 products matched using 'Filename = SKU'"
+      - User can try different strategies
+    - **Step 4:** User reviews and applies linking
+    - **Step 5:** Manual linking UI for unmatched products
+    - **Step 6:** Export final CSV with all metadata linked
+  
+  - **Import Product Data Options:**
+    - Upload CSV/Excel file with existing product data
+    - Paste from clipboard (from ERP, database export, etc.)
+    - Enter manually in CSV Builder (current method)
+  
+  - **UI Components:**
+    - Linking strategy selector with match count preview
+    - Visual preview of matches before applying
+    - Unmatched products list with manual linking interface
+    - Progress indicator: "Linked: 95/100 ✓ | Unlinked: 5 ⚠️"
+  
+  - **Smart Features:**
+    - Auto-detect best strategy based on match count
+    - Learn from user's manual links and suggest patterns
+    - Validate: warn if duplicate SKUs or missing required fields
+    - Undo/redo for linking operations
+  
+  - _Requirements: Improves Requirements 1, 6, 10 - makes system work with any business data structure_
+
+- [ ] 27.1. Add Excel workflow to CSV Builder (Export → Edit → Import)
+  - **Goal:** Let users work in Excel for bulk metadata entry (faster for large datasets)
+  
+  - **Export Template Feature:**
+    - After uploading images, add "Export Template CSV" button
+    - Generates CSV with: filename, category (auto-detected), empty columns for sku, name, price, price_history, performance_history
+    - Downloads as `product-template.csv`
+    - Shows instructions: "Fill in Excel and re-import when done"
+  
+  - **Import Completed CSV Feature:**
+    - Add "Import Completed CSV" button
+    - User uploads CSV with filled metadata
+    - System matches by filename (exact match required)
+    - Updates products with imported data
+    - Shows results: "Imported metadata for 95/100 products ✓ | 5 not found ⚠️"
+    - Validates data: SKU format, price is number, dates are valid, etc.
+  
+
+  - **Excel Workflow Benefits:**
+    - Users can copy/paste from their existing systems (ERP, database)
+    - Use Excel formulas (e.g., auto-increment SKUs, calculate prices)
+    - Sort, filter, find/replace for bulk operations
+    - Work offline, share with team for collaboration
+    - Handle 1000s of products easily
+  
+  - **Hybrid Workflow Support:**
+    - User can export template, merge with existing data in Excel (VLOOKUP), then import
+    - Or import existing data first, then export to add missing fields
+    - Flexible to match user's preferred workflow
+  
+  - **Error Handling:**
+    - Clear error messages for mismatched filenames
+    - Validation warnings for invalid data (negative prices, bad dates, etc.)
+    - Option to skip invalid rows or fix in browser
+    - Preview changes before applying
+  
+  - _Requirements: Improves Requirements 1, 6, 10 - enables Excel power users and large datasets_
+
+- [ ] 27.2. Update UI tooltips, help text, and CSV format documentation
+  - **Goal:** Guide users through new linking and Excel workflows with clear instructions
+  
+  - **CSV Builder Updates:**
+    - Add help section explaining linking strategies with examples
+    - Tooltip on "Import Product Data": "Upload CSV/Excel with your existing product data (SKU, name, price). We'll match it to your images."
+    - Tooltip on "Export Template": "Download CSV with filenames. Fill in Excel and re-import."
+    - Add visual examples of each linking strategy (screenshots or diagrams)
+    - Update progress steps to include linking step
+  
+  - **Main App CSV Format Popup Updates:**
+    - Update CSV format help modal to explain new flexible linking
+    - Add section: "Don't have a CSV? Use CSV Builder to create one!"
+    - Show examples of different CSV formats that work (with/without SKU, different column orders)
+    - Explain that filename is the only required field for linking
+  
+  - **Main App Upload Section:**
+    - Add tooltip: "CSV is optional. Upload images only for simple mode, or use CSV Builder to add metadata."
+    - Link to CSV Builder from main app: "Need help creating a CSV? → CSV Builder"
+    - Update advanced mode explanation to mention linking options
+  
+  - **CSV Builder Step-by-Step Guidance:**
+    - Step 1 (Upload): "Upload your product images. We'll extract filenames and detect categories from folders."
+    - Step 2 (Link): "Import your product data or export template to fill in Excel. We'll help you link images to metadata."
+    - Step 3 (Review): "Review linked products and fix any unmatched items."
+    - Step 4 (Export): "Export final CSV for use in main app."
+  
+  - **Help Button Content:**
+    - Add FAQ: "What if my images don't have SKUs in the filename?"
+    - Add FAQ: "Can I use my existing product database?"
+    - Add FAQ: "What's the fastest way to add metadata for 1000 products?"
+    - Add examples of common business scenarios and recommended workflows
+  
+  - _Requirements: Improves Requirements 9.4, 10.3 - better user guidance and onboarding_
+
+- [ ] 28. Implement catalog management and database cleanup
+  - **Goal:** Let users view, manage, and clear their persistent catalog to prevent database bloat and RAM issues
+  - **Problem:** Database grows indefinitely, users don't know data persists, no way to clear old products
+  
+  - **Catalog Overview UI:**
+    - Show catalog statistics in main app:
+      - Total products: "1,247 historical products | 53 new products"
+      - Database size: "156 MB" (calculate from file size)
+      - Last updated: "2024-01-15 14:30"
+      - Breakdown by category: "Plates: 450 | Placemats: 320 | ..."
+    - Add "View Catalog" button to browse all products
+    - Add "Refresh" button to reload catalog stats
+  
+  - **Catalog Loading Options:**
+    - Radio buttons in Step 1 (Historical Catalog):
+      - ○ Use existing catalog (1,247 products) - Skip upload, use saved data
+      - ○ Add to existing catalog - Upload new products, merge with existing
+      - ○ Replace catalog - Clear all and upload fresh
+    - Default to "Use existing" if catalog exists
+    - Show warning before replacing: "This will delete 1,247 products. Continue?"
+  
+  - **Database Cleanup Features:**
+    - **Clear All Products:** Delete everything, start fresh
+    - **Clear Historical Only:** Keep new products, delete historical
+    - **Clear New Only:** Keep historical, delete new products
+    - **Clear Matches Only:** Delete match results, keep products and features
+    - **Clear by Category:** Select categories to delete
+    - **Clear by Date:** Delete products older than X days
+    - **Vacuum Database:** Reclaim disk space after deletions (SQLite VACUUM command)
+  
+  - **Cleanup UI (Settings/Tools Menu):**
+    ```
+    Database Management
+    ├─ Current Size: 156 MB
+    ├─ Products: 1,247 historical | 53 new
+    ├─ Matches: 2,450 stored
+    └─ Actions:
+       [Clear All Products]
+       [Clear Historical Only]
+       [Clear New Only]
+       [Clear Matches]
+       [Clear by Categor
+       [Vacuum Database]
+       [Export Backup]
+    ```
+  
+  - **Safety Features:**
+    - Confirmation dialogs before any deletion
+    - Show what will be deleted: "This will delete 450 products in 'Plates' c   - Ext
+    - Option to export backup before clearing
+    - Undo not possible - make this clear to users
+    - Disable cleanup during active matching operations
+  
+  - **Automatic Maintenance:**
+    - Warn when database exceeds 500 MB: "Database is large (523 MB). Consider cleaning up old products."
+    - Warn when RAM usage is high during matching: "Large catalog detected. Consider filtering by category."
+    - Option to auto-delete products older than X days (user configurable)
+    - Option to auto-vacuum database weekly
+  
+  - **Performance Optimizations:**
+    - Don't load all products into RAM at once
+    - Use pagination for catalog view (show 100 at a time)
+    - Load features only for current category during matching
+    - Add database indexes for faster queries (already done in Task 2)
+    - Consider archiving old products to separate database file
+  
+  - **Export/Backup Features:**
+    - Export catalog to CSV (all products + metend CSV/JSON upload to include optional price history data per product
     - Schema: `{ "sku": "ABC123", "prices": [{"date": "2024-01-15", "price": 29.99}, ...] }`
     - Support up to 12 months of historical price data per product
-  - **Data Storage:**
-    - Create new `price_history` table with columns: product_id, date, price, currency
-    - Link price records to products via foreign key relationship
-    - Add indexes on product_id and date for efficient querying
-  - **Smart Linking:**
-    - When matching products, automatically link price history from matched historical products
-    - Display price trends for matched items in comparison view
-    - Calculate price statistics: min, max, average, current trend (up/down/stable)
-  - **UI Display:**
-    - Add price history chart to product detail/comparison view
-    - Show sparkline charts in match results for quick price trend visualization
-    - Display price statistics alongside similarity scores
-    - Add filter to show only products with price history data
-  - **Export Enhancement:**
-    - Include price history data in CSV exports
-    - Add option to export price trends summary (avg, min, max per product)
-  - _Requirements: New feature - extends Requirements 1, 4, 7_
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-- [ ] 25. Implement cross-platform GPU acceleration using OpenCL (via OpenCV UMat)
-  - **Why OpenCL:** Cross-platform solution that works on Windows (NVIDIA/AMD/Intel), macOS (Apple Silicon M1-M5), and Linux without separate builds or platform-specific code
-  - **OpenCV UMat Implementation:**
-    - Use `cv2.UMat` instead of regular numpy arrays for automatic GPU acceleration
-    - OpenCV automatically uses OpenCL backend when available
-    - No additional dependencies needed - OpenCV already includes OpenCL support
-    - Graceful automatic fallback to CPU if no GPU/OpenCL available
-  - **Image Preprocessing on GPU:**
-    - Convert images to UMat: `img_gpu = cv2.UMat(img)`
-    - Use standard OpenCV functions - they automatically run on GPU with UMat
-    - Accelerate resize, color conversion (BGR to HSV), and normalization operations
-    - Implement batch preprocessing for multiple images
-  - **Feature Extraction Acceleration:**
-    - Move histogram computation to GPU using `cv2.calcHist()` with UMat inputs
-    - Color features: HSV histogram computation on GPU
-    - Texture features: LBP computation can use UMat for image operations
-    - Shape features: Contour detection and moment calculation with UMat
-  - **Similarity Computation:**
-    - Keep similarity calculations on CPU (numpy) - they're already fast for small vectors
-    - GPU overhead not worth it for simple distance calculations
-    - Focus GPU usage on image-heavy operations only
-  - **Detection and Configuration:**
-    - Detect OpenCL availability at startup: `cv2.ocl.haveOpenCL()`
-    - Add configuration option to enable/disable GPU acceleration in settings
-    - Log GPU status on startup: "OpenCL GPU acceleration: enabled/disabled"
-  - **Performance Monitoring:**
-    - Log processing times for GPU vs CPU operations
-    - Display GPU status in UI: "GPU Acceleration: Active (OpenCL)" or "CPU Mode"
-    - Add optional performance metrics to help menu
-  - **Fallback Handling:**
-    - UMat automatically falls back to CPU if OpenCL fails - no manual handling needed
-    - If OpenCL initialization fails, log warning and continue with CPU
-    - Provide option to force CPU mode if GPU causes issues
-  - **Testing:**
-    - Test on Windows with NVIDIA/AMD/Intel GPUs
-    - Test on macOS with Apple Silicon (M1/M2/M3/M4/M5)
-    - Test fallback behavior when no GPU available
-    - Verify performance improvements (expect 2-3x speedup on image operations)
-    - Ensure ARM compatibility is maintained
-  - **Code Migration Pattern:**
+  - **Data Stod auto-backups (optional)
+  
+  - **Database File Mrage:**
+    - Create newase file location: "C:\Users\...\ProductMatcher\product_matching.db"
+    - Button to open folder in file explorer
+    - Button to copy database path to clipboard
+    - Show uploads folder size: "Images: 2.3 GB in 1,247 files"
+    - Option to clear uploaded images (keep metadata only)
+  
+  - **Implementation Details:**
     ```python
-    # Before (CPU only):
-    img = cv2.imread(path)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # Database size
+    def get_database_size():
+        return os.path.getsize(DB_PATH) / (1024 * 1024)  # MB
     
-    # After (GPU accelerated):
-    img = cv2.imread(path)
-    img_gpu = cv2.UMat(img)  # Move to GPU
-    hsv_gpu = cv2.cvtColor(img_gpu, cv2.COLOR_BGR2HSV)  # Runs on GPU
-    hsv = hsv_gpu.get()  # Get result back to CPU if needed
+    # Clear products
+    def clear_products(filter_type='all', category=None, older_than_days=None):
+        # Delete from products, features, matches tables
+        # Delete associated image files
+        # Return count of deleted items
+    
+    # Vacuum database
+    def vacuum_database():
+        conn.execute('VACUUM')  # Reclaim space
+    
+    # Category-based loading (prevent RAM issues)
+    def get_features_by_category(category, limit=1000):
+        # Only load subset of products
+        # Use for matching to prevent loading 10K products into RAM
     ```
-  - _Note: This approach is ARM-compatible and works across all platforms without breaking macOS builds_
+  
+  - **UI Placement:**
+    - Catalog stats: Top of Step 1 (Historical Catalog section)
+    - Cleanup options: Settings menu or Tools menu
+    - Quick actions: "Clear All" button in catalog view
+    - Warnings: Toast notifications when database is large
+  
+  - _Requirements: Improves Requirements 8.4, 9.1, 10.3 - prevents database bloat, better resource management_
+
+- [ ] 28.1. Add catalog browser and product management UI
+  - **Goal:** Let users view and manage individual products in their catalog
+  
+  - **Catalog Browser:**
+    - Grid view of all products with thumbnails
+    - Filter by: category, date added, has features, has matches
+    - Sort by: date, name, SKU, category
+    - Search by: filename, SKU, name
+    - Pagination: 50 products per page
+  
+  - **Product Actions:**
+    - View details: metadata, features status, match history
+    - Edit metadata: update SKU, name, category, price
+    - Delete product: remove from database + delete image file
+    - Re-extract features: if feature extraction failed
+    - Bulk actions: select multiple products, delete/edit in bulk
+  
+  - **Product Details Modal:**
+    ```
+    Product Details
+    ├─ Image preview
+    ├─ Filename: IMG_1234.jpg
+    ├─ Category: Plates
+    ├─ SKU: PLT-001
+    ├─ Name: Blue Ceramic Plate
+    ├─ Price: $29.99
+    ├─ Features: ✓ Extracted (CLIP embedding)
+    ├─ Matches: 15 matches found
+    ├─ Created: 2024-01-15 14:30
+    └─ Actions: [Edit] [Delete] [Re-extract Features]
+    ```
+  
+  - **Bulk Operations:**
+    - Select products with checkboxes
+    - Bulk delete: "Delete 25 selected products"
+    - Bulk edit category: "Change category for 25 products"
+    - Bulk re-extract: "Re-extract features for 25 products"
+  
+  - _Requirements: Improves Requirements 10.1, 10.2 - better catalog visibility and control_
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+- [ ] 25. Cross-platform GPU acceleration for CLIP (COMPLETED)
+
+  - **Status:** ✅ CLIP GPU acceleration fully implemented and working
+  - **Implemented Features:**
+    - **PyTorch GPU Auto-Detection:** Works across CUDA (NVIDIA), ROCm (AMD), and MPS (Apple Silicon)
+    - **AMD ROCm Support:** Detects AMD GPUs via `torch.cuda.is_available()` and distinguishes from NVIDIA
+    - **Device Detection:** `detect_device()` function with priority: CUDA/ROCm > MPS > CPU
+    - **Batch Processing:** Configurable batch size (default 32) for maximum GPU efficiency
+    - **Automatic Mixed Precision (AMP):** Faster GPU inference with `torch.amp.autocast()`
+    - **GPU Memory Management:** VRAM monitoring, periodic cache clearing, OOM prevention
+    - **Graceful CPU Fallback:** Automatic fallback if GPU unavailable or fails
+    - **Performance:** 10-50x speedup on GPU vs CPU (0.01-0.05s vs 0.5-1.0s per image)
+  - **Implementation Details:**
+    - File: `backend/image_processing_clip.py`
+    - Functions: `detect_device()`, `get_device_info()`, `extract_clip_embedding()`, `batch_extract_clip_embeddings()`
+    - GPU status displayed in UI: "⚡ AMD GPU Active (ROCm)" / "⚡ NVIDIA GPU Active (CUDA)" / "⚡ Apple Silicon Active (MPS)" / "💻 CPU Mode"
+    - Model caching: `~/.cache/clip-models/` (~350MB one-time download)
+    - Config file: `~/.cache/clip-models/config.json`
+  - _Note: This implementation is production-ready and works across all platforms_
+
+- [ ] 25.1. GPU acceleration performance monitoring and metrics
+  - Log processing times for GPU vs CPU operations
+  - Display GPU status in UI: "GPU Acceleration: Active (CUDA/ROCm/MPS/OpenCL)" or "CPU Mode"
+  - Add optional performance metrics to help menu
+  - Track and display: images/sec, embeddings extracted/sec
+  - Show performance comparison: with/without GPU
+  - Log which backend is being used: PyTorch GPU (CUDA/ROCm/MPS), OpenCL, or CPU
+  - Detect and display specific GPU type: "NVIDIA GPU (CUDA)", "AMD GPU (ROCm)", "Apple Silicon (MPS)", "Intel/Other (OpenCL)"
+
+- [ ] 25.2. GPU acceleration testing and validation
+  - Test on Windows with NVIDIA GPUs (CUDA)
+  - Test on Windows with AMD GPUs (ROCm via PyTorch ROCm build)
+  - Test on Windows with Intel GPUs (OpenCL fallback)
+  - Test on macOS with Apple Silicon (M1/M2/M3/M4/M5 via MPS)
+  - Test fallback behavior when no GPU available
+  - Verify performance improvements (expect 10-50x speedup with CLIP on GPU)
+  - Test with large folders (100, 500, 1000, 5000 images)
+  - Ensure ARM compatibility is maintained
+  - Verify Mode 2 (Metadata) unaffected by GPU settings
+  - Test CLIP batch processing with different batch sizes (8, 16, 32, 64)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  - **LemonSqueezy Setup** (lemonsqueezy.com):
+    - Create account and store
+    - Create product: "Product Matcher Pro" - $49 one-time payment
+    - Enable "Generate unique license keys" feature
+    - Get checkout link for GitHub Pages pricing page
+  - **License Key Validation in App**:
+    - Add "Enter License Key" dialog in Help menu
+    - Implement offline validation (check format: XXXX-XXXX-XXXX-XXXX)
+    - Store validated key in config file (AppData)
+    - Free tier: 50 products limit, Pro tier: unlimited
+    - Show upgrade prompt when hitting free tier limit
+    - Display license status in app (Free/Pro)
+
+
+- [ ] 22.5. Set up distribution and analytics
+  - GitHub releases for version management
+  - Auto-update mechanism in app (optional)
+  - Usage analytics - privacy-respecting, opt-in (optional)
+  - Crash reporting (optional)
+  - User feedback system (optional)
 
 
 - [ ] 23. Marketing and launch
@@ -301,6 +598,7 @@
   - Reach out to relevant communities (e-commerce, retail)
   - SEO optimization for website
   - Social media presence (Twitter, LinkedIn)
+
 
 
 - [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
@@ -315,15 +613,29 @@
   - Run with `pytest backend/tests/test_e2e.py -v` - all tests must pass before packaging
   - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
 
-- [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
+
+  - [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
   - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
   - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --name "Product Matcher"`
   - Create build.bat: `pyinstaller --clean product-matcher.spec`
   - Test packaged exe on clean Windows system: verify launches, creates AppData folders, full workflow works
   - Package: zip exe + README.txt + sample.csv template
+  - It should be a 1 click solution for everybody so that al lfeatures including clip and gpu for amd nvidia and arm chips accleration and all dependicies/requirements are instllaled and work correclty.
+  - **Pre-Packaging Testing (CRITICAL):**
+    - Test `python setup_gpu.py` on clean Windows system (no Python packages installed)
+    - Verify PyTorch auto-installation works for NVIDIA GPUs (CUDA detection + install)
+    - Verify PyTorch auto-installation works for AMD GPUs (ROCm detection + HIP SDK guidance)
+    - Verify all dependencies from `requirements.txt` and `backend/requirements.txt` install correctly
+    - Test GPU detection: NVIDIA (nvidia-smi check), AMD (ROCm DLL check), CPU fallback
+    - Test CLIP model download and caching (first run downloads ~350MB model)
+    - Verify `python check_gpu.py` shows correct GPU status after setup
+    - Test full workflow after setup: upload images → extract CLIP features → match → verify results
+    - Test on systems with/without GPU to ensure graceful CPU fallback
+    - Document any manual steps required (e.g., AMD HIP SDK installation)
   - _Requirements: 9.2_
 
 - [ ] 18. Package macOS application for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
+  - It should be a 1 click solution for everybody so that al lfeatures including clip and gpu for amd nvidia and arm chips accleration and all dependicies/requirements are instllaled and work correclty.
   - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
   - **ARM (Apple Silicon M1-M5) Build:**
     - Create product-matcher-mac-arm64.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher" --target-arch arm64`
@@ -345,36 +657,23 @@
   - Package: zip .app + README.txt + sample.csv template for each architecture
   - Update download.html to detect architecture and provide correct download link
   - Note: Must build on macOS machine (PyInstaller can't cross-compile). ARM build requires Apple Silicon Mac, Intel build can be done on either with Rosetta 2
+  - **Pre-Packaging Testing (CRITICAL):**
+    - Test `python setup_gpu.py` on clean macOS system (no Python packages installed)
+    - **Apple Silicon (M1/M2/M3/M4/M5) Testing:**
+      - Verify PyTorch auto-installation with MPS (Metal Performance Shaders) support
+      - Verify MPS GPU detection: `torch.backends.mps.is_available()` returns True
+      - Test CLIP model runs on MPS backend (should be automatic, no config needed)
+      - Verify all dependencies install correctly (ARM-native versions)
+      - Test performance: CLIP should be 5-10x faster than CPU on Apple Silicon
+    - **Intel Mac Testing:**
+      - Verify PyTorch CPU installation (no GPU acceleration on Intel Macs)
+      - Verify all dependencies install correctly (x86_64 versions)
+      - Test Rosetta 2 compatibility if building ARM binary on Intel Mac
+    - **Universal Testing:**
+      - Test CLIP model download and caching (~350MB, should work on both architectures)
+      - Verify `python check_gpu.py` shows correct status (MPS for Apple Silicon, CPU for Intel)
+      - Test full workflow: upload images → extract CLIP features → match → verify results
+      - Verify database paths work correctly: `~/Library/Application Support/ProductMatcher/`
+      - Test app launches without terminal/console window
+    - Document any manual steps required (should be none for macOS - everything auto-installs)
   - _Requirements: 9.2_
-
-- [ ] 20. Add advanced features to ui
-  - Adjustable similarity weights (color, shape, texture sliders)
-  - Batch export with images (not just CSV)
-  - Duplicate detection report with rank filters based on performance price history and other thigns that would be usefule for determining what new products would be good to implement.
-  - Search/filter results
-  - Save/load matching sessions
-  - Undo/redo functionality
-  - all should be performant and gpu accelerated if necessary taking into account our gpu acceleration plan in task 25 i think on line 236
-  - continue to make the ui for like the website its still to0 different even after changes the website looks way better than the ui currently.
-
-- [ ] 22. Implement license key system with LemonSqueezy
-  - **LemonSqueezy Setup** (lemonsqueezy.com):
-    - Create account and store
-    - Create product: "Product Matcher Pro" - $49 one-time payment
-    - Enable "Generate unique license keys" feature
-    - Get checkout link for GitHub Pages pricing page
-  - **License Key Validation in App**:
-    - Add "Enter License Key" dialog in Help menu
-    - Implement offline validation (check format: XXXX-XXXX-XXXX-XXXX)
-    - Store validated key in config file (AppData)
-    - Free tier: 50 products limit, Pro tier: unlimited
-    - Show upgrade prompt when hitting free tier limit
-    - Display license status in app (Free/Pro)
-
-
-- [ ] 22.5. Set up distribution and analytics
-  - GitHub releases for version management
-  - Auto-update mechanism in app (optional)
-  - Usage analytics - privacy-respecting, opt-in (optional)
-  - Crash reporting (optional)
-  - User feedback system (optional)
