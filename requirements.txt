@@ -1,31 +1,52 @@
-# Product Matching System - Main Requirements
+# Product Matching System - Complete Requirements
+#
+# PYTHON VERSION: 3.12 (Required for all platforms)
+# This ensures compatibility with AMD ROCm and simplifies deployment
 #
 # QUICK START:
-# 1. Install base requirements: pip install -r requirements.txt
-# 2. For GPU acceleration: python gpu/setup_gpu.py
+# 1. Install Python 3.12 from https://www.python.org/downloads/
+# 2. Install requirements: pip install -r requirements.txt
+# 3. For GPU acceleration: python gpu/setup_gpu.py (optional but recommended)
 #
-# GPU USERS - IMPORTANT:
-# - AMD ROCm (Windows): Requires Python 3.12
-#   Run: py -3.12 gpu/setup_gpu.py
-# - NVIDIA/Apple Silicon: Any Python 3.8+
-#   Run: python gpu/setup_gpu.py
+# GPU SUPPORT (Automatic Detection):
+# - AMD ROCm (Windows): Requires Python 3.12 ✓
+# - NVIDIA CUDA: Works with Python 3.12 ✓
+# - Apple Silicon (macOS): Works with Python 3.12 ✓
+# - CPU fallback: Works with Python 3.12 ✓
 #
-# This installs CPU-only version. For GPU, run setup_gpu.py after this.
+# Using Python 3.12 ensures maximum compatibility across all GPU types
 
-# Web Framework
+# Web Framework (Required for Flask app)
 Flask==3.0.0
-flask-cors==4.0.0
+Flask-CORS==4.0.0
+Werkzeug>=3.0.0
 
-# Core Libraries
-numpy==1.26.2
-opencv-python==4.8.1.78
-Pillow==10.1.0
-scikit-image==0.22.0
+# Core Scientific Computing
+numpy>=1.26.2
 scipy>=1.11.3
+
+# Image Processing
+opencv-python>=4.8.1.78
+scikit-image>=0.22.0
+Pillow>=10.1.0
 
 # Desktop Wrapper (optional - for standalone app)
 pywebview==4.4.1
 
-# Deep Learning (install via gpu/setup_gpu.py for GPU support)
+# Deep Learning (GPU users: install via gpu/setup_gpu.py for optimal GPU support)
+# PyTorch - Version depends on GPU:
+#   - AMD ROCm (Windows): 2.8.0 (Python 3.12 only)
+#   - NVIDIA CUDA: 2.x with CUDA 12.4
+#   - Apple Silicon (macOS): 2.x with MPS
+#   - CPU: 2.x CPU-only
 torch>=2.0.0
+
+# CLIP Model for Visual Matching
+# CRITICAL: sentence-transformers MUST BE < 3.0.0 for AMD ROCm compatibility
+# Version 3.0+ requires torch.distributed.is_initialized() which is missing in ROCm Windows builds
+# DO NOT UPGRADE to 3.0+ or AMD GPU support will break!
 sentence-transformers>=2.7.0,<3.0.0
+
+# Testing (optional - for development)
+pytest>=7.0.0
+pytest-timeout>=2.1.0

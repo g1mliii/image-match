@@ -92,19 +92,21 @@ def install_dependencies():
     print("Installing Python Dependencies")
     print("="*80)
     
-    requirements_files = [
-        "../requirements.txt",
-        "../backend/requirements.txt"
-    ]
+    # Use consolidated requirements.txt in project root
+    req_file = "../requirements.txt"
     
-    for req_file in requirements_files:
-        if os.path.exists(req_file):
-            print(f"\n[INFO] Installing from {req_file}...")
-            success, stdout, stderr = run_cmd(f"pip install -r {req_file}")
-            if success:
-                print(f"[OK] Installed dependencies from {req_file}")
-            else:
-                print(f"[WARNING] Some dependencies from {req_file} failed: {stderr}")
+    if os.path.exists(req_file):
+        print(f"\n[INFO] Installing from {req_file}...")
+        success, stdout, stderr = run_cmd(f"pip install -r {req_file}")
+        if success:
+            print(f"[OK] Installed dependencies from {req_file}")
+        else:
+            print(f"[WARNING] Some dependencies failed: {stderr}")
+            print(f"[INFO] This is normal - PyTorch will be installed separately for GPU support")
+    else:
+        print(f"[ERROR] Requirements file not found: {req_file}")
+        print(f"[INFO] Make sure you're running this from the gpu/ directory")
+        return False
     
     return True
 
@@ -129,29 +131,39 @@ def install_pytorch(gpu_type):
             cmd = "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2"
         else:  # Windows
             # AMD ROCm PyTorch for Windows requires Python 3.12
+            # NOTE: This check is redundant (main() already checked) but kept as safety net
             if sys.version_info.minor == 12:
-                # Official AMD ROCm wheels for Windows
+                # Official AMD ROCm wheels for Windows (Python 3.12 only)
                 print("\n[INFO] Installing AMD ROCm PyTorch for Windows (Python 3.12)")
                 print("[INFO] This may take several minutes (~780MB download)...")
-                # Install PyTorch with ROCm
+                
+                # Install PyTorch with ROCm 6.4.4
                 success1, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torch-2.8.0a0%2Bgitfc14c65-cp312-cp312-win_amd64.whl")
                 success2, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchvision-0.24.0a0%2Bc85f008-cp312-cp312-win_amd64.whl")
                 success3, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchaudio-2.6.0a0%2B1a8f621-cp312-cp312-win_amd64.whl")
                 
                 if success1 and success2 and success3:
                     print("[OK] AMD ROCm PyTorch installed")
-                    # Install compatible sentence-transformers version
-                    print("\n[INFO] Installing compatible sentence-transformers...")
-                    run_cmd('pip install "sentence-transformers<3.0.0"')
+                    
+                    # CRITICAL: Install sentence-transformers < 3.0.0 for AMD ROCm compatibility
+                    print("\n[INFO] Installing sentence-transformers < 3.0.0 (required for AMD ROCm)...")
+                    success_st, _, stderr_st = run_cmd('pip install "sentence-transformers>=2.7.0,<3.0.0"')
+                    
+                    if success_st:
+                        print("[OK] sentence-transformers < 3.0.0 installed")
+                    else:
+                        print(f"[WARNING] Failed to install sentence-transformers: {stderr_st}")
+                        print("[WARNING] AMD ROCm may not work correctly without sentence-transformers < 3.0.0")
+                    
                     return True
                 else:
                     print("[ERROR] Failed to install AMD ROCm PyTorch")
                     return False
             else:
-                # Python 3.13+ not supported by AMD ROCm yet - use CPU version
-                print(f"\n[WARNING] AMD ROCm PyTorch requires Python 3.12, but you have Python {sys.version_info.major}.{sys.version_info.minor}")
-                print("[INFO] Installing CPU version of PyTorch. GPU acceleration not available.")
-                print("[INFO] To use AMD GPU: Install Python 3.12 and run this script again.")
+                # This should never happen (main() already checked), but handle it anyway
+                print(f"\n[ERROR] AMD ROCm PyTorch requires Python 3.12, but you have Python {sys.version_info.major}.{sys.version_info.minor}")
+                print("[ERROR] This should have been caught earlier. Please report this bug.")
+                print("[INFO] Installing CPU version of PyTorch as fallback...")
                 cmd = "pip install torch torchvision torchaudio"
     elif gpu_type == 'apple':
         cmd = "pip install torch torchvision torchaudio"
@@ -320,37 +332,47 @@ else:
 
 
 def check_python_version():
-    """Check if Python version is compatible"""
+    """Check if Python version is 3.12 (required for all platforms)"""
     major = sys.version_info.major
     minor = sys.version_info.minor
     
     print(f"\nPython Version: {major}.{minor}.{sys.version_info.micro}")
+    print(f"Required Version: 3.12.x")
     
-    # Check if Python 3.12 is available for AMD GPU users
-    if platform.system() == "Windows":
-        gpu_type, _ = detect_gpu()
-        if gpu_type == 'amd' and minor != 12:
-            print(f"\n[WARNING] AMD ROCm requires Python 3.12, but you're using Python {major}.{minor}")
-            print("[INFO] Checking if Python 3.12 is installed...")
-            
-            # Check if py launcher can find Python 3.12
+    # Enforce Python 3.12 for all platforms
+    if minor != 12:
+        print(f"\n[ERROR] Python 3.12 is required, but you're using Python {major}.{minor}")
+        print("\n[WHY?] Python 3.12 ensures compatibility with:")
+        print("  • AMD ROCm GPU support (Windows)")
+        print("  • NVIDIA CUDA GPU support")
+        print("  • Apple Silicon MPS support")
+        print("  • Consistent behavior across all platforms")
+        
+        # Check if Python 3.12 is available
+        if platform.system() == "Windows":
+            print("\n[INFO] Checking if Python 3.12 is installed...")
             success, stdout, _ = run_cmd("py -3.12 --version")
             if success and "3.12" in stdout:
                 print("[OK] Python 3.12 is installed!")
-                print("\n[ACTION REQUIRED] Please run this script with Python 3.12:")
-                print("  py -3.12 setup_gpu.py")
-                print("\nOr to install dependencies for Python 3.12:")
+                print("\n[ACTION REQUIRED] Run this script with Python 3.12:")
+                print("  py -3.12 gpu/setup_gpu.py")
+                print("\nOr install dependencies with Python 3.12:")
                 print("  py -3.12 -m pip install -r requirements.txt")
-                print("  py -3.12 -m pip install -r backend/requirements.txt")
-                return False
             else:
                 print("[WARNING] Python 3.12 not found")
-                print("\n[ACTION REQUIRED] Install Python 3.12 for AMD GPU support:")
+                print("\n[ACTION REQUIRED] Install Python 3.12:")
                 print("  1. Download from: https://www.python.org/downloads/")
                 print("  2. Install Python 3.12.x")
-                print("  3. Run: py -3.12 setup_gpu.py")
-                return False
+                print("  3. Run: py -3.12 gpu/setup_gpu.py")
+        else:
+            print("\n[ACTION REQUIRED] Install Python 3.12:")
+            print("  1. Download from: https://www.python.org/downloads/")
+            print("  2. Install Python 3.12.x")
+            print("  3. Run this script again with Python 3.12")
+        
+        return False
     
+    print("[OK] Python 3.12 detected - compatible with all GPU types!")
     return True
 
 
