@@ -59,7 +59,6 @@ def test_database_indexes():
         return False
     else:
         print("\n[PASS] All performance indexes are present")
-        return True
 
 
 def test_category_filtering_query():
@@ -96,10 +95,8 @@ def test_category_filtering_query():
     
     if uses_index:
         print("\n[PASS] Query uses index for efficient filtering")
-        return True
     else:
         print("\n[INFO] Query plan doesn't explicitly show index usage (may still be optimized)")
-        return True  # Don't fail, as SQLite may optimize differently
 
 
 def test_lazy_loading_implementation():
@@ -133,10 +130,9 @@ def test_lazy_loading_implementation():
     
     if all_passed:
         print("\n[PASS] Lazy loading is properly implemented")
-        return True
     else:
         print("\n[FAIL] Lazy loading implementation incomplete")
-        return False
+        assert False, "Lazy loading implementation incomplete"
 
 
 def main():

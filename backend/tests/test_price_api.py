@@ -109,7 +109,6 @@ def test_price_api():
         print("✓ POST negative price returns 400")
         
         print("\n✅ All API tests passed!")
-        return True
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")

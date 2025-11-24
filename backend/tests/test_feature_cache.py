@@ -64,13 +64,14 @@ def test_feature_caching():
         assert 'color_features' in features1
         assert 'shape_features' in features1
         assert 'texture_features' in features1
-        assert len(features1['color_features']) == 256
-        assert len(features1['shape_features']) == 7
-        assert len(features1['texture_features']) == 256
+        # Now using CLIP embeddings (512 dims) - shape/texture are empty when using CLIP
+        assert len(features1['color_features']) == 512, "Should use CLIP embeddings (512 dims)"
+        assert len(features1['shape_features']) == 0, "Shape features empty when using CLIP"
+        assert len(features1['texture_features']) == 0, "Texture features empty when using CLIP"
         print("✓ Features extracted and cached successfully")
-        print(f"  - Color features: {len(features1['color_features'])} dimensions")
-        print(f"  - Shape features: {len(features1['shape_features'])} dimensions")
-        print(f"  - Texture features: {len(features1['texture_features'])} dimensions")
+        print(f"  - Color features (CLIP): {len(features1['color_features'])} dimensions")
+        print(f"  - Shape features: {len(features1['shape_features'])} dimensions (empty for CLIP)")
+        print(f"  - Texture features: {len(features1['texture_features'])} dimensions (empty for CLIP)")
         
         # Second extraction - should retrieve from cache
         features2, was_cached2 = extract_and_cache_features(product_id, test_img)
@@ -133,9 +134,10 @@ def test_batch_feature_extraction():
         for product_id, result in results.items():
             if result['success']:
                 features = result['features']
-                assert len(features['color_features']) == 256
-                assert len(features['shape_features']) == 7
-                assert len(features['texture_features']) == 256
+                # Now using CLIP embeddings (512 dims) - shape/texture are empty when using CLIP
+                assert len(features['color_features']) == 512, "Should use CLIP embeddings (512 dims)"
+                assert len(features['shape_features']) == 0, "Shape features empty when using CLIP"
+                assert len(features['texture_features']) == 0, "Texture features empty when using CLIP"
                 print(f"  - Product {product_id}: ✓")
             else:
                 print(f"  - Product {product_id}: ✗ {result['error']}")

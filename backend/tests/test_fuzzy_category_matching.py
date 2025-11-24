@@ -49,7 +49,6 @@ def test_levenshtein_distance():
     print("  [✓] Real-world examples work correctly")
     
     print("[PASS] Levenshtein distance works correctly")
-    return True
 
 
 def test_normalize_category():
@@ -80,7 +79,6 @@ def test_normalize_category():
     print("  [✓] Unknown variations handled")
     
     print("[PASS] Category normalization works correctly")
-    return True
 
 
 def test_fuzzy_match_category():
@@ -123,7 +121,6 @@ def test_fuzzy_match_category():
     print("  [✓] Empty inputs handled")
     
     print("[PASS] Fuzzy category matching works correctly")
-    return True
 
 
 def test_real_world_scenarios():
@@ -170,10 +167,9 @@ def test_real_world_scenarios():
     
     if failed == 0:
         print(f"\n[PASS] All {passed} real-world scenarios passed")
-        return True
     else:
         print(f"\n[FAIL] {failed}/{len(test_cases)} scenarios failed")
-        return False
+        assert False, f"{failed} test cases failed"
 
 
 def main():

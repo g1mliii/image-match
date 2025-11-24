@@ -5,6 +5,7 @@ Tests CRUD operations, feature storage/retrieval, and numpy serialization
 import os
 import sys
 import numpy as np
+import pytest
 
 # Add parent directory to path to import backend modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -40,6 +41,64 @@ def test_database_initialization():
     init_db()
     assert os.path.exists(DB_PATH), "Database file should exist"
     print("✓ Database initialized successfully")
+
+@pytest.fixture
+def product_id():
+    """Fixture that creates a test product and returns its ID"""
+    product_id = insert_product(
+        image_path="/path/to/image.jpg",
+        category="placemats",
+        product_name="Test Placemat",
+        sku="PM-001",
+        is_historical=True,
+        metadata='{"color": "blue"}'
+    )
+    return product_id
+
+@pytest.fixture
+def product_id_with_features():
+    """Fixture that creates a test product with features and returns its ID"""
+    product_id = insert_product(
+        image_path="/path/to/image_with_features.jpg",
+        category="placemats",
+        product_name="Test Placemat With Features",
+        sku="PM-002",
+        is_historical=True,
+        metadata='{"color": "blue"}'
+    )
+    # Add features for the product (needed for deletion test)
+    color_features = np.random.rand(256).astype(np.float32)
+    shape_features = np.random.rand(7).astype(np.float32)
+    texture_features = np.random.rand(256).astype(np.float32)
+    insert_features(product_id, color_features, shape_features, texture_features)
+    return product_id
+
+@pytest.fixture
+def new_product_id():
+    """Fixture that creates a new product for matching tests"""
+    product_id = insert_product(
+        image_path="/path/to/new.jpg",
+        category="textiles",
+        product_name="New Product",
+        sku="NEW-001",
+        is_historical=False
+    )
+    return product_id
+
+@pytest.fixture
+def matched_product_ids():
+    """Fixture that creates matched products for testing"""
+    ids = []
+    for i in range(3):
+        product_id = insert_product(
+            image_path=f"/path/to/matched{i}.jpg",
+            category="textiles",
+            product_name=f"Matched Product {i}",
+            sku=f"MATCH-{i:03d}",
+            is_historical=True
+        )
+        ids.append(product_id)
+    return ids
 
 def test_product_crud():
     """Test product CRUD operations"""
@@ -103,8 +162,6 @@ def test_product_crud():
     count = count_products(category="placemats", is_historical=True)
     assert count > 0, "Should count products"
     print(f"✓ Counted {count} historical products in 'placemats' category")
-    
-    return product_id
 
 def test_feature_operations(product_id):
     """Test feature storage and retrieval with numpy arrays"""
@@ -143,8 +200,6 @@ def test_feature_operations(product_id):
     assert np.allclose(updated_features['color_features'], new_color_features), "Updated color features should match"
     assert np.allclose(updated_features['shape_features'], shape_features), "Shape features should remain unchanged"
     print("✓ Updated color features successfully")
-    
-    return feature_id
 
 def test_category_features():
     """Test retrieving all features by category"""
@@ -194,8 +249,6 @@ def test_category_features():
         assert features['color_features'].shape == (256,), "Color features should have correct shape"
         assert features['shape_features'].shape == (7,), "Shape features should have correct shape"
         assert features['texture_features'].shape == (256,), "Texture features should have correct shape"
-    
-    return product_ids
 
 def test_match_operations(new_product_id, matched_product_ids):
     """Test match storage and retrieval"""
@@ -235,27 +288,27 @@ def test_match_operations(new_product_id, matched_product_ids):
     assert len(matches_after_delete) == 0, "All matches should be deleted"
     print("✓ Deleted all matches successfully")
 
-def test_product_deletion(product_id):
+def test_product_deletion(product_id_with_features):
     """Test product deletion with cascading"""
     print("\n=== Testing Product Deletion ===")
     
     # Verify product and features exist
-    product = get_product_by_id(product_id)
+    product = get_product_by_id(product_id_with_features)
     assert product is not None, "Product should exist before deletion"
     
-    features = get_features_by_product_id(product_id)
+    features = get_features_by_product_id(product_id_with_features)
     assert features is not None, "Features should exist before deletion"
     
     # Delete product
-    success = delete_product(product_id)
+    success = delete_product(product_id_with_features)
     assert success, "Deletion should succeed"
     
     # Verify product is deleted
-    deleted_product = get_product_by_id(product_id)
+    deleted_product = get_product_by_id(product_id_with_features)
     assert deleted_product is None, "Product should not exist after deletion"
     
     # Verify features are deleted
-    deleted_features = get_features_by_product_id(product_id)
+    deleted_features = get_features_by_product_id(product_id_with_features)
     assert deleted_features is None, "Features should not exist after deletion"
     
     print("✓ Product and associated features deleted successfully")

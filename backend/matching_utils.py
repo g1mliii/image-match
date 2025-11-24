@@ -60,6 +60,10 @@ def validate_candidate_features_quick(features: Optional[Dict]) -> bool:
     Quick validation for candidate features (returns bool only).
     Used in loops where we just need to skip invalid candidates.
     
+    Supports both legacy features and CLIP embeddings:
+    - Legacy: color_features, shape_features, texture_features (all non-empty)
+    - CLIP: color_features (512-dim), shape_features (empty), texture_features (empty)
+    
     Args:
         features: Feature dictionary to validate
     
@@ -69,18 +73,40 @@ def validate_candidate_features_quick(features: Optional[Dict]) -> bool:
     if not features:
         return False
     
-    for feature_type in REQUIRED_FEATURES:
-        if feature_type not in features:
-            return False
-        
-        feature_array = features[feature_type]
-        if feature_array is None or not isinstance(feature_array, np.ndarray) or feature_array.size == 0:
-            return False
-        
-        if np.any(np.isnan(feature_array)) or np.any(np.isinf(feature_array)):
-            return False
+    # Check if this is CLIP mode (embedding_type='clip')
+    is_clip = features.get('embedding_type') == 'clip'
     
-    return True
+    if is_clip:
+        # CLIP mode: only validate color_features (which contains the CLIP embedding)
+        if 'color_features' not in features:
+            return False
+        
+        color_features = features['color_features']
+        if color_features is None or not isinstance(color_features, np.ndarray):
+            return False
+        
+        # CLIP embeddings should be 512-dimensional
+        if color_features.size != 512:
+            return False
+        
+        if np.any(np.isnan(color_features)) or np.any(np.isinf(color_features)):
+            return False
+        
+        return True
+    else:
+        # Legacy mode: validate all three feature types
+        for feature_type in REQUIRED_FEATURES:
+            if feature_type not in features:
+                return False
+            
+            feature_array = features[feature_type]
+            if feature_array is None or not isinstance(feature_array, np.ndarray) or feature_array.size == 0:
+                return False
+            
+            if np.any(np.isnan(feature_array)) or np.any(np.isinf(feature_array)):
+                return False
+        
+        return True
 
 
 def safe_get_metadata(product: Dict, field: str, default: Any = None) -> Any:

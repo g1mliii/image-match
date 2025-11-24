@@ -345,7 +345,7 @@
 
 - [ ] 28. Implement catalog management and database cleanup
   - **Goal:** Let users view, manage, and clear their persistent catalog to prevent database bloat and RAM issues
-  - **Problem:** Database grows indefinitely, users don't know data persists, no way to clear old products
+  - **Problem:** Database grows indefinitely, users don't know data persists, no way to clear old products. Test data also accumulates when running tests repeatedly.
   
   - **Catalog Overview UI:**
     - Show catalog statistics in main app:
@@ -372,6 +372,7 @@
     - **Clear by Category:** Select categories to delete
     - **Clear by Date:** Delete products older than X days
     - **Vacuum Database:** Reclaim disk space after deletions (SQLite VACUUM command)
+    - **Test Data Cleanup:** Utility to clear test data (for development/testing)
   
   - **Cleanup UI (Settings/Tools Menu):**
     ```

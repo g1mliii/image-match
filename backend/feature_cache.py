@@ -8,20 +8,26 @@ This module provides caching functionality that:
 """
 
 import numpy as np
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 import os
+import logging
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from database import (
     get_features_by_product_id,
     insert_features,
     update_features,
-    get_product_by_id
+    get_product_by_id,
+    get_all_features_by_category
 )
 from image_processing import (
     extract_all_features,
     ImageProcessingError
 )
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class FeatureCache:
@@ -38,6 +44,7 @@ class FeatureCache:
                                force_recompute: bool = False) -> Dict[str, np.ndarray]:
         """
         Get features from cache or extract them if not cached.
+        Uses unified feature extraction (includes CLIP if available).
         
         Args:
             product_id: Product ID
@@ -64,16 +71,21 @@ class FeatureCache:
         
         # Features not cached or force recompute - extract from image
         try:
-            features = extract_all_features(image_path)
+            # Use unified feature extraction (includes CLIP if available)
+            from feature_extraction_service import extract_features_unified
             
-            # Store in database
+            features, embedding_type, embedding_version = extract_features_unified(image_path)
+            
+            # Store in database with embedding info
             if force_recompute:
                 # Update existing features
                 update_features(
                     product_id,
                     color_features=features['color_features'],
                     shape_features=features['shape_features'],
-                    texture_features=features['texture_features']
+                    texture_features=features['texture_features'],
+                    embedding_type=embedding_type,
+                    embedding_version=embedding_version
                 )
             else:
                 # Insert new features
@@ -81,7 +93,9 @@ class FeatureCache:
                     product_id,
                     color_features=features['color_features'],
                     shape_features=features['shape_features'],
-                    texture_features=features['texture_features']
+                    texture_features=features['texture_features'],
+                    embedding_type=embedding_type,
+                    embedding_version=embedding_version
                 )
             
             # Add to memory cache
@@ -124,21 +138,82 @@ class FeatureCache:
         if product_id in self.memory_cache:
             del self.memory_cache[product_id]
     
-    def preload_features(self, product_ids: list):
+    def preload_features(self, product_ids: List[int], max_workers: Optional[int] = None):
         """
-        Preload features for multiple products into memory cache.
+        Preload features for multiple products into memory cache with parallel loading.
         
         Useful for batch operations where you know which products
-        will be accessed.
+        will be accessed. Uses multithreading for faster loading.
         
         Args:
             product_ids: List of product IDs to preload
+            max_workers: Number of parallel workers (default: cpu_count + 4)
         """
-        for product_id in product_ids:
-            if product_id not in self.memory_cache:
+        if max_workers is None:
+            max_workers = min(32, (os.cpu_count() or 1) + 4)
+        
+        # Filter out already cached products
+        products_to_load = [pid for pid in product_ids if pid not in self.memory_cache]
+        
+        if not products_to_load:
+            return
+        
+        logger.info(f"Preloading {len(products_to_load)} products into cache with {max_workers} workers")
+        
+        def load_single_product(product_id: int):
+            try:
                 features = get_features_by_product_id(product_id)
                 if features:
+                    return (product_id, features)
+            except Exception as e:
+                logger.warning(f"Failed to preload product {product_id}: {e}")
+            return None
+        
+        # Load in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(load_single_product, pid) for pid in products_to_load]
+            
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    product_id, features = result
                     self._add_to_memory_cache(product_id, features)
+        
+        logger.info(f"Preloading complete: {len(self.memory_cache)} products in cache")
+    
+    def preload_catalog(self, category: Optional[str] = None, is_historical: bool = True, 
+                       max_workers: Optional[int] = None):
+        """
+        Preload entire catalog (or category) into memory cache.
+        
+        Optimized for matching sessions where you'll be matching multiple products
+        against the same catalog. Loads all features in parallel.
+        
+        Args:
+            category: Category to preload (None = all categories)
+            is_historical: Load historical products (default: True)
+            max_workers: Number of parallel workers (default: cpu_count + 4)
+        """
+        if max_workers is None:
+            max_workers = min(32, (os.cpu_count() or 1) + 4)
+        
+        logger.info(f"Preloading catalog into cache (category: {category or 'all'}, workers: {max_workers})")
+        
+        # Get all features from database (already optimized with indexes)
+        catalog_features = get_all_features_by_category(
+            category=category,
+            is_historical=is_historical,
+            include_uncategorized=True
+        )
+        
+        # Add to memory cache
+        loaded_count = 0
+        for product_id, features in catalog_features:
+            if product_id not in self.memory_cache:
+                self._add_to_memory_cache(product_id, features)
+                loaded_count += 1
+        
+        logger.info(f"Catalog preloading complete: {loaded_count} new products loaded, {len(self.memory_cache)} total in cache")
     
     def get_cache_stats(self) -> Dict[str, int]:
         """
@@ -204,16 +279,16 @@ def extract_and_cache_features(product_id: int, image_path: str,
     return features, was_cached
 
 
-def batch_extract_features(product_ids: list, max_workers: int = 4) -> Dict[int, Dict[str, any]]:
+def batch_extract_features(product_ids: List[int], max_workers: Optional[int] = None) -> Dict[int, Dict[str, any]]:
     """
-    Extract features for multiple products in batch.
+    Extract features for multiple products in batch with parallel processing.
     
     This function processes products that don't have cached features yet.
-    It can be used for batch processing of newly uploaded products.
+    Uses multithreading for faster batch processing of images.
     
     Args:
         product_ids: List of product IDs to process
-        max_workers: Maximum number of parallel workers (not implemented yet)
+        max_workers: Maximum number of parallel workers (default: cpu_count + 4)
     
     Returns:
         Dictionary mapping product_id to result:
@@ -222,53 +297,69 @@ def batch_extract_features(product_ids: list, max_workers: int = 4) -> Dict[int,
         - 'error': error message (if failed)
         - 'error_code': error code (if failed)
     """
+    if max_workers is None:
+        max_workers = min(32, (os.cpu_count() or 1) + 4)
+    
     cache = get_feature_cache()
     results = {}
     
-    for product_id in product_ids:
+    logger.info(f"Batch extracting features for {len(product_ids)} products with {max_workers} workers")
+    
+    def process_single_product(product_id: int) -> Tuple[int, Dict[str, any]]:
+        """Process a single product and return (product_id, result)"""
         try:
             # Get product info
             product = get_product_by_id(product_id)
             if not product:
-                results[product_id] = {
+                return (product_id, {
                     'success': False,
                     'error': f'Product {product_id} not found',
                     'error_code': 'PRODUCT_NOT_FOUND'
-                }
-                continue
+                })
             
             image_path = product['image_path']
             
             # Check if image file exists
             if not os.path.exists(image_path):
-                results[product_id] = {
+                return (product_id, {
                     'success': False,
                     'error': f'Image file not found: {image_path}',
                     'error_code': 'IMAGE_FILE_NOT_FOUND'
-                }
-                continue
+                })
             
             # Extract features
             features = cache.get_or_extract_features(product_id, image_path)
             
-            results[product_id] = {
+            return (product_id, {
                 'success': True,
                 'features': features
-            }
+            })
         
         except ImageProcessingError as e:
-            results[product_id] = {
+            return (product_id, {
                 'success': False,
                 'error': e.message,
                 'error_code': e.error_code,
                 'suggestion': e.suggestion
-            }
+            })
         except Exception as e:
-            results[product_id] = {
+            logger.error(f"Unexpected error processing product {product_id}: {e}")
+            return (product_id, {
                 'success': False,
                 'error': str(e),
                 'error_code': 'UNKNOWN_ERROR'
-            }
+            })
+    
+    # Process in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(process_single_product, pid) for pid in product_ids]
+        
+        for future in as_completed(futures):
+            product_id, result = future.result()
+            results[product_id] = result
+    
+    success_count = sum(1 for r in results.values() if r['success'])
+    logger.info(f"Batch extraction complete: {success_count}/{len(product_ids)} successful")
     
     return results
 

@@ -23,6 +23,7 @@ import numpy as np
 from typing import List, Dict, Optional, Any, Tuple
 import warnings
 import logging
+import os
 from datetime import datetime
 
 from database import (
@@ -1777,3 +1778,295 @@ def find_metadata_matches(
     logger.info(f"Metadata matching complete: {len(matches)} matches, {successful_count} successful, {failed_count} failed")
     
     return result
+
+
+# ============================================================================
+# BATCH MATCHING WITH PARALLEL PROCESSING
+# ============================================================================
+
+def batch_find_matches(
+    product_ids: List[int],
+    threshold: float = 0.0,
+    limit: int = 10,
+    match_against_all: bool = False,
+    include_uncategorized: bool = True,
+    color_weight: float = 0.5,
+    shape_weight: float = 0.3,
+    texture_weight: float = 0.2,
+    store_matches: bool = True,
+    skip_invalid_products: bool = True,
+    max_workers: Optional[int] = None,
+    preload_catalog: bool = True
+) -> Dict[str, Any]:
+    """
+    Find matches for multiple products in batch with parallel processing.
+    
+    PERFORMANCE OPTIMIZATIONS:
+    - Parallel processing using ThreadPoolExecutor (CPU multithreading)
+    - Optional catalog preloading to avoid repeated database queries
+    - Isolated error handling per product (one failure doesn't stop batch)
+    - Progress tracking for large batches
+    
+    This function processes multiple products and isolates errors so that
+    one failure doesn't stop the entire batch. Handles real-world data issues
+    gracefully across all products.
+    
+    Args:
+        product_ids: List of product IDs to match
+        threshold: Minimum similarity score (0-100)
+        limit: Maximum matches per product
+        match_against_all: Match against all categories
+        include_uncategorized: Include NULL category products
+        color_weight: Weight for color similarity
+        shape_weight: Weight for shape similarity
+        texture_weight: Weight for texture similarity
+        store_matches: Store results in database
+        skip_invalid_products: If True, skip products with data issues
+        max_workers: Number of parallel workers (default: cpu_count + 4)
+        preload_catalog: Preload catalog features into cache for faster matching
+    
+    Returns:
+        Dictionary with:
+        - 'results': List of match results per product
+        - 'summary': Summary statistics including data quality metrics
+        - 'errors': List of products that failed
+    
+    Requirements: 6.1, 6.2, 6.3
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    if max_workers is None:
+        max_workers = min(32, (os.cpu_count() or 1) + 4)
+    
+    logger.info(f"Batch matching {len(product_ids)} products with {max_workers} workers (preload: {preload_catalog})")
+    
+    # PERFORMANCE OPTIMIZATION: Preload catalog features into memory cache
+    # This avoids repeated database queries for the same catalog products
+    if preload_catalog:
+        from feature_cache import get_feature_cache
+        cache = get_feature_cache()
+        
+        # Preload all historical products (or specific category if needed)
+        logger.info("Preloading catalog features into cache...")
+        cache.preload_catalog(category=None, is_historical=True)
+    
+    results = []
+    errors = []
+    successful = 0
+    failed = 0
+    
+    def process_single_match(product_id: int) -> Tuple[int, Dict[str, Any]]:
+        """Process a single product match and return (product_id, result)"""
+        try:
+            match_result = find_matches(
+                product_id=product_id,
+                threshold=threshold,
+                limit=limit,
+                match_against_all=match_against_all,
+                include_uncategorized=include_uncategorized,
+                color_weight=color_weight,
+                shape_weight=shape_weight,
+                texture_weight=texture_weight,
+                store_matches=store_matches,
+                skip_invalid_products=skip_invalid_products
+            )
+            
+            return (product_id, {
+                'product_id': product_id,
+                'status': 'success',
+                'match_count': len(match_result['matches']),
+                'matches': match_result['matches'],
+                'warnings': match_result['warnings'],
+                'data_quality_issues': match_result.get('data_quality_issues', {}),
+                'data_quality_summary': match_result.get('data_quality_summary', {})
+            })
+            
+        except (ProductNotFoundError, MissingFeaturesError, EmptyCatalogError, AllMatchesFailedError) as e:
+            logger.error(f"Failed to match product {product_id}: {e.message}")
+            
+            error_info = {
+                'product_id': product_id,
+                'status': 'failed',
+                'error': e.message,
+                'error_code': e.error_code,
+                'suggestion': e.suggestion
+            }
+            
+            return (product_id, error_info)
+                
+        except Exception as e:
+            logger.error(f"Unexpected error matching product {product_id}: {e}")
+            
+            error_info = {
+                'product_id': product_id,
+                'status': 'failed',
+                'error': str(e),
+                'error_code': 'UNKNOWN_ERROR'
+            }
+            
+            return (product_id, error_info)
+    
+    # Process in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(process_single_match, pid) for pid in product_ids]
+        
+        # Process results as they complete
+        for future in as_completed(futures):
+            product_id, result = future.result()
+            results.append(result)
+            
+            if result['status'] == 'success':
+                successful += 1
+            else:
+                failed += 1
+                errors.append(result)
+    
+    summary = {
+        'total_products': len(product_ids),
+        'successful': successful,
+        'failed': failed,
+        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0
+    }
+    
+    logger.info(f"Batch matching complete: {successful} successful, {failed} failed")
+    
+    return {
+        'results': results,
+        'summary': summary,
+        'errors': errors if errors else None
+    }
+
+
+def batch_find_metadata_matches(
+    product_ids: List[int],
+    threshold: float = 0.0,
+    limit: int = 10,
+    sku_weight: float = 0.30,
+    name_weight: float = 0.25,
+    category_weight: float = 0.20,
+    price_weight: float = 0.15,
+    performance_weight: float = 0.10,
+    store_matches: bool = True,
+    skip_invalid_products: bool = True,
+    match_against_all: bool = False,
+    max_workers: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Find metadata matches for multiple products in batch with parallel processing.
+    
+    Mode 2 (Metadata-only matching) with CPU multithreading optimization.
+    Perfect for CSV-only workflows without images.
+    
+    PERFORMANCE OPTIMIZATIONS:
+    - Parallel processing using ThreadPoolExecutor
+    - Batch metadata fetching (price/performance data loaded once)
+    - Isolated error handling per product
+    
+    Args:
+        product_ids: List of product IDs to match
+        threshold: Minimum similarity score (0-100)
+        limit: Maximum matches per product
+        sku_weight: Weight for SKU similarity
+        name_weight: Weight for name similarity
+        category_weight: Weight for category similarity
+        price_weight: Weight for price similarity
+        performance_weight: Weight for performance similarity
+        store_matches: Store results in database
+        skip_invalid_products: Continue on errors
+        match_against_all: Match against all categories
+        max_workers: Number of parallel workers (default: cpu_count + 4)
+    
+    Returns:
+        Dictionary with results and summary
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    if max_workers is None:
+        max_workers = min(32, (os.cpu_count() or 1) + 4)
+    
+    logger.info(f"Batch metadata matching {len(product_ids)} products with {max_workers} workers")
+    
+    results = []
+    errors = []
+    successful = 0
+    failed = 0
+    
+    def process_single_metadata_match(product_id: int) -> Tuple[int, Dict[str, Any]]:
+        """Process a single product metadata match"""
+        try:
+            match_result = find_metadata_matches(
+                product_id=product_id,
+                threshold=threshold,
+                limit=limit,
+                sku_weight=sku_weight,
+                name_weight=name_weight,
+                category_weight=category_weight,
+                price_weight=price_weight,
+                performance_weight=performance_weight,
+                store_matches=store_matches,
+                skip_invalid_products=skip_invalid_products,
+                match_against_all=match_against_all
+            )
+            
+            return (product_id, {
+                'product_id': product_id,
+                'status': 'success',
+                'match_count': len(match_result['matches']),
+                'matches': match_result['matches'],
+                'warnings': match_result.get('warnings', []),
+                'data_quality_issues': match_result.get('data_quality_issues', {})
+            })
+            
+        except (ProductNotFoundError, EmptyCatalogError) as e:
+            logger.error(f"Failed to match product {product_id}: {e.message}")
+            
+            error_info = {
+                'product_id': product_id,
+                'status': 'failed',
+                'error': e.message,
+                'error_code': e.error_code,
+                'suggestion': e.suggestion
+            }
+            
+            return (product_id, error_info)
+                
+        except Exception as e:
+            logger.error(f"Unexpected error matching product {product_id}: {e}")
+            
+            error_info = {
+                'product_id': product_id,
+                'status': 'failed',
+                'error': str(e),
+                'error_code': 'UNKNOWN_ERROR'
+            }
+            
+            return (product_id, error_info)
+    
+    # Process in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(process_single_metadata_match, pid) for pid in product_ids]
+        
+        for future in as_completed(futures):
+            product_id, result = future.result()
+            results.append(result)
+            
+            if result['status'] == 'success':
+                successful += 1
+            else:
+                failed += 1
+                errors.append(result)
+    
+    summary = {
+        'total_products': len(product_ids),
+        'successful': successful,
+        'failed': failed,
+        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0
+    }
+    
+    logger.info(f"Batch metadata matching complete: {successful} successful, {failed} failed")
+    
+    return {
+        'results': results,
+        'summary': summary,
+        'errors': errors if errors else None
+    }

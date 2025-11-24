@@ -260,9 +260,7 @@ def test_matching_with_mixed_data():
         print(f"\n✗ Test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
-    
-    return True
+        assert False, str(e)
 
 
 def test_matching_without_skipping():
@@ -276,7 +274,7 @@ def test_matching_without_skipping():
     new_products = get_products_by_category('placemats', is_historical=False)
     if not new_products:
         print("No new products found, skipping test")
-        return True
+        return  # Skip test if no products
     
     new_product_id = new_products[0]['id']
     
@@ -301,8 +299,6 @@ def test_matching_without_skipping():
         print(f"\n✓ Expected behavior: Raised exception")
         print(f"  Exception type: {type(e).__name__}")
         print(f"  Message: {str(e)}")
-    
-    return True
 
 
 def test_all_corrupted_data():
@@ -363,11 +359,10 @@ def test_all_corrupted_data():
         if 'AllMatchesFailed' in type(e).__name__:
             print(f"\n✓ Correctly raised AllMatchesFailedError")
             print(f"  Message: {e.message if hasattr(e, 'message') else str(e)}")
-            return True
         else:
             print(f"\n✗ Raised wrong exception: {type(e).__name__}")
             print(f"  Message: {str(e)}")
-            return False
+            assert False, f"Wrong exception type: {type(e).__name__}"
 
 
 def test_missing_metadata_handling():
@@ -434,13 +429,12 @@ def test_missing_metadata_handling():
         assert result['data_quality_issues']['missing_metadata'] >= 2, "Should detect missing metadata"
         
         print("\n✓ All assertions passed!")
-        return True
         
     except Exception as e:
         print(f"\n✗ Test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, str(e)
 
 
 def main():

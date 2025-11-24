@@ -162,7 +162,6 @@ def test_performance_api():
         print(f"✓ POST partial valid data: {data['records_inserted']} inserted, {len(data['validation_errors'])} skipped")
         
         print("\n✅ All API tests passed!")
-        return True
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")

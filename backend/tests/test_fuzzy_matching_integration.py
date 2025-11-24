@@ -67,7 +67,6 @@ def test_upload_with_fuzzy_matching():
         print(f"  [✓] '{misspelled}' → '{expected}' ({description})")
     
     print("[PASS] Upload fuzzy matching works correctly")
-    return True
 
 
 def test_matching_with_fuzzy_categories():
@@ -135,7 +134,6 @@ def test_matching_with_fuzzy_categories():
         # This is okay - might not find matches due to random features
     
     print("[PASS] Matching with fuzzy categories works")
-    return True
 
 
 def test_category_normalization_consistency():
@@ -155,7 +153,6 @@ def test_category_normalization_consistency():
         print(f"  [✓] '{input_cat}' → '{normalized}'")
     
     print("[PASS] Category normalization is consistent")
-    return True
 
 
 def test_fuzzy_matching_thresholds():
@@ -185,7 +182,6 @@ def test_fuzzy_matching_thresholds():
     print("  [✓] Distance 2 doesn't match with threshold 1")
     
     print("[PASS] Fuzzy matching thresholds work correctly")
-    return True
 
 
 def main():

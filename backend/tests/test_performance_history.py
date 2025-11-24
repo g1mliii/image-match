@@ -138,7 +138,6 @@ def test_performance_history():
         print("✓ Handled invalid date correctly")
         
         print("\n✅ All performance history tests passed!")
-        return True
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")

@@ -98,7 +98,6 @@ def test_price_history():
         print("✓ Successfully deleted price history")
         
         print("\n✅ All price history tests passed!")
-        return True
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
