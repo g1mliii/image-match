@@ -195,30 +195,10 @@
     - Clear visual examples and tooltips
     - Mobile-friendly interface
   - _Requirements: New feature - improves usability for Requirements 1, 6, 10_
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
  
-- [ ] 27. Implement flexible metadata linking system in CSV Builder
+- [x] 27. Implement flexible metadata linking system in CSV Builder
+
+
   - **Goal:** Support different business data organization methods - adapt to their system, not force them into ours
   - **Core Problem:** Businesses store product data differently (SKU in filename, folder structure, separate database, etc.)
   - **Solution:** Multiple linking strategies with auto-detection and preview
@@ -270,7 +250,10 @@
   
   - _Requirements: Improves Requirements 1, 6, 10 - makes system work with any business data structure_
 
-- [ ] 27.1. Add Excel workflow to CSV Builder (Export → Edit → Import)
+- [x] 27.1. Add Excel workflow to CSV Builder (Export → Edit → Import)
+
+
+
   - **Goal:** Let users work in Excel for bulk metadata entry (faster for large datasets)
   
   - **Export Template Feature:**
@@ -308,7 +291,9 @@
   
   - _Requirements: Improves Requirements 1, 6, 10 - enables Excel power users and large datasets_
 
-- [ ] 27.2. Update UI tooltips, help text, and CSV format documentation
+- [x] 27.2. Update UI tooltips, help text, and CSV format documentation
+
+
   - **Goal:** Guide users through new linking and Excel workflows with clear instructions
   
   - **CSV Builder Updates:**
@@ -343,12 +328,13 @@
   
   - _Requirements: Improves Requirements 9.4, 10.3 - better user guidance and onboarding_
 
-- [ ] 28. Implement catalog management and database cleanup
+- [x] 28. Implement catalog management and database cleanup
+
   - **Goal:** Let users view, manage, and clear their persistent catalog to prevent database bloat and RAM issues
   - **Problem:** Database grows indefinitely, users don't know data persists, no way to clear old products. Test data also accumulates when running tests repeatedly.
   
   - **Catalog Overview UI:**
-    - Show catalog statistics in main app:
+    - Show catalog statistics in main app maybe seperate tab or button that opesn it should be differnt file simiar to csv builder otherwise our main app will be too large:
       - Total products: "1,247 historical products | 53 new products"
       - Database size: "156 MB" (calculate from file size)
       - Last updated: "2024-01-15 14:30"
@@ -404,10 +390,11 @@
     - Option to auto-vacuum database weekly
   
   - **Performance Optimizations:**
+    - low ram mode maybe for low ram systems 
     - Don't load all products into RAM at once
     - Use pagination for catalog view (show 100 at a time)
     - Load features only for current category during matching
-    - Add database indexes for faster queries (already done in Task 2)
+    - Add database indexes for faster queries maybe alread done
     - Consider archiving old products to separate database file
   
   - **Export/Backup Features:**
@@ -453,7 +440,9 @@
   
   - _Requirements: Improves Requirements 8.4, 9.1, 10.3 - prevents database bloat, better resource management_
 
-- [ ] 28.1. Add catalog browser and product management UI
+
+- [x] 28.1. Add catalog browser and product management UI
+
   - **Goal:** Let users view and manage individual products in their catalog
   
   - **Catalog Browser:**
@@ -465,10 +454,10 @@
   
   - **Product Actions:**
     - View details: metadata, features status, match history
-    - Edit metadata: update SKU, name, category, price
-    - Delete product: remove from database + delete image file
-    - Re-extract features: if feature extraction failed
-    - Bulk actions: select multiple products, delete/edit in bulk
+    - Edit metadata: update SKU, name, category, i think we have some form of this in csv builder or maybe not so just check.
+    - Delete product: remove from database + delete image file same as above
+    - Re-extract features: if feature extraction failed same as above
+    - Bulk actions: select multiple products, delete/edit in bulk same as above
   
   - **Product Details Modal:**
     ```
@@ -492,24 +481,6 @@
     - Bulk re-extract: "Re-extract features for 25 products"
   
   - _Requirements: Improves Requirements 10.1, 10.2 - better catalog visibility and control_
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -672,3 +643,340 @@
       - Test app launches without terminal/console window
     - Document any manual steps required (should be none for macOS - everything auto-installs)
   - _Requirements: 9.2_
+
+
+- [x] 30. Implement catalog snapshot system with multi-file database support
+
+
+
+  - **Goal:** Replace single database with snapshot-based system where users can create, manage, and combine multiple catalog snapshots
+  - **Problem:** Current system uses one database that accumulates all uploads with no versioning, making it hard to organize, test different catalog combinations, or undo uploads
+  
+  - **Core Architecture Change:**
+    - Move from single `product_matching.db` to multiple snapshot files in `catalogs/` directory
+    - Each snapshot is independent SQLite database with same schema as current system
+    - Config file tracks which snapshots are currently active
+    - Matching engine loads products from all active snapshots and combines them
+  
+  - **Database Structure:**
+    ```
+    catalogs/
+    ├── summer-2024-plates.db (500 historical products)
+    ├── winter-2024-plates.db (300 historical products)
+    ├── new-arrivals-jan15.db (50 new products)
+    └── mobile-upload-jan20.db (20 new products)
+    
+    config/
+    └── active_catalogs.json
+        {
+          "active_historical": ["summer-2024-plates.db", "winter-2024-plates.db"],
+          "active_new": ["new-arrivals-jan15.db"]
+        }
+    ```
+  
+  - **Snapshot Metadata Table:**
+    - Add `snapshot_metadata` table to each .db file:
+      - name: Snapshot display name
+      - created_at: Creation timmp
+      - version: Version string (e.g., "1.0", "1.1")
+      - description: Optional user description
+  - product_count: Number of products in snapshot
+      - is_historical: Boolean (historical catalog vs new products)
+      - tags: JSON array of tags for organization
+      - last_modified: Timestamp of last edit
+  
+  - **Backend Changes (database.py):**
+    - **New Functions:**
+      - `create_snapshot(name, is_historical, description, tags)` - Create new snapshot database file
+      - `list_snapshots()` - Return all available snapshots with metadata
+      - `get_snapshot_info(snapshot_file)` - Get metadata for specific snapshot
+      - `delete_snapshot(snapshot_file)` - Delete snapshot .db file and associated images
+      - `rename_snapshot(old_name, new_name)` - Rename snapshot file
+      - `merge_snapshots(snapshot_files, new_name)` - Combine multiple snapshots into new one
+      - `export_snapshot(snapshot_file, output_path)` - Export as .zip with images
+      - `import_snapshot(zip_path)` - Import snapshot from .zip file
+      - `get_active_catalogs()` - Read active_catalogs.json
+      - `set_active_catalogs(historical_list, new_list)` - Update active_catalogs.json
+      - `load_products_from_snapshots(snapshot_files, is_historical)` - Load products from multiple snapshots
+    - **Modified Functions:**
+      - `init_db(snapshot_file)` - Accept snapshot file path parameter
+      - `insert_product()` - Accept snapshot file parameter
+      - All query functions - Accept optional snapshot file parameter
+    - **Backward Compatibility:**
+      - If `catalogs/` doesn't exist, create it and migrate existing `product_matching.db` as "Default Catalog"
+      - If no active catalogs configured, use default catalog
+  
+  - **Backend Changes (app.py):**
+    - **New API Endpoints:**
+      - `GET /api/catalogs/list` - List all snapshots (historical and new separately)
+      - `POST /api/catalogs/create` - Create new snapshot
+      - `DELETE /api/catalogs/{name}` - Delete snapshot
+      - `PUT /api/catalogs/{name}/rename` - Rename snapshot
+      - `POST /api/catalogs/merge` - Merge multiple snapshots
+      - `GET /api/catalogs/active` - Get currently active catalogs
+      - `POST /api/catalogs/active` - Set active catalogs
+      - `GET /api/catalogs/{name}/info` - Get snapshot metadata and stats
+      - `POST /api/catalogs/export` - Export snapshot as .zip
+      - `POST /api/catalogs/import` - Import snapshot from .zip
+    - **Modified Endpoints:**
+      - `POST /api/products/upload` - Add `snapshot_name` parameter (creates new snapshot or adds to existing)
+      - `POST /api/products/match` - Load products from active snapshots instead of single database
+      - All product endpoints - Work with active snapshots
+  
+  - **Catalog Manager UI (new file: catalog-manager.html):**
+    - **Layout:**
+      - Two-column view: Historical Catalogs (left) | New Products (right)
+      - Each snapshot shown as card with checkbox, name, product count, size, date
+      - Actions per snapshot: View, Rename, Export, Delete
+      - Bottom panel: Active selection summary + action buttons
+    - **Features:**
+      - Checkbox selection for each snapshot (multi-select)
+      - "Apply Selection" button to set active catalogs
+      - "Create New Snapshot" button (prompts for name, type, description)
+      - "Merge Selected" button (combines checked snapshots into new one)
+      - "Import Snapshot" button (upload .zip file)
+      - Real-time stats: "Active: 800 historical products (2 catalogs), 50 new products (1 catalog)"
+      - Search/filter snapshots by name or tags
+      - Sort by: name, date, size, product count
+    - **Snapshot Card Design:**
+      ```
+      ┌─────────────────────────────────────┐
+      │ ☑ Summer 2024 Plates (v1.0)        │
+      │ 500 products | 45 MB               │
+      │ Created: Jan 1, 2024               │
+      │ Tags: plates, summer, 2024         │
+      │ [View] [Rename] [Export] [Delete]  │
+      └─────────────────────────────────────┘
+      ```
+    - **View Snapshot Modal:**
+      - Opens catalog browser for that specific snapshot
+      - Shows all products in grid view
+      - Can edit/delete individual products
+      - Can re-extract features
+      - Shows data quality stats
+  
+  - **Main App Integration (index.html updates):**
+    - **Step 1 (Historical Catalog):**
+      - Add radio button: "Upload New Catalog" vs "Use Existing Snapshots"
+      - If "Upload New": Show folder upload + "Save as snapshot: [name]" field
+      - If "Use Existing": Show "Open Catalog Manager" button + current selection summary
+      - Display: "Currently selected: 800 products from 2 snapshots"
+    - **Step 2 (New Products):**
+      - Same pattern as Step 1
+      - Radio: "Upload New Products" vs "Use Existing Snapshots"
+    - **Matching Logic:**
+      - Load products from all active historical snapshots (combined)
+      - Load products from all active new snapshots (combined)
+      - Match as normal (no change to matching algorithm)
+    - **restoring database on browser refresh** 
+      - we can change this to just restore the selected database that was prebiolus slected or clear i thin kwe have both og thos features already.
+  - **Migration Strategy:**
+    - On first run with new system:
+      - Check if `catalogs/` directory exists
+      - If not, create it
+      - If `product_matching.db` exists in root:
+        - Move to `catalogs/default-catalog.db`
+        - Create metadata table with name "Default Catalog"
+        - Set as active in config
+      - Show migration notice to user: "Your catalog has been migrated to the new snapshot system"
+  
+  - **File Management:**
+    - Snapshots stored in: `catalogs/` directory
+    - Images stored in: `catalogs/{snapshot_name}/uploads/` (separate per snapshot)
+    - Config stored in: `config/active_catalogs.json`
+    - When deleting snapshot: Delete .db file + associated uploads folder
+    - When exporting snapshot: Create .zip with .db + uploads folder
+  
+  - **Version Stamping:**
+    - New snapshot: v1.0
+    - Edit products in snapshot: Increment minor version (v1.1, v1.2, ...)
+    - Merge snapshots: New snapshot starts at v1.0
+    - Show version in UI: "Summer 2024 Plates (v1.2)"
+  
+  - **Error Handling:**
+    - Handle missing snapshot files gracefully (show warning, remove from active list)
+    - Validate snapshot file integrity before loading
+    - Prevent deleting snapshot if it's currently active (prompt to deselect first)
+    - Handle disk space issues when creating/merging snapshots
+    - Validate snapshot names (no special characters, max length)
+  - **check if need to update hadnling of snapshots in csv builder**
+
+  - **Testing:**
+    - Test creating multiple snapshots
+    - Test selecting/deselecting snapshots
+    - Test merging snapshots (verify all products copied correctly)
+    - Test deleting snapshots (verify files removed)
+    - Test matching with multiple active snapshots (verify products combined correctly)
+    - Test export/import (verify .zip contains all data)
+    - Test migration from old single-database system
+    - Test with large snapshots (1000+ products)
+    - i belive our csv builder populates info and stasy synchornized with database in our main app and when we change things in catalog managment this should continue to work with the chanegs made
+  
+  - _Requirements: Improves Requirements 8.4, 9.1, 10.3 - better catalog organization and management_
+
+
+- [ ] 31. Implement mobile photo upload with QR code pairing
+
+  - **Goal:** Enable users to upload product photos from their phone to the desktop app via QR code pairing
+  - **Use Case:** Client takes photos in warehouse/store, scans QR code on desktop, uploads directly to catalog
+  
+  - **Architecture:**
+    - Desktop app generates unique session token and displays QR code
+    - QR code contains URL: `http://{local_ip}:5000/mobile?session={token}`
+    - User scans QR with phone camera → Opens mobile upload page in browser
+    - Mobile page uploads photos to desktop app via REST API
+    - Desktop app receives photos and adds to selected snapshot
+    - No mobile app installation needed - works in any browser
+  
+  - **Backend Changes (app.py):**
+    - **New API Endpoints:**
+      - `POST /api/mobile/session/create` - Generate new mobile session
+        - Returns: session_token, qr_code_url, expires_at (30 min)
+        - Store active sessions in memory: `{token: {created_at, expires_at, is_used}}`
+      - `GET /api/mobile/session/{token}/validate` - Check if session is valid
+        - Returns: {valid: true/false, expired: true/false}
+      - `POST /api/mobile/upload` - Upload photos from mobile
+        - Requires: session_token, images (multiple files), snapshot_name, is_historical, category (optional)
+        - Validates session token before accepting upload
+        - Creates snapshot if doesn't exist or adds to existing
+        - Returns: {success: true, products_added: 5, snapshot_name: "..."}
+      - `POST /api/mobile/session/{token}/close` - Invalidate session token
+      - `GET /api/mobile/session/active` - Get active session info for desktop UI
+    - **Session Management:**
+      - Sessions expire after 30 minutes
+      - One-time use option: Session invalidated after first upload
+      - Reusable option: Session stays active until manually closed or expired
+      - Cleanup expired sessions every 5 minutes (background task)
+  
+  - **QR Code Generation:**
+    - Use Python library: `qrcode` (add to requirements.txt)
+    - Generate QR code as base64 image for display in UI
+    - QR code contains: `http://{local_ip}:5000/mobile?session={token}`
+    - Auto-detect local IP address (prefer 192.168.x.x or 10.x.x.x)
+    - Handle multiple network interfaces (show all available IPs)
+  
+  - **Desktop UI Changes (index.html or new mobile-pairing.html):**
+    - **Mobile Upload Button:**
+      - Add button in main app: "Upload from Phone"
+      - Opens modal with QR code and instructions
+    -and 
+      
+    - **Upload Notifications:**
+      - Show toast when photos uploaded from mobile
+      - "5 photos added to 'Summer 2024 Plates' from mobile"
+      - Update catalog stats in real-time
+  
+  - **Mobile Upload Page (new file: static/mobile-upload.html):**
+    - **Mobile-Optimized UI:**
+      - brutalist design simliar to our app
+
+
+    - **Features:**
+      - Multiple photo selection from gallery
+      - Take photo with camera (use `<input type="file" accept="image/*" capture="camera">`)
+      - Preview selected photos before upload
+      - Remove photos from selection
+      - Progress bar during upload
+      - Success/error messages
+      - Auto-generated snapshot name: "Mobile Upload - {date} {time}"
+      - Option to select existing snapshot from dropdown
+      - Category dropdown (loads from desktop app)
+    - **Session Validation:**
+      - On page load, validate session token
+      - If invalid/expired: Show error "Session expired. Please scan QR code again."
+      - If valid: Show "Connected to Desktop ✓"
+      - Poll session status every 30 seconds
+  
+  - **Network Discovery:**
+    - **Auto-detect local IP:**
+      ```python
+      import socket
+      def get_local_ip():
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.connect(("8.8.8.8", 80))
+          ip = s.getsockname()[0]
+          s.close()
+          return ip
+      ```
+    - **Handle multiple IPs:**
+      - If multiple network interfaces, show all in modal
+      - User can select which IP to use for QR code
+      - Prefer 192.168.x.x (home WiFi) over 10.x.x.x (VPN)
+    - **Firewall Warning:**
+      - If connection fails, show troubleshooting tips
+      - "Make sure phone and computer are on same WiFi network"
+      - "Check firewall settings if connection fails"
+  
+  - **Security:**
+    - **Session Tokens:**
+      - Generate cryptographically secure random tokens (32 characters)
+      - Use `secrets.token_urlsafe(32)` in Python
+      - Store tokens in memory only (not in database)
+      - Expire after 30 minutes
+    - **CORS:**
+      - Allow mobile uploads from any origin (already enabled with CORS)
+      - Validate session token on every request
+    - **Rate Limiting:**
+      - Limit uploads per session (e.g., max 100 photos per session)
+      - Prevent abuse with rate limiting (max 10 uploads per minute)
+    - **HTTPS (Optional):**
+      - For production, consider self-signed certificate for HTTPS
+      - Prevents man-in-the-middle attacks on local network
+      - Not critical for local network use
+  
+  - **Snapshot Integration:**
+    - Mobile uploads automatically create snapshots
+    - Default name: "Mobile Upload - {date} {time}"
+    - User can rename later in Catalog Manager
+    - Snapshot type (historical/new) selected on mobile page
+    - Snapshot appears in Catalog Manager immediately after upload
+    - Auto-selected in active catalogs by default
+  
+  - **Multiple Photo Support:**
+    - Accept multiple files in single upload request
+    - Process photos in batch (extract features for all)
+    - Show progress: "Processing 3/5 photos..."
+    - If some photos fail (corrupted, wrong format), show partial success
+    - "3 photos uploaded successfully, 2 failed (invalid format)"
+  
+  - **Metadata Support:**
+    - Category: Dropdown of existing categories (loaded from desktop)
+    - SKU: Optional text field (not recommended on mobile - tedious)
+    - Product name: Optional text field (not recommended on mobile)
+    - Keep mobile UI simple - add detailed metadata later on desktop
+  
+  - **Error Handling:**
+    - Invalid session token: "Session expired. Please scan QR code again."
+    - Network error: "Connection lost. Check WiFi and try again."
+    - Upload failed: "Upload failed. Check file format and try again."
+    - File too large: "Photo too large (max 10 MB per photo)"
+    - Invalid format: "Invalid format. Use JPEG, PNG, or WebP."
+    - Show clear error messages with retry button
+  
+  - **Testing:**
+    - Test QR code generation and scanning
+    - Test session creation and expiration
+    - Test mobile upload with single photo
+    - Test mobile upload with multiple photos (5, 10, 20)
+    - Test session validation (valid, expired, invalid token)
+    - Test network discovery (multiple IPs, WiFi vs Ethernet)
+    - Test on different phones (iOS Safari, Android Chrome)
+    - Test with different image formats (JPEG, PNG, HEIC)
+    - Test with large images (10+ MB)
+    - Test snapshot creation from mobile uploads
+    - Test category dropdown loading
+    - Test connection loss during upload (retry logic)
+  
+  - **Dependencies:**
+    - Add to requirements.txt:
+      - `qrcode[pil]` - QR code generation
+      - `pillow` - Image processing (already included)
+  
+  - **Future Enhancements (Optional):**
+    - Push notifications to desktop when photos uploaded
+    - Live preview of uploaded photos on desktop
+    - Batch metadata editing on desktop after mobile upload
+    - Support for video uploads (for product demos)
+    - OCR to extract SKU from product labels in photos
+  
+  - _Requirements: New feature - improves Requirements 1.1, 6.1, 9.1 - mobile convenience and flexibility_

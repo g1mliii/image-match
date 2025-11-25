@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initResults();
     initTooltips();
     initGPUStatus();
+    initCatalogOptions();
 });
 
 // Historical Catalog Upload
@@ -3169,4 +3170,533 @@ function updateProcessingSpeed(imagesProcessed, timeElapsed) {
     setTimeout(() => {
         statusText.textContent = originalText;
     }, 3000);
+}
+
+// ============ Catalog Options ============
+
+let existingCatalogStats = null;
+
+function initCatalogOptions() {
+    // Check if there's an existing catalog
+    checkExistingCatalog();
+    
+    // Add event listeners for catalog options
+    const radioButtons = document.querySelectorAll('input[name="catalogLoadOption"]');
+    radioButtons.forEach(radio => {
+        radio.addEventListener('change', handleCatalogOptionChange);
+    });
+}
+
+async function checkExistingCatalog() {
+    try {
+        const response = await fetch('/api/catalog/stats');
+        if (!response.ok) throw new Error('Failed to fetch catalog stats');
+        
+        const stats = await response.json();
+        existingCatalogStats = stats;
+        
+        const catalogOptions = document.getElementById('catalogOptions');
+        const statsEl = document.getElementById('existingCatalogStats');
+        
+        if (stats.historical_products > 0) {
+            // Show catalog options
+            catalogOptions.style.display = 'block';
+            statsEl.innerHTML = `<strong>${stats.historical_products.toLocaleString()}</strong> historical products | ` +
+                               `<strong>${stats.unique_categories}</strong> categories | ` +
+                               `<strong>${stats.database_size_mb.toFixed(1)} MB</strong>`;
+            
+            // Check for large database warning
+            if (stats.database_size_mb > 500) {
+                showToast('⚠️ Database is large (' + stats.database_size_mb.toFixed(0) + ' MB). Consider cleaning up old products.', 'warning', 8000);
+            }
+        } else {
+            // No existing catalog, hide options
+            catalogOptions.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error checking existing catalog:', error);
+        document.getElementById('catalogOptions').style.display = 'none';
+    }
+}
+
+function handleCatalogOptionChange(e) {
+    const option = e.target.value;
+    const dropZone = document.getElementById('historicalDropZone');
+    const processBtn = document.getElementById('processHistoricalBtn');
+    
+    if (option === 'use_existing') {
+        // Using existing catalog - disable upload, enable process
+        dropZone.style.opacity = '0.5';
+        dropZone.style.pointerEvents = 'none';
+        processBtn.disabled = false;
+        processBtn.textContent = 'USE EXISTING CATALOG';
+    } else if (option === 'replace') {
+        // Replace catalog - show warning
+        if (existingCatalogStats && existingCatalogStats.historical_products > 0) {
+            const confirmed = confirm(
+                `⚠️ WARNING: This will delete ${existingCatalogStats.historical_products.toLocaleString()} existing products.\n\n` +
+                `This action cannot be undone. Continue?`
+            );
+            if (!confirmed) {
+                // Revert to use_existing
+                document.querySelector('input[name="catalogLoadOption"][value="use_existing"]').checked = true;
+                return;
+            }
+        }
+        dropZone.style.opacity = '1';
+        dropZone.style.pointerEvents = 'auto';
+        processBtn.disabled = historicalFiles.length === 0;
+        processBtn.textContent = 'REPLACE & PROCESS';
+    } else {
+        // Add to existing
+        dropZone.style.opacity = '1';
+        dropZone.style.pointerEvents = 'auto';
+        processBtn.disabled = historicalFiles.length === 0;
+        processBtn.textContent = 'ADD & PROCESS';
+    }
+}
+
+function getCatalogLoadOption() {
+    const selected = document.querySelector('input[name="catalogLoadOption"]:checked');
+    return selected ? selected.value : 'add_to_existing';
+}
+
+// Modify processHistoricalCatalog to handle catalog options
+const originalProcessHistoricalCatalog = typeof processHistoricalCatalog === 'function' ? processHistoricalCatalog : null;
+
+// Override processHistoricalCatalog to handle catalog options
+async function processHistoricalCatalogWithOptions() {
+    const option = getCatalogLoadOption();
+    
+    if (option === 'use_existing') {
+        // Skip upload, use existing catalog
+        showToast('Using existing catalog', 'success');
+        
+        // Load existing products from database
+        try {
+            const response = await fetch('/api/catalog/products?type=historical&limit=10000');
+            if (!response.ok) throw new Error('Failed to load existing products');
+            
+            const data = await response.json();
+            historicalProducts = data.products.map(p => ({
+                id: p.id,
+                filename: p.filename,
+                category: p.category,
+                sku: p.sku,
+                name: p.product_name,
+                is_historical: true
+            }));
+            
+            // Update UI
+            document.getElementById('historicalStatus').innerHTML = 
+                `<p class="success">✓ Loaded ${historicalProducts.length} products from existing catalog</p>`;
+            
+            // Show next section
+            document.getElementById('newSection').style.display = 'block';
+            document.getElementById('newSection').scrollIntoView({ behavior: 'smooth' });
+            
+        } catch (error) {
+            console.error('Error loading existing catalog:', error);
+            showToast('Failed to load existing catalog', 'error');
+        }
+        return;
+    }
+    
+    if (option === 'replace') {
+        // Clear existing catalog first
+        try {
+            showToast('Clearing existing catalog...', 'info');
+            const response = await fetch('/api/catalog/cleanup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'historical' })
+            });
+            
+            if (!response.ok) throw new Error('Failed to clear catalog');
+            
+            showToast('Existing catalog cleared', 'success');
+        } catch (error) {
+            console.error('Error clearing catalog:', error);
+            showToast('Failed to clear existing catalog', 'error');
+            return;
+        }
+    }
+    
+    // Continue with normal processing (add_to_existing or replace after clearing)
+    if (originalProcessHistoricalCatalog) {
+        originalProcessHistoricalCatalog();
+    }
+}
+
+// Hook into the process button
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        const processBtn = document.getElementById('processHistoricalBtn');
+        if (processBtn) {
+            // Store original handler
+            const originalHandler = processBtn.onclick;
+            
+            processBtn.onclick = async (e) => {
+                const option = getCatalogLoadOption();
+                
+                if (option === 'use_existing') {
+                    await processHistoricalCatalogWithOptions();
+                } else if (option === 'replace') {
+                    await processHistoricalCatalogWithOptions();
+                    // After clearing, call original handler if files are selected
+                    if (historicalFiles.length > 0 && originalHandler) {
+                        originalHandler.call(processBtn, e);
+                    }
+                } else {
+                    // add_to_existing - just use original handler
+                    if (originalHandler) {
+                        originalHandler.call(processBtn, e);
+                    }
+                }
+            };
+        }
+    }, 100);
+});
+
+
+// ============ Catalog State Synchronization ============
+// Ensures main app state stays in sync with database changes from Catalog Manager
+
+// Store last known catalog state for change detection
+let lastKnownCatalogState = {
+    totalProducts: 0,
+    historicalProducts: 0,
+    newProducts: 0,
+    lastChecked: null
+};
+
+// Check if catalog has changed since last check
+async function checkCatalogStateChanged() {
+    try {
+        const response = await fetch('/api/catalog/stats');
+        if (!response.ok) return false;
+        
+        const stats = await response.json();
+        
+        const hasChanged = (
+            lastKnownCatalogState.totalProducts !== stats.total_products ||
+            lastKnownCatalogState.historicalProducts !== stats.historical_products ||
+            lastKnownCatalogState.newProducts !== stats.new_products
+        );
+        
+        // Update last known state
+        lastKnownCatalogState = {
+            totalProducts: stats.total_products,
+            historicalProducts: stats.historical_products,
+            newProducts: stats.new_products,
+            lastChecked: Date.now()
+        };
+        
+        return hasChanged;
+    } catch (error) {
+        console.error('Error checking catalog state:', error);
+        return false;
+    }
+}
+
+// Reset app state when catalog changes are detected
+function resetAppState(reason = 'Catalog data has changed') {
+    console.log('Resetting app state:', reason);
+    
+    // Clear in-memory product data
+    historicalProducts = [];
+    newProducts = [];
+    matchResults = [];
+    historicalFiles = [];
+    newFiles = [];
+    historicalCsv = null;
+    newCsv = null;
+    
+    // Reset UI to initial state
+    const historicalSection = document.getElementById('historicalSection');
+    const newSection = document.getElementById('newSection');
+    const matchSection = document.getElementById('matchSection');
+    const resultsSection = document.getElementById('resultsSection');
+    
+    if (newSection) newSection.style.display = 'none';
+    if (matchSection) matchSection.style.display = 'none';
+    if (resultsSection) resultsSection.style.display = 'none';
+    
+    // Clear status messages
+    const historicalStatus = document.getElementById('historicalStatus');
+    const newStatus = document.getElementById('newStatus');
+    const historicalInfo = document.getElementById('historicalInfo');
+    const newInfo = document.getElementById('newInfo');
+    
+    if (historicalStatus) historicalStatus.innerHTML = '';
+    if (newStatus) newStatus.innerHTML = '';
+    if (historicalInfo) historicalInfo.innerHTML = '';
+    if (newInfo) newInfo.innerHTML = '';
+    
+    // Reset buttons
+    const processHistoricalBtn = document.getElementById('processHistoricalBtn');
+    const processNewBtn = document.getElementById('processNewBtn');
+    
+    if (processHistoricalBtn) {
+        processHistoricalBtn.disabled = true;
+        processHistoricalBtn.textContent = 'PROCESS';
+    }
+    if (processNewBtn) {
+        processNewBtn.disabled = true;
+    }
+    
+    // Reset drop zones
+    const historicalDropZone = document.getElementById('historicalDropZone');
+    const newDropZone = document.getElementById('newDropZone');
+    
+    if (historicalDropZone) {
+        historicalDropZone.style.opacity = '1';
+        historicalDropZone.style.pointerEvents = 'auto';
+    }
+    if (newDropZone) {
+        newDropZone.style.opacity = '1';
+        newDropZone.style.pointerEvents = 'auto';
+    }
+    
+    // Refresh catalog options
+    checkExistingCatalog();
+    
+    // Scroll to top
+    if (historicalSection) {
+        historicalSection.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+// Validate that products in memory still exist in database
+async function validateProductsExist(productIds) {
+    if (!productIds || productIds.length === 0) return { valid: true, missing: [] };
+    
+    try {
+        const response = await fetch('/api/catalog/products?limit=10000');
+        if (!response.ok) return { valid: false, missing: productIds };
+        
+        const data = await response.json();
+        const existingIds = new Set(data.products.map(p => p.id));
+        
+        const missing = productIds.filter(id => !existingIds.has(id));
+        
+        return {
+            valid: missing.length === 0,
+            missing: missing
+        };
+    } catch (error) {
+        console.error('Error validating products:', error);
+        return { valid: false, missing: [] };
+    }
+}
+
+// Check state before critical operations
+async function ensureStateValid() {
+    const hasChanged = await checkCatalogStateChanged();
+    
+    if (hasChanged) {
+        // Validate that our in-memory products still exist
+        const historicalIds = historicalProducts.map(p => p.id).filter(id => id);
+        const newIds = newProducts.map(p => p.id).filter(id => id);
+        
+        const historicalValidation = await validateProductsExist(historicalIds);
+        const newValidation = await validateProductsExist(newIds);
+        
+        if (!historicalValidation.valid || !newValidation.valid) {
+            showToast('Database has changed. Resetting to sync with current data.', 'warning', 5000);
+            resetAppState('Products were deleted from Catalog Manager');
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// Listen for visibility changes (user returns from Catalog Manager tab)
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+        // User returned to this tab - check if catalog changed
+        const hasChanged = await checkCatalogStateChanged();
+        
+        if (hasChanged) {
+            // Check if we have any in-progress work
+            const hasHistoricalData = historicalProducts.length > 0;
+            const hasNewData = newProducts.length > 0;
+            const hasResults = matchResults.length > 0;
+            
+            if (hasHistoricalData || hasNewData || hasResults) {
+                // Validate our data is still valid
+                const historicalIds = historicalProducts.map(p => p.id).filter(id => id);
+                const newIds = newProducts.map(p => p.id).filter(id => id);
+                
+                const historicalValidation = await validateProductsExist(historicalIds);
+                const newValidation = await validateProductsExist(newIds);
+                
+                if (!historicalValidation.valid || !newValidation.valid) {
+                    showToast('Catalog was modified. Resetting app state.', 'warning', 5000);
+                    resetAppState('Catalog modified while away');
+                } else {
+                    // Just refresh the catalog options display
+                    checkExistingCatalog();
+                }
+            } else {
+                // No in-progress work, just refresh catalog options
+                checkExistingCatalog();
+            }
+        }
+    }
+});
+
+// Periodic state check (every 30 seconds if tab is visible)
+let stateCheckInterval = null;
+
+function startStateChecking() {
+    if (stateCheckInterval) return;
+    
+    stateCheckInterval = setInterval(async () => {
+        if (document.visibilityState === 'visible') {
+            // Only check if we have in-progress work
+            if (historicalProducts.length > 0 || newProducts.length > 0) {
+                await ensureStateValid();
+            }
+        }
+    }, 30000); // Check every 30 seconds
+}
+
+function stopStateChecking() {
+    if (stateCheckInterval) {
+        clearInterval(stateCheckInterval);
+        stateCheckInterval = null;
+    }
+}
+
+// Start state checking when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize last known state
+    checkCatalogStateChanged();
+    
+    // Start periodic checking
+    startStateChecking();
+});
+
+// Expose reset function globally for Catalog Manager to call
+window.resetMainAppState = resetAppState;
+window.checkCatalogStateChanged = checkCatalogStateChanged;
+
+// ============ Catalog Info Integration ============
+
+// Initialize catalog info bar on page load
+setTimeout(() => {
+    initCatalogInfo();
+}, 500);
+
+function initCatalogInfo() {
+    loadCatalogInfo();
+    initCatalogChangeListener();
+}
+
+// Load and display catalog info
+async function loadCatalogInfo() {
+    try {
+        const response = await fetch('/api/catalogs/main-db-stats');
+        if (!response.ok) {
+            throw new Error('Failed to load catalog stats');
+        }
+        
+        const data = await response.json();
+        
+        const infoBar = document.getElementById('catalogInfoBar');
+        const summary = document.getElementById('activeCatalogSummary');
+        
+        if (!infoBar || !summary) return;
+        
+        if (data.exists) {
+            let text = `${data.total_products} products (${data.historical_products} historical, ${data.new_products} new)`;
+            
+            if (data.loaded_snapshot && data.loaded_snapshot.loaded) {
+                text += ` | 📂 Loaded from: "${data.loaded_snapshot.name}"`;
+            }
+            
+            summary.textContent = text;
+            infoBar.style.display = 'block';
+        } else {
+            summary.textContent = 'No catalog loaded';
+            infoBar.style.display = 'block';
+        }
+        
+    } catch (error) {
+        console.error('Error loading catalog info:', error);
+        const summary = document.getElementById('activeCatalogSummary');
+        if (summary) {
+            summary.textContent = 'Unable to load catalog info';
+        }
+    }
+}
+
+// Refresh catalog info
+function refreshCatalogInfo() {
+    loadCatalogInfo();
+    showToast('Catalog info refreshed', 'success');
+}
+
+// Open Catalog Manager
+function openCatalogManager() {
+    window.open('/catalog-manager', '_blank');
+}
+
+// Listen for catalog changes from Catalog Manager
+function initCatalogChangeListener() {
+    // Listen via BroadcastChannel
+    try {
+        const channel = new BroadcastChannel('catalog_changes');
+        channel.onmessage = (event) => {
+            handleCatalogChangeInMainApp(event.data);
+        };
+    } catch (e) {
+        // BroadcastChannel not supported, use polling
+        setInterval(checkCatalogChangesInMainApp, 2000);
+    }
+    
+    // Also check on visibility change (when user switches back to this tab)
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            checkCatalogChangesInMainApp();
+        }
+    });
+}
+
+// Check for catalog changes via sessionStorage
+function checkCatalogChangesInMainApp() {
+    const changeData = sessionStorage.getItem('catalogManagerChange');
+    if (changeData) {
+        try {
+            const change = JSON.parse(changeData);
+            // Only process recent changes (within last 30 seconds)
+            if (Date.now() - change.timestamp < 30000) {
+                handleCatalogChangeInMainApp(change);
+            }
+        } catch (e) {
+            console.error('Error parsing catalog change:', e);
+        }
+    }
+}
+
+// Handle catalog change notification in main app
+function handleCatalogChangeInMainApp(change) {
+    if (!change || !change.action) return;
+    
+    // Refresh catalog info
+    loadCatalogInfo();
+    
+    // If a new catalog was loaded, show prominent notification
+    if (change.action === 'catalog_loaded') {
+        showToast(`Catalog "${change.details?.name || 'snapshot'}" loaded with ${change.details?.productCount || 0} products`, 'success');
+        
+        // If user has already processed products, warn them
+        if (historicalProducts.length > 0 || newProducts.length > 0) {
+            showToast('Note: Your current session data may be from the previous catalog. Consider resetting.', 'warning');
+        }
+    } else if (change.action === 'cleanup' || change.action === 'bulk_delete') {
+        showToast('Catalog was modified in Catalog Manager', 'info');
+    }
 }

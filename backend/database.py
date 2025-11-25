@@ -1685,3 +1685,629 @@ def get_all_products(is_historical=None):
         except Exception as e:
             logger.error(f"Error getting all products: {e}")
             raise
+
+
+# ============ Catalog Management Functions ============
+
+def get_catalog_stats() -> Dict[str, Any]:
+    """Get comprehensive catalog statistics for the catalog manager
+    
+    Returns:
+        Dictionary with catalog statistics including:
+        - total_products, historical_products, new_products
+        - database_size_mb, uploads_size_mb
+        - total_matches, unique_categories
+        - missing_features, missing_category, missing_sku, duplicate_skus
+        - category_breakdown, last_updated
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Total products
+        cursor.execute('SELECT COUNT(*) FROM products')
+        total_products = cursor.fetchone()[0]
+        
+        # Historical vs new
+        cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = 1')
+        historical_products = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = 0')
+        new_products = cursor.fetchone()[0]
+        
+        # Total matches
+        cursor.execute('SELECT COUNT(*) FROM matches')
+        total_matches = cursor.fetchone()[0]
+        
+        # Unique categories
+        cursor.execute('SELECT COUNT(DISTINCT category) FROM products WHERE category IS NOT NULL')
+        unique_categories = cursor.fetchone()[0]
+        
+        # Missing features
+        cursor.execute('''
+            SELECT COUNT(*) FROM products p
+            LEFT JOIN features f ON p.id = f.product_id
+            WHERE f.id IS NULL
+        ''')
+        missing_features = cursor.fetchone()[0]
+        
+        # Missing category
+        cursor.execute('SELECT COUNT(*) FROM products WHERE category IS NULL')
+        missing_category = cursor.fetchone()[0]
+        
+        # Missing SKU
+        cursor.execute('SELECT COUNT(*) FROM products WHERE sku IS NULL')
+        missing_sku = cursor.fetchone()[0]
+        
+        # Duplicate SKUs
+        cursor.execute('''
+            SELECT COUNT(*) FROM (
+                SELECT sku FROM products
+                WHERE sku IS NOT NULL
+                GROUP BY LOWER(sku)
+                HAVING COUNT(*) > 1
+            )
+        ''')
+        duplicate_skus = cursor.fetchone()[0]
+        
+        # Category breakdown
+        cursor.execute('''
+            SELECT category, COUNT(*) as count
+            FROM products
+            GROUP BY category
+            ORDER BY count DESC
+        ''')
+        category_breakdown = [{'category': row['category'], 'count': row['count']} 
+                            for row in cursor.fetchall()]
+        
+        # Last updated (most recent product)
+        cursor.execute('SELECT MAX(created_at) FROM products')
+        last_updated = cursor.fetchone()[0]
+        
+        # Database size
+        db_size_mb = 0
+        try:
+            db_size_mb = round(os.path.getsize(DB_PATH) / (1024 * 1024), 2)
+        except:
+            pass
+        
+        # Uploads folder size
+        uploads_size_mb = 0
+        uploads_path = os.path.join(os.path.dirname(__file__), 'uploads')
+        try:
+            if os.path.exists(uploads_path):
+                total_size = 0
+                for dirpath, dirnames, filenames in os.walk(uploads_path):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        total_size += os.path.getsize(fp)
+                uploads_size_mb = round(total_size / (1024 * 1024), 2)
+        except:
+            pass
+        
+        return {
+            'total_products': total_products,
+            'historical_products': historical_products,
+            'new_products': new_products,
+            'total_matches': total_matches,
+            'unique_categories': unique_categories,
+            'missing_features': missing_features,
+            'missing_category': missing_category,
+            'missing_sku': missing_sku,
+            'duplicate_skus': duplicate_skus,
+            'category_breakdown': category_breakdown,
+            'last_updated': last_updated,
+            'database_size_mb': db_size_mb,
+            'uploads_size_mb': uploads_size_mb,
+            'database_path': DB_PATH
+        }
+
+
+def get_products_paginated(page: int = 1, limit: int = 50, 
+                          search: str = None, category: str = None,
+                          is_historical: Optional[bool] = None,
+                          has_features: Optional[bool] = None,
+                          sort_by: str = 'date_desc') -> Dict[str, Any]:
+    """Get paginated products with filtering and sorting
+    
+    Args:
+        page: Page number (1-indexed)
+        limit: Products per page
+        search: Search query for filename, SKU, or name
+        category: Category filter
+        is_historical: Filter by historical/new
+        has_features: Filter by feature extraction status
+        sort_by: Sort order (date_desc, date_asc, name_asc, name_desc, category)
+    
+    Returns:
+        Dictionary with products list and total count
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build WHERE clause
+        conditions = []
+        params = []
+        
+        if search:
+            conditions.append('''
+                (LOWER(image_path) LIKE LOWER(?) 
+                 OR LOWER(sku) LIKE LOWER(?) 
+                 OR LOWER(product_name) LIKE LOWER(?))
+            ''')
+            search_param = f'%{search}%'
+            params.extend([search_param, search_param, search_param])
+        
+        if category:
+            conditions.append('category = ?')
+            params.append(category)
+        
+        if is_historical is not None:
+            conditions.append('is_historical = ?')
+            params.append(is_historical)
+        
+        where_clause = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
+        
+        # Build ORDER BY clause
+        order_map = {
+            'date_desc': 'p.created_at DESC',
+            'date_asc': 'p.created_at ASC',
+            'name_asc': 'COALESCE(p.product_name, p.image_path) ASC',
+            'name_desc': 'COALESCE(p.product_name, p.image_path) DESC',
+            'category': 'p.category ASC, p.created_at DESC'
+        }
+        order_by = order_map.get(sort_by, 'p.created_at DESC')
+        
+        # Get total count
+        count_query = f'SELECT COUNT(*) FROM products p {where_clause}'
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+        
+        # Get products with feature status
+        offset = (page - 1) * limit
+        query = f'''
+            SELECT p.*, 
+                   CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as has_features
+            FROM products p
+            LEFT JOIN features f ON p.id = f.product_id
+            {where_clause}
+            ORDER BY {order_by}
+            LIMIT ? OFFSET ?
+        '''
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        
+        products = []
+        for row in cursor.fetchall():
+            # Extract filename from path
+            filename = os.path.basename(row['image_path']) if row['image_path'] else None
+            
+            products.append({
+                'id': row['id'],
+                'image_path': row['image_path'],
+                'filename': filename,
+                'category': row['category'],
+                'product_name': row['product_name'],
+                'sku': row['sku'],
+                'is_historical': bool(row['is_historical']),
+                'has_features': bool(row['has_features']),
+                'created_at': row['created_at']
+            })
+        
+        # Filter by has_features if specified (done after query for simplicity)
+        if has_features is not None:
+            products = [p for p in products if p['has_features'] == has_features]
+        
+        return {
+            'products': products,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'total_pages': (total + limit - 1) // limit
+        }
+
+
+def bulk_delete_products(product_ids: List[int]) -> int:
+    """Delete multiple products and their associated data
+    
+    Args:
+        product_ids: List of product IDs to delete
+    
+    Returns:
+        Number of products deleted
+    """
+    if not product_ids:
+        return 0
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get image paths before deletion
+        placeholders = ','.join('?' * len(product_ids))
+        cursor.execute(f'SELECT image_path FROM products WHERE id IN ({placeholders})', product_ids)
+        image_paths = [row['image_path'] for row in cursor.fetchall()]
+        
+        # Delete features
+        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete matches
+        cursor.execute(f'''
+            DELETE FROM matches 
+            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
+        ''', product_ids + product_ids)
+        
+        # Delete price history
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete performance history
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete products
+        cursor.execute(f'DELETE FROM products WHERE id IN ({placeholders})', product_ids)
+        deleted_count = cursor.rowcount
+        
+        # Delete image files
+        for path in image_paths:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                logger.warning(f"Failed to delete image file {path}: {e}")
+        
+        return deleted_count
+
+
+def bulk_update_products(product_ids: List[int], category: Optional[str] = None,
+                        product_name: Optional[str] = None, sku: Optional[str] = None) -> int:
+    """Update multiple products at once
+    
+    Args:
+        product_ids: List of product IDs to update
+        category: New category (None to skip)
+        product_name: New name (None to skip)
+        sku: New SKU (None to skip)
+    
+    Returns:
+        Number of products updated
+    """
+    if not product_ids:
+        return 0
+    
+    updates = []
+    params = []
+    
+    if category is not None:
+        updates.append('category = ?')
+        params.append(category if category else None)
+    
+    if product_name is not None:
+        updates.append('product_name = ?')
+        params.append(product_name if product_name else None)
+    
+    if sku is not None:
+        updates.append('sku = ?')
+        params.append(sku if sku else None)
+    
+    if not updates:
+        return 0
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        placeholders = ','.join('?' * len(product_ids))
+        query = f"UPDATE products SET {', '.join(updates)} WHERE id IN ({placeholders})"
+        params.extend(product_ids)
+        
+        cursor.execute(query, params)
+        return cursor.rowcount
+
+
+def clear_products_by_type(product_type: str) -> Dict[str, int]:
+    """Clear products by type (all, historical, new)
+    
+    Args:
+        product_type: 'all', 'historical', or 'new'
+    
+    Returns:
+        Dictionary with counts of deleted items
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build condition
+        if product_type == 'all':
+            condition = '1=1'
+        elif product_type == 'historical':
+            condition = 'is_historical = 1'
+        elif product_type == 'new':
+            condition = 'is_historical = 0'
+        else:
+            return {'error': 'Invalid product type'}
+        
+        # Get product IDs and image paths
+        cursor.execute(f'SELECT id, image_path FROM products WHERE {condition}')
+        products = cursor.fetchall()
+        product_ids = [p['id'] for p in products]
+        image_paths = [p['image_path'] for p in products]
+        
+        if not product_ids:
+            return {'products_deleted': 0, 'features_deleted': 0, 'matches_deleted': 0}
+        
+        placeholders = ','.join('?' * len(product_ids))
+        
+        # Delete features
+        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
+        features_deleted = cursor.rowcount
+        
+        # Delete matches
+        cursor.execute(f'''
+            DELETE FROM matches 
+            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
+        ''', product_ids + product_ids)
+        matches_deleted = cursor.rowcount
+        
+        # Delete price history
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete performance history
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete products
+        cursor.execute(f'DELETE FROM products WHERE {condition}')
+        products_deleted = cursor.rowcount
+        
+        # Delete image files
+        for path in image_paths:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                logger.warning(f"Failed to delete image file {path}: {e}")
+        
+        return {
+            'products_deleted': products_deleted,
+            'features_deleted': features_deleted,
+            'matches_deleted': matches_deleted
+        }
+
+
+def clear_all_matches() -> int:
+    """Clear all match results
+    
+    Returns:
+        Number of matches deleted
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM matches')
+        return cursor.rowcount
+
+
+def clear_products_by_categories(categories: List[str]) -> Dict[str, int]:
+    """Clear products in specified categories
+    
+    Args:
+        categories: List of category names to delete
+    
+    Returns:
+        Dictionary with counts of deleted items
+    """
+    if not categories:
+        return {'products_deleted': 0}
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Handle NULL category
+        conditions = []
+        params = []
+        for cat in categories:
+            if cat == '' or cat is None:
+                conditions.append('category IS NULL')
+            else:
+                conditions.append('category = ?')
+                params.append(cat)
+        
+        where_clause = ' OR '.join(conditions)
+        
+        # Get product IDs and image paths
+        cursor.execute(f'SELECT id, image_path FROM products WHERE {where_clause}', params)
+        products = cursor.fetchall()
+        product_ids = [p['id'] for p in products]
+        image_paths = [p['image_path'] for p in products]
+        
+        if not product_ids:
+            return {'products_deleted': 0}
+        
+        placeholders = ','.join('?' * len(product_ids))
+        
+        # Delete features
+        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete matches
+        cursor.execute(f'''
+            DELETE FROM matches 
+            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
+        ''', product_ids + product_ids)
+        
+        # Delete price/performance history
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete products
+        cursor.execute(f'DELETE FROM products WHERE {where_clause}', params)
+        products_deleted = cursor.rowcount
+        
+        # Delete image files
+        for path in image_paths:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                logger.warning(f"Failed to delete image file {path}: {e}")
+        
+        return {'products_deleted': products_deleted}
+
+
+def clear_products_by_date(older_than_days: int) -> Dict[str, int]:
+    """Clear products older than specified days
+    
+    Args:
+        older_than_days: Delete products older than this many days
+    
+    Returns:
+        Dictionary with counts of deleted items
+    """
+    from datetime import datetime, timedelta
+    
+    cutoff_date = (datetime.now() - timedelta(days=older_than_days)).strftime('%Y-%m-%d %H:%M:%S')
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get product IDs and image paths
+        cursor.execute('SELECT id, image_path FROM products WHERE created_at < ?', (cutoff_date,))
+        products = cursor.fetchall()
+        product_ids = [p['id'] for p in products]
+        image_paths = [p['image_path'] for p in products]
+        
+        if not product_ids:
+            return {'products_deleted': 0}
+        
+        placeholders = ','.join('?' * len(product_ids))
+        
+        # Delete features
+        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete matches
+        cursor.execute(f'''
+            DELETE FROM matches 
+            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
+        ''', product_ids + product_ids)
+        
+        # Delete price/performance history
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
+        
+        # Delete products
+        cursor.execute('DELETE FROM products WHERE created_at < ?', (cutoff_date,))
+        products_deleted = cursor.rowcount
+        
+        # Delete image files
+        for path in image_paths:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                logger.warning(f"Failed to delete image file {path}: {e}")
+        
+        return {'products_deleted': products_deleted}
+
+
+def vacuum_database() -> Dict[str, Any]:
+    """Vacuum the database to reclaim disk space
+    
+    Returns:
+        Dictionary with size before and after
+    """
+    size_before = 0
+    try:
+        size_before = os.path.getsize(DB_PATH) / (1024 * 1024)
+    except:
+        pass
+    
+    # Need to use a separate connection for VACUUM (can't be in transaction)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute('VACUUM')
+    finally:
+        conn.close()
+    
+    size_after = 0
+    try:
+        size_after = os.path.getsize(DB_PATH) / (1024 * 1024)
+    except:
+        pass
+    
+    return {
+        'size_before_mb': round(size_before, 2),
+        'size_after_mb': round(size_after, 2),
+        'space_reclaimed_mb': round(size_before - size_after, 2)
+    }
+
+
+def clear_uploaded_images() -> Dict[str, int]:
+    """Clear all uploaded image files but keep metadata
+    
+    Returns:
+        Dictionary with count of files deleted and space reclaimed
+    """
+    uploads_path = os.path.join(os.path.dirname(__file__), 'uploads')
+    
+    files_deleted = 0
+    space_reclaimed = 0
+    
+    try:
+        if os.path.exists(uploads_path):
+            for filename in os.listdir(uploads_path):
+                filepath = os.path.join(uploads_path, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        space_reclaimed += os.path.getsize(filepath)
+                        os.remove(filepath)
+                        files_deleted += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete {filepath}: {e}")
+    except Exception as e:
+        logger.error(f"Error clearing uploads: {e}")
+    
+    return {
+        'files_deleted': files_deleted,
+        'space_reclaimed_mb': round(space_reclaimed / (1024 * 1024), 2)
+    }
+
+
+def export_catalog_csv() -> str:
+    """Export entire catalog to CSV format
+    
+    Returns:
+        CSV string with all product data
+    """
+    import csv
+    import io
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT p.id, p.image_path, p.category, p.product_name, p.sku,
+                   p.is_historical, p.created_at,
+                   CASE WHEN f.id IS NOT NULL THEN 'Yes' ELSE 'No' END as has_features
+            FROM products p
+            LEFT JOIN features f ON p.id = f.product_id
+            ORDER BY p.created_at DESC
+        ''')
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow(['ID', 'Filename', 'Category', 'Name', 'SKU', 
+                        'Type', 'Created', 'Has Features'])
+        
+        # Data
+        for row in cursor.fetchall():
+            filename = os.path.basename(row['image_path']) if row['image_path'] else ''
+            product_type = 'Historical' if row['is_historical'] else 'New'
+            writer.writerow([
+                row['id'],
+                filename,
+                row['category'] or '',
+                row['product_name'] or '',
+                row['sku'] or '',
+                product_type,
+                row['created_at'] or '',
+                row['has_features']
+            ])
+        
+        return output.getvalue()

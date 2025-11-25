@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>CATALOG MANAGER</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles-common.css">
+    <style>
+        /* Catalog Manager specific styles */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            border: 2px solid #000;
+            padding: 12px;
+            text-align: center;
+            background: #fff;
+        }
+        
+        .stat-card .stat-value {
+            font-size: 1.4em;
+            font-weight: bold;
+            display: block;
+            margin-bottom: 3px;
+        }
+        
+        .stat-card .stat-label {
+            font-size: 0.75em;
+            text-transform: uppercase;
+            color: #666;
+        }
+        
+        .stat-card.warning {
+            background: #fff3cd;
+            border-color: #ffc107;
+        }
+        
+        .stat-card.danger {
+            background: #f0f0f0;
+            border-color: #000;
+        }
+        
+        .category-breakdown {
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 2px solid #000;
+            padding: 15px;
+        }
+        
+        .category-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .category-item:last-child {
+            border-bottom: none;
+        }
+        
+        .cleanup-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 15px 0;
+        }
+        
+        .cleanup-btn {
+            padding: 10px 15px;
+            border: 2px solid #000;
+            background: #fff;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        
+        .cleanup-btn:hover {
+            background: #f0f0f0;
+        }
+        
+        .cleanup-btn.danger {
+            border-color: #000;
+            color: #000;
+            border-width: 3px;
+        }
+        
+        .cleanup-btn.danger:hover {
+            background: #f0f0f0;
+        }
+        
+        .cleanup-btn .btn-title {
+            font-weight: bold;
+            display: block;
+        }
+        
+        .cleanup-btn .btn-desc {
+            display: none;
+        }
+        
+        /* Product List */
+        .product-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        
+        #productListContainer {
+            width: 100%;
+            overflow: hidden;
+        }
+        
+        @media (max-width: 900px) {
+            .product-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .product-card {
+            border: 2px solid #000;
+            padding: 10px;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .product-card:hover {
+            background: #f9f9f9;
+        }
+        
+        .product-card-thumbnail {
+            width: 80px;
+            height: 80px;
+            flex-shrink: 0;
+            border: 2px solid #000;
+            background: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .product-card-thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .product-card-thumbnail img[data-src] {
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .product-card-thumbnail img.loaded {
+            opacity: 1;
+        }
+        
+        .product-card-thumbnail.no-image {
+            color: #999;
+            font-size: 0.7em;
+            text-align: center;
+            padding: 5px;
+        }
+        
+        .product-card-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .product-card .product-name {
+            font-weight: bold;
+            font-size: 0.95em;
+            margin-bottom: 5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .product-card .product-meta {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .product-card .product-status {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+        
+        .product-card .status-badge {
+            font-size: 0.7em;
+            padding: 3px 8px;
+            border: 1px solid #000;
+            background: #fff;
+        }
+        
+        .status-badge.features-ok {
+            border-color: #000;
+            color: #000;
+        }
+        
+        .status-badge.features-missing {
+            border-color: #000;
+            color: #000;
+        }
+        
+        .status-badge.historical {
+            border-color: #000;
+            color: #000;
+        }
+        
+        .status-badge.new {
+            border-color: #000;
+            color: #000;
+        }
+        
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+            padding: 15px;
+            border-top: 2px solid #000;
+        }
+        
+        .pagination button {
+            padding: 8px 15px;
+            border: 2px solid #000;
+            background: #fff;
+            cursor: pointer;
+        }
+        
+        .pagination button:hover:not(:disabled) {
+            background: #000;
+            color: #fff;
+        }
+        
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pagination .page-info {
+            font-weight: bold;
+        }
+        
+        /* Filters */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 2px solid #000;
+            background: #f9f9f9;
+            max-width: 100%;
+        }
+        
+        .filter-bar input,
+        .filter-bar select {
+            padding: 8px 12px;
+            border: 2px solid #000;
+            font-family: inherit;
+        }
+        
+        .filter-bar input {
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        /* Bulk Actions */
+        .bulk-actions {
+            display: none !important;
+        }
+        
+        /* Product Detail Modal */
+        .product-detail {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 30px;
+        }
+        
+        .product-detail img {
+            width: 100%;
+            border: 2px solid #000;
+        }
+        
+        .product-detail .detail-info {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .detail-row {
+            display: flex;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        .detail-row .label {
+            font-weight: bold;
+            width: 120px;
+            flex-shrink: 0;
+        }
+        
+        .detail-row .value {
+            flex: 1;
+        }
+        
+        .detail-row .value.editable {
+            border: 1px solid #ddd;
+            padding: 5px;
+            cursor: text;
+        }
+        
+        .detail-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #000;
+        }
+        
+        /* Confirmation Modal */
+        .confirm-modal {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .confirm-modal .warning-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+        
+        .confirm-modal .confirm-message {
+            font-size: 1.1em;
+            margin-bottom: 20px;
+        }
+        
+        .confirm-modal .confirm-details {
+            background: #f8f9fa;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        
+        .confirm-modal .confirm-actions {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 3px solid #000;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 15px 25px;
+            border: 3px solid #000;
+            border-bottom: 3px solid #000;
+            background: #f0f0f0;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: inherit;
+            margin-bottom: -3px;
+            color: #000;
+            margin-right: -3px;
+            position: relative;
+        }
+        
+        .tab.active {
+            background: #fff;
+            border-bottom-color: #fff;
+            color: #000;
+            z-index: 1;
+        }
+        
+        .tab:hover:not(.active) {
+            background: #e0e0e0;
+        }
+        
+        .tab-panel {
+            display: none;
+        }
+        
+        .tab-panel.active {
+            display: block;
+        }
+        
+        /* Database Info */
+        .db-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            padding: 15px;
+            background: #f9f9f9;
+            border: 2px solid #000;
+            margin-bottom: 20px;
+        }
+        
+        .db-info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .db-info-item .icon {
+            font-size: 1.2em;
+        }
+        
+        .copy-btn {
+            padding: 3px 8px;
+            font-size: 0.8em;
+            border: 1px solid #000;
+            background: #fff;
+            cursor: pointer;
+        }
+        
+        .copy-btn:hover {
+            background: #000;
+            color: #fff;
+        }
+        
+        /* Snapshot Styles */
+        .snapshot-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .snapshot-card {
+            border: 2px solid #000;
+            padding: 10px;
+            background: #fff;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            transition: all 0.2s;
+        }
+        
+        .snapshot-card:hover {
+            background: #f9f9f9;
+        }
+        
+        .snapshot-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .snapshot-name {
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 3px;
+            word-break: break-word;
+        }
+        
+        .snapshot-meta {
+            color: #666;
+            font-size: 0.8em;
+            margin-bottom: 2px;
+        }
+        
+        .snapshot-actions {
+            display: flex;
+            gap: 5px;
+            flex-shrink: 0;
+            align-items: center;
+        }
+        
+        .snapshot-date {
+            color: #888;
+            font-size: 0.75em;
+        }
+        
+        .snapshot-tags {
+            color: #666;
+            font-size: 0.75em;
+            margin-top: 2px;
+        }
+        
+        .btn-small {
+            padding: 6px 10px;
+            font-size: 0.75em;
+            border: 2px solid #000;
+            background: #fff;
+            color: #000;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+        
+        .btn-small:hover,
+        .btn-small.btn-primary:hover {
+            background: #000 !important;
+            color: #fff !important;
+        }
+        
+        .btn-small.danger {
+            border-color: #000;
+            color: #000;
+        }
+        
+        .btn-small.danger:hover {
+            background: #000 !important;
+            color: #fff !important;
+        }
+        
+        .no-snapshots {
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+            border: 2px dashed #ddd;
+        }
+        
+        .form-group {
+            margin-bottom: 10px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .snapshot-detail-grid .detail-row {
+            display: flex;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .snapshot-detail-grid .label {
+            font-weight: bold;
+            width: 130px;
+            flex-shrink: 0;
+        }
+        
+        @media (max-width: 768px) {
+            .product-detail {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .snapshots-grid {
+                grid-template-columns: 1fr !important;
+            }
+            
+            .snapshot-card {
+                grid-template-columns: 30px 1fr;
+            }
+            
+            .snapshot-actions {
+                grid-column: 1 / -1;
+                flex-direction: row;
+                flex-wrap: wrap;
+                margin-top: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CATALOG MANAGER</h1>
+            <div style="display: flex; align-items: center; gap: 10px; justify-content: center;">
+                <p>View, manage, and clean up your product catalog</p>
+                <button class="help-btn" onclick="toggleHelp('managerHelp')" style="position: static;">?</button>
+            </div>
+            <div class="help-text" id="managerHelp" style="display: none; margin-top: 15px; text-align: left;">
+                <p><strong>📚 WHAT IS THE CATALOG MANAGER?</strong></p>
+                <p>The Catalog Manager is your control center for managing product catalogs, creating snapshots, and maintaining database health. It works alongside the main matching app to give you full control over your product data.</p>
+                
+                <p><strong>KEY FEATURES:</strong></p>
+                <ul>
+                    <li><strong>Overview:</strong> View catalog statistics, database size, and data quality metrics</li>
+                    <li><strong>Snapshots:</strong> Save and load different catalog versions (like version control for your products)</li>
+                    <li><strong>Browse:</strong> Search, filter, and manage individual products with bulk operations</li>
+                    <li><strong>Cleanup:</strong> Delete products and reclaim disk space with various cleanup options</li>
+                </ul>
+                
+                <p><strong>HOW IT WORKS WITH THE MAIN APP:</strong></p>
+                <ul>
+                    <li>The main app always works with your "working catalog" (product_matching.db)</li>
+                    <li>Use Catalog Manager to save that catalog as named snapshots</li>
+                    <li>Load different snapshots to switch between catalog versions</li>
+                    <li>Main app automatically detects and displays which catalog is active</li>
+                    <li>Changes made here immediately affect the main app</li>
+                </ul>
+                
+                <p><strong>💡 COMMON WORKFLOWS:</strong></p>
+                <ul>
+                    <li><strong>Seasonal Catalogs:</strong> Save snapshots for Spring, Summer, Fall, Winter collections</li>
+                    <li><strong>Testing:</strong> Create test snapshots to experiment without affecting production data</li>
+                    <li><strong>Backup:</strong> Save snapshots before major cleanup or changes</li>
+                    <li><strong>Organization:</strong> Separate catalogs by product line, vendor, or project</li>
+                </ul>
+                
+                <p><strong>⚠️ IMPORTANT:</strong> This manager directly modifies your working catalog. Always save a snapshot before making major changes!</p>
+            </div>
+            <a href="/" class="btn-link">← BACK TO APP</a>
+        </header>
+
+        <main>
+            <!-- Database Info Bar -->
+            <div class="db-info">
+                <div class="db-info-item">
+                    <span class="icon">[DB]</span>
+                    <span>Database: <strong id="dbPath">Loading...</strong></span>
+                    <button class="copy-btn" onclick="copyDbPath()" title="Copy path to clipboard">COPY</button>
+                </div>
+                <div class="db-info-item">
+                    <span class="icon">[IMG]</span>
+                    <span>Uploads: <strong id="uploadsSize">Loading...</strong></span>
+                </div>
+                <div class="db-info-item">
+                    <span class="icon">[T]</span>
+                    <span>Last Updated: <strong id="lastUpdated">Loading...</strong></span>
+                </div>
+                <button class="btn" onclick="refreshStats()" style="margin-left: auto;">REFRESH</button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab" onclick="switchTab('snapshots')" title="Save and load catalog versions - like version control for your products">SNAPSHOTS</button>
+                <button class="tab" onclick="switchTab('overview')" title="View catalog statistics, data quality metrics, and cleanup tools">OVERVIEW</button>
+                <button class="tab" onclick="switchTab('browse')" title="Browse, search, and edit products in a 2-column list view">BROWSE</button>
+            </div>
+
+            <!-- Overview Tab -->
+            <div class="tab-panel" id="overviewTab">
+                <div class="section-header" style="margin-bottom: 10px;">
+                    <h3 style="display: inline; font-size: 1.1em;">STATS</h3>
+                    <button class="help-btn" onclick="toggleHelp('catalogHelp')" style="margin-left: 10px;">?</button>
+                </div>
+                <div class="help-text" id="catalogHelp" style="display: none; margin-bottom: 15px;">
+                    <p><strong>📊 OVERVIEW TAB</strong></p>
+                    <p>View catalog statistics, data quality metrics, and access cleanup tools.</p>
+                    
+                    <p><strong>CATALOG STATISTICS:</strong></p>
+                    <ul>
+                        <li><strong>Total Products:</strong> All products in your working database</li>
+                        <li><strong>Historical:</strong> Your reference catalog (products used for matching comparisons)</li>
+                        <li><strong>New Products:</strong> Products you're trying to match against historical</li>
+                        <li><strong>Database Size:</strong> Current SQLite file size on disk</li>
+                        <li><strong>Stored Matches:</strong> Number of saved match results</li>
+                        <li><strong>Categories:</strong> Unique product categories in catalog</li>
+                    </ul>
+                    
+                    <p><strong>DATA QUALITY INDICATORS:</strong></p>
+                    <ul>
+                        <li><strong>Missing Features:</strong> Products without AI-extracted visual features (can't be matched until features are extracted)</li>
+                        <li><strong>No Category:</strong> Products without category assignment</li>
+                        <li><strong>No SKU:</strong> Products missing SKU identifiers</li>
+                        <li><strong>Duplicate SKUs:</strong> Multiple products sharing the same SKU (potential data issue)</li>
+                    </ul>
+                    
+                    <p><strong>💡 TIPS:</strong></p>
+                    <ul>
+                        <li>If database size exceeds 500MB, consider cleaning up old products or saving snapshots</li>
+                        <li>Products with missing features won't appear in match results - use Browse tab to re-extract</li>
+                        <li>Click "CLEANUP DATABASE" button below to access deletion and maintenance tools</li>
+                        <li>Always save a snapshot before major cleanup operations</li>
+                    </ul>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card" id="totalProductsCard">
+                        <span class="stat-value" id="totalProducts">-</span>
+                        <span class="stat-label">Total Products</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="historicalProducts">-</span>
+                        <span class="stat-label">Historical</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="newProducts">-</span>
+                        <span class="stat-label">New Products</span>
+                    </div>
+                    <div class="stat-card" id="dbSizeCard">
+                        <span class="stat-value" id="dbSize">-</span>
+                        <span class="stat-label">Database Size</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="totalMatches">-</span>
+                        <span class="stat-label">Stored Matches</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="uniqueCategories">-</span>
+                        <span class="stat-label">Categories</span>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>CATEGORY BREAKDOWN</h3>
+                    <div class="category-breakdown" id="categoryBreakdown">
+                    </div>
+                </div>
+
+                <div class="section" style="margin-top: 20px;">
+                    <h3>DATA QUALITY</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-value" id="missingFeatures">-</span>
+                            <span class="stat-label">Missing Features</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-value" id="missingCategory">-</span>
+                            <span class="stat-label">No Category</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-value" id="missingSku">-</span>
+                            <span class="stat-label">No SKU</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-value" id="duplicateSkus">-</span>
+                            <span class="stat-label">Duplicate SKUs</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cleanup Button -->
+                <div class="section" style="margin-top: 30px; text-align: center;">
+                    <button class="btn" onclick="showCleanupModal()" style="padding: 15px 30px; font-size: 1em;">
+                        🗑️ CLEANUP DATABASE
+                    </button>
+                </div>
+            </div>
+
+            <!-- Snapshots Tab -->
+            <div class="tab-panel active" id="snapshotsTab">
+                <div class="section-header" style="margin-bottom: 15px;">
+                    <h3 style="display: inline;">CATALOG SNAPSHOTS</h3>
+                    <button class="help-btn" onclick="toggleHelp('snapshotsHelp')" style="margin-left: 10px;">?</button>
+                </div>
+                <div class="help-text" id="snapshotsHelp" style="display: none; margin-bottom: 20px;">
+                    <p><strong>📂 CATALOG SNAPSHOTS</strong></p>
+                    <p>Save and load different versions of your catalog. Think of snapshots as version control for your products - perfect for managing seasonal catalogs, testing scenarios, or creating backups.</p>
+                    
+                    <p><strong>HOW IT WORKS:</strong></p>
+                    <ul>
+                        <li>💾 <strong>Save Current Catalog:</strong> Creates a snapshot of your current working catalog with all products and metadata</li>
+                        <li>🔗 <strong>Merge Snapshots:</strong> Combine multiple snapshots into a new one (great for consolidating catalogs)</li>
+                        <li><strong>LOAD:</strong> Replaces your working catalog with the selected snapshot (shown in 2-column list)</li>
+                        <li><strong>RENAME:</strong> Change the snapshot name for better organization</li>
+                        <li><strong>DEL:</strong> Remove snapshots you no longer need</li>
+                        <li><strong>Currently Loaded:</strong> Shows which snapshot is active (if any)</li>
+                    </ul>
+                    
+                    <p><strong>⚠️ WARNING:</strong> Loading a snapshot replaces your current working catalog. Always save first if you want to keep your current work!</p>
+                </div>
+                
+                <!-- Snapshot Actions -->
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+                    <button class="btn" onclick="saveCurrentAsSnapshot()">💾 SAVE CURRENT CATALOG</button>
+                    <button class="btn" onclick="showMergeSnapshotsModal()">🔗 MERGE SNAPSHOTS</button>
+                    <button class="btn" onclick="loadSnapshots()">↻ REFRESH</button>
+                </div>
+                
+                <!-- Active Snapshot Info -->
+                <div id="activeSnapshotSummary" style="padding: 15px; background: #f0f0f0; border: 3px solid #000; margin-bottom: 20px;">
+                    <strong>Currently Loaded:</strong> <span id="activeSnapshotName">None (using main database)</span>
+                </div>
+                
+                <!-- Snapshot List -->
+                <div id="snapshotListContainer">
+                    <h4 style="margin-bottom: 15px;">SAVED SNAPSHOTS</h4>
+                    <div id="allSnapshots" class="snapshot-list">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Browse Tab -->
+            <div class="tab-panel" id="browseTab">
+                <div class="section-header" style="margin-bottom: 15px;">
+                    <h3 style="display: inline;">BROWSE PRODUCTS</h3>
+                    <button class="help-btn" onclick="toggleHelp('browseHelp')" style="margin-left: 10px;">?</button>
+                </div>
+                <div class="help-text" id="browseHelp" style="display: none; margin-bottom: 20px;">
+                    <p><strong>🔍 BROWSE TAB</strong></p>
+                    <p>View and manage individual products in a 2-column list layout. Products are displayed with thumbnails and lazy-loaded for performance.</p>
+                    <ul>
+                        <li><strong>Search:</strong> Find products by filename, SKU, or name</li>
+                        <li><strong>Filters:</strong> Filter by category, type (Historical/New), or feature status</li>
+                        <li><strong>Sort:</strong> Order by date, name, or category</li>
+                        <li><strong>Click product:</strong> View/edit details including category, SKU, and name</li>
+                        <li><strong>Pagination:</strong> Navigate through products 50 at a time</li>
+                    </ul>
+                </div>
+                
+                <!-- Filter Bar -->
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; width: 100%; box-sizing: border-box;">
+                    <input type="text" id="searchInput" placeholder="Search..." onkeyup="debounceSearch()" style="flex: 1; min-width: 200px; padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
+                    <select id="categoryFilter" onchange="loadProducts()" style="padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
+                        <option value="">All Categories</option>
+                    </select>
+                    <select id="typeFilter" onchange="loadProducts()" style="padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
+                        <option value="">All Types</option>
+                        <option value="historical">Historical</option>
+                        <option value="new">New</option>
+                    </select>
+                    <select id="featureFilter" onchange="loadProducts()" style="padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
+                        <option value="">All Features</option>
+                        <option value="has_features">Has Features</option>
+                        <option value="no_features">No Features</option>
+                    </select>
+                    <select id="sortBy" onchange="loadProducts()" style="padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
+                        <option value="date_desc">Newest First</option>
+                        <option value="date_asc">Oldest First</option>
+                        <option value="name_asc">Name A-Z</option>
+                        <option value="name_desc">Name Z-A</option>
+                        <option value="category">Category</option>
+                    </select>
+                </div>
+                
+                <!-- Product List -->
+                <div id="productListContainer">
+                    <div id="productGrid" class="product-grid">
+                    </div>
+                </div>
+                
+                <!-- Pagination -->
+                <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px; padding: 15px; border-top: 2px solid #000;">
+                    <button id="prevBtn" onclick="prevPage()" disabled class="btn">← PREV</button>
+                    <span id="pageInfo" style="font-weight: bold;">Page 1 of 1</span>
+                    <button id="nextBtn" onclick="nextPage()" disabled class="btn">NEXT →</button>
+                </div>
+            </div>
+
+            <!-- Cleanup Tab (REMOVED - now in Catalog) -->
+        </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    
+    <!-- Product Detail Modal -->
+    <div id="productModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <span class="modal-close" onclick="closeProductModal()">×</span>
+            <div id="productModalBody"></div>
+        </div>
+    </div>
+    
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div id="confirmModalBody"></div>
+        </div>
+    </div>
+
+    <!-- Cleanup Modal -->
+    <div id="cleanupModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <span class="modal-close" onclick="closeCleanupModal()">×</span>
+            <h2 style="margin-bottom: 10px;">DATABASE CLEANUP</h2>
+            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">⚠️ Save a snapshot before cleanup! Deletions are permanent.</p>
+            
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <button class="cleanup-btn danger" onclick="confirmCleanup('all'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                    <div style="font-weight: bold; margin-bottom: 3px;">CLEAR ALL</div>
+                    <div style="font-size: 0.85em; color: #666;">Delete everything - complete fresh start</div>
+                </button>
+                <button class="cleanup-btn" onclick="confirmCleanup('historical'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                    <div style="font-weight: bold; margin-bottom: 3px;">CLEAR HISTORICAL</div>
+                    <div style="font-size: 0.85em; color: #666;">Remove reference catalog, keep new products</div>
+                </button>
+                <button class="cleanup-btn" onclick="confirmCleanup('new'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                    <div style="font-weight: bold; margin-bottom: 3px;">CLEAR NEW</div>
+                    <div style="font-size: 0.85em; color: #666;">Remove new products, keep historical catalog</div>
+                </button>
+                <button class="cleanup-btn" onclick="confirmCleanup('matches'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                    <div style="font-weight: bold; margin-bottom: 3px;">CLEAR MATCHES</div>
+                    <div style="font-size: 0.85em; color: #666;">Delete match results only, keep all products</div>
+                </button>
+                <button class="cleanup-btn" onclick="vacuumDatabase(); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                    <div style="font-weight: bold; margin-bottom: 3px;">VACUUM DB</div>
+                    <div style="font-size: 0.85em; color: #666;">Reclaim disk space after deletions (SQLite optimization)</div>
+                </button>
+                <button class="cleanup-btn" onclick="exportBackup(); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                    <div style="font-weight: bold; margin-bottom: 3px;">EXPORT CSV</div>
+                    <div style="font-size: 0.85em; color: #666;">Download entire catalog as CSV backup file</div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/catalog-manager.js?v=20251125172019"></script>
+</body>
+</html>

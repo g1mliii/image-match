@@ -12,7 +12,11 @@ from database import (
     insert_price_history, bulk_insert_price_history, get_price_history,
     get_price_statistics, link_price_history, get_products_with_price_history,
     insert_performance_history, bulk_insert_performance_history, get_performance_history,
-    get_performance_statistics, link_performance_history, get_products_with_performance_history
+    get_performance_statistics, link_performance_history, get_products_with_performance_history,
+    get_catalog_stats, get_products_paginated, get_all_categories, update_product,
+    delete_product, bulk_delete_products, bulk_update_products, clear_products_by_type,
+    clear_all_matches, clear_products_by_categories, clear_products_by_date,
+    vacuum_database, clear_uploaded_images, export_catalog_csv, delete_features
 )
 from image_processing import (
     validate_image_file,
@@ -29,6 +33,11 @@ from product_matching import (
     find_hybrid_matches,
     MatchingError, ProductNotFoundError, MissingFeaturesError,
     EmptyCatalogError, AllMatchesFailedError
+)
+from validation_utils import (
+    validate_category, validate_product_name, validate_sku,
+    validate_cleanup_type, validate_days, validate_categories_list,
+    validate_page_params, sanitize_search_query, validate_product_ids
 )
 
 # Configure logging
@@ -99,6 +108,11 @@ def gradient():
 def csv_builder():
     """Serve the CSV builder tool"""
     return send_from_directory(app.static_folder, 'csv-builder.html')
+
+@app.route('/catalog-manager')
+def catalog_manager():
+    """Serve the Catalog Manager tool"""
+    return send_from_directory(app.static_folder, 'catalog-manager.html')
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -193,11 +207,8 @@ def get_product_image(product_id):
         
         image_path = product['image_path']
         if not os.path.exists(image_path):
-            return create_error_response(
-                'IMAGE_NOT_FOUND',
-                'Image file not found',
-                status_code=404
-            )
+            # Return placeholder image instead of 404 (don't log error)
+            return send_file('static/placeholder.png', mimetype='image/png') if os.path.exists('static/placeholder.png') else ('', 404)
         
         return send_file(image_path, mimetype='image/jpeg')
     except Exception as e:
@@ -1592,6 +1603,1450 @@ def get_clip_download_instructions():
             'INSTRUCTIONS_ERROR',
             'Failed to get download instructions',
             'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+# ============ Catalog Management API Endpoints ============
+
+@app.route('/api/catalog/stats', methods=['GET'])
+def get_catalog_statistics():
+    """
+    Get comprehensive catalog statistics.
+    
+    Returns:
+    - 200: Success with catalog stats
+    - 500: Server error
+    """
+    try:
+        stats = get_catalog_stats()
+        return jsonify(stats), 200
+    except Exception as e:
+        logger.error(f"Error getting catalog stats: {e}", exc_info=True)
+        return create_error_response(
+            'STATS_ERROR',
+            'Failed to get catalog statistics',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/categories', methods=['GET'])
+def get_categories():
+    """
+    Get list of all categories.
+    
+    Returns:
+    - 200: Success with categories list
+    - 500: Server error
+    """
+    try:
+        categories = get_all_categories()
+        return jsonify({'categories': categories}), 200
+    except Exception as e:
+        logger.error(f"Error getting categories: {e}", exc_info=True)
+        return create_error_response(
+            'CATEGORIES_ERROR',
+            'Failed to get categories',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products', methods=['GET'])
+def get_catalog_products():
+    """
+    Get paginated products with filtering.
+    
+    Query parameters:
+    - page: Page number (default: 1)
+    - limit: Products per page (default: 50)
+    - search: Search query
+    - category: Category filter
+    - type: 'historical' or 'new'
+    - features: 'has_features' or 'no_features'
+    - sort: Sort order
+    
+    Returns:
+    - 200: Success with products list
+    - 500: Server error
+    """
+    try:
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        search = request.args.get('search', '')
+        category = request.args.get('category', '')
+        product_type = request.args.get('type', '')
+        features = request.args.get('features', '')
+        sort_by = request.args.get('sort', 'date_desc')
+        
+        # Convert type filter
+        is_historical = None
+        if product_type == 'historical':
+            is_historical = True
+        elif product_type == 'new':
+            is_historical = False
+        
+        # Convert features filter
+        has_features = None
+        if features == 'has_features':
+            has_features = True
+        elif features == 'no_features':
+            has_features = False
+        
+        result = get_products_paginated(
+            page=page,
+            limit=limit,
+            search=search if search else None,
+            category=category if category else None,
+            is_historical=is_historical,
+            has_features=has_features,
+            sort_by=sort_by
+        )
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting products: {e}", exc_info=True)
+        return create_error_response(
+            'PRODUCTS_ERROR',
+            'Failed to get products',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products/<int:product_id>', methods=['PUT'])
+def update_catalog_product(product_id):
+    """
+    Update a product's metadata with strict validation.
+    
+    JSON body:
+    - category: New category (optional, max 100 chars)
+    - product_name: New name (optional, max 200 chars)
+    - sku: New SKU (optional, max 50 chars, alphanumeric with hyphens/underscores)
+    
+    Returns:
+    - 200: Success
+    - 400: Validation error
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        data = request.get_json() or {}
+        
+        # Validate category
+        category = data.get('category')
+        if category is not None:
+            category, error = validate_category(category)
+            if error:
+                return create_error_response('INVALID_CATEGORY', error, status_code=400)
+        
+        # Validate product_name
+        product_name = data.get('product_name')
+        if product_name is not None:
+            product_name, error = validate_product_name(product_name)
+            if error:
+                return create_error_response('INVALID_NAME', error, status_code=400)
+        
+        # Validate SKU
+        sku = data.get('sku')
+        if sku is not None:
+            sku, error = validate_sku(sku)
+            if error:
+                return create_error_response('INVALID_SKU', error, status_code=400)
+        
+        success = update_product(
+            product_id,
+            category=category,
+            product_name=product_name,
+            sku=sku
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Product updated successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'UPDATE_ERROR',
+            'Failed to update product',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products/<int:product_id>', methods=['DELETE'])
+def delete_catalog_product(product_id):
+    """
+    Delete a product and its associated data.
+    
+    Returns:
+    - 200: Success
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        # Get image path before deletion
+        image_path = product['image_path']
+        
+        # Delete product
+        success = delete_product(product_id)
+        
+        # Delete image file
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete image file: {e}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Product deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'DELETE_ERROR',
+            'Failed to delete product',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products/<int:product_id>/reextract', methods=['POST'])
+def reextract_product_features(product_id):
+    """
+    Re-extract features for a product.
+    
+    Returns:
+    - 200: Success
+    - 404: Product not found
+    - 500: Server error
+    """
+    try:
+        product = get_product_by_id(product_id)
+        if not product:
+            return create_error_response(
+                'PRODUCT_NOT_FOUND',
+                f'Product with ID {product_id} not found',
+                status_code=404
+            )
+        
+        image_path = product['image_path']
+        if not image_path or not os.path.exists(image_path):
+            return create_error_response(
+                'IMAGE_NOT_FOUND',
+                'Product image file not found',
+                'The image file may have been deleted',
+                status_code=400
+            )
+        
+        # Delete existing features
+        delete_features(product_id)
+        
+        # Re-extract features
+        features, embedding_type, embedding_version = extract_features_unified(image_path)
+        
+        # Store new features
+        insert_features(
+            product_id=product_id,
+            color_features=features['color_features'],
+            shape_features=features['shape_features'],
+            texture_features=features['texture_features'],
+            embedding_type=embedding_type,
+            embedding_version=embedding_version
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Features re-extracted successfully (type: {embedding_type})'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error re-extracting features for product {product_id}: {e}", exc_info=True)
+        return create_error_response(
+            'REEXTRACT_ERROR',
+            'Failed to re-extract features',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products/bulk-delete', methods=['POST'])
+def bulk_delete_catalog_products():
+    """
+    Delete multiple products at once with validation.
+    
+    JSON body:
+    - product_ids: List of product IDs to delete (max 100)
+    
+    Returns:
+    - 200: Success with count
+    - 400: Invalid request or validation error
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        if not data or 'product_ids' not in data:
+            return create_error_response(
+                'MISSING_IDS',
+                'product_ids array is required',
+                status_code=400
+            )
+        
+        # Validate product IDs
+        product_ids, error = validate_product_ids(data['product_ids'], max_count=100)
+        if error:
+            return create_error_response('INVALID_IDS', error, status_code=400)
+        
+        deleted_count = bulk_delete_products(product_ids)
+        
+        return jsonify({
+            'status': 'success',
+            'deleted_count': deleted_count,
+            'message': f'Deleted {deleted_count} product(s)'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error bulk deleting products: {e}", exc_info=True)
+        return create_error_response(
+            'BULK_DELETE_ERROR',
+            'Failed to delete products',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products/bulk-update', methods=['POST'])
+def bulk_update_catalog_products():
+    """
+    Update multiple products at once with strict validation.
+    
+    JSON body:
+    - product_ids: List of product IDs to update (max 100)
+    - category: New category (optional, max 100 chars)
+    - product_name: New name (optional, max 200 chars)
+    - sku: New SKU (optional, max 50 chars)
+    
+    Returns:
+    - 200: Success with count
+    - 400: Invalid request or validation error
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        if not data or 'product_ids' not in data:
+            return create_error_response(
+                'MISSING_IDS',
+                'product_ids array is required',
+                status_code=400
+            )
+        
+        # Validate product IDs
+        product_ids, error = validate_product_ids(data['product_ids'], max_count=100)
+        if error:
+            return create_error_response('INVALID_IDS', error, status_code=400)
+        
+        # Validate category
+        category = data.get('category')
+        if category is not None:
+            category, error = validate_category(category)
+            if error:
+                return create_error_response('INVALID_CATEGORY', error, status_code=400)
+        
+        # Validate product_name
+        product_name = data.get('product_name')
+        if product_name is not None:
+            product_name, error = validate_product_name(product_name)
+            if error:
+                return create_error_response('INVALID_NAME', error, status_code=400)
+        
+        # Validate SKU
+        sku = data.get('sku')
+        if sku is not None:
+            sku, error = validate_sku(sku)
+            if error:
+                return create_error_response('INVALID_SKU', error, status_code=400)
+        
+        updated_count = bulk_update_products(
+            product_ids,
+            category=category,
+            product_name=product_name,
+            sku=sku
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'updated_count': updated_count,
+            'message': f'Updated {updated_count} product(s)'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error bulk updating products: {e}", exc_info=True)
+        return create_error_response(
+            'BULK_UPDATE_ERROR',
+            'Failed to update products',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/products/bulk-reextract', methods=['POST'])
+def bulk_reextract_features():
+    """
+    Re-extract features for multiple products.
+    
+    JSON body:
+    - product_ids: List of product IDs
+    
+    Returns:
+    - 200: Success with counts
+    - 400: Invalid request
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        if not data or 'product_ids' not in data:
+            return create_error_response(
+                'MISSING_IDS',
+                'product_ids array is required',
+                status_code=400
+            )
+        
+        product_ids = data['product_ids']
+        if not isinstance(product_ids, list):
+            return create_error_response(
+                'INVALID_IDS',
+                'product_ids must be an array',
+                status_code=400
+            )
+        
+        success_count = 0
+        fail_count = 0
+        
+        for product_id in product_ids:
+            try:
+                product = get_product_by_id(product_id)
+                if not product:
+                    fail_count += 1
+                    continue
+                
+                image_path = product['image_path']
+                if not image_path or not os.path.exists(image_path):
+                    fail_count += 1
+                    continue
+                
+                # Delete existing features
+                delete_features(product_id)
+                
+                # Re-extract features
+                features, embedding_type, embedding_version = extract_features_unified(image_path)
+                
+                # Store new features
+                insert_features(
+                    product_id=product_id,
+                    color_features=features['color_features'],
+                    shape_features=features['shape_features'],
+                    texture_features=features['texture_features'],
+                    embedding_type=embedding_type,
+                    embedding_version=embedding_version
+                )
+                
+                success_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Failed to re-extract features for product {product_id}: {e}")
+                fail_count += 1
+        
+        return jsonify({
+            'status': 'success',
+            'success_count': success_count,
+            'fail_count': fail_count,
+            'message': f'Re-extracted features for {success_count} product(s), {fail_count} failed'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error bulk re-extracting features: {e}", exc_info=True)
+        return create_error_response(
+            'BULK_REEXTRACT_ERROR',
+            'Failed to re-extract features',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/cleanup', methods=['POST'])
+def cleanup_catalog():
+    """
+    Clean up products by type.
+    
+    JSON body:
+    - type: 'all', 'historical', 'new', or 'matches'
+    
+    Returns:
+    - 200: Success with counts
+    - 400: Invalid type
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        if not data or 'type' not in data:
+            return create_error_response(
+                'MISSING_TYPE',
+                'type is required',
+                status_code=400
+            )
+        
+        cleanup_type = data['type']
+        
+        if cleanup_type == 'matches':
+            deleted = clear_all_matches()
+            return jsonify({
+                'status': 'success',
+                'matches_deleted': deleted,
+                'message': f'Deleted {deleted} match(es)'
+            }), 200
+        
+        if cleanup_type not in ['all', 'historical', 'new']:
+            return create_error_response(
+                'INVALID_TYPE',
+                'type must be all, historical, new, or matches',
+                status_code=400
+            )
+        
+        result = clear_products_by_type(cleanup_type)
+        
+        return jsonify({
+            'status': 'success',
+            **result,
+            'message': f'Deleted {result["products_deleted"]} product(s)'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}", exc_info=True)
+        return create_error_response(
+            'CLEANUP_ERROR',
+            'Cleanup failed',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/cleanup/categories', methods=['POST'])
+def cleanup_by_categories():
+    """
+    Clean up products by categories.
+    
+    JSON body:
+    - categories: List of category names to delete
+    
+    Returns:
+    - 200: Success with count
+    - 400: Invalid request
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        if not data or 'categories' not in data:
+            return create_error_response(
+                'MISSING_CATEGORIES',
+                'categories array is required',
+                status_code=400
+            )
+        
+        categories = data['categories']
+        if not isinstance(categories, list):
+            return create_error_response(
+                'INVALID_CATEGORIES',
+                'categories must be an array',
+                status_code=400
+            )
+        
+        result = clear_products_by_categories(categories)
+        
+        return jsonify({
+            'status': 'success',
+            **result,
+            'message': f'Deleted {result["products_deleted"]} product(s) from selected categories'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up categories: {e}", exc_info=True)
+        return create_error_response(
+            'CATEGORY_CLEANUP_ERROR',
+            'Category cleanup failed',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/cleanup/by-date', methods=['POST'])
+def cleanup_by_date():
+    """
+    Clean up products older than specified days.
+    
+    JSON body:
+    - older_than_days: Number of days
+    
+    Returns:
+    - 200: Success with count
+    - 400: Invalid request
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        if not data or 'older_than_days' not in data:
+            return create_error_response(
+                'MISSING_DAYS',
+                'older_than_days is required',
+                status_code=400
+            )
+        
+        try:
+            days = int(data['older_than_days'])
+            if days < 1:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return create_error_response(
+                'INVALID_DAYS',
+                'older_than_days must be a positive integer',
+                status_code=400
+            )
+        
+        result = clear_products_by_date(days)
+        
+        return jsonify({
+            'status': 'success',
+            **result,
+            'message': f'Deleted {result["products_deleted"]} product(s) older than {days} days'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up by date: {e}", exc_info=True)
+        return create_error_response(
+            'DATE_CLEANUP_ERROR',
+            'Date cleanup failed',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/vacuum', methods=['POST'])
+def vacuum_catalog_database():
+    """
+    Vacuum the database to reclaim disk space.
+    
+    Returns:
+    - 200: Success with size info
+    - 500: Server error
+    """
+    try:
+        result = vacuum_database()
+        
+        return jsonify({
+            'status': 'success',
+            **result,
+            'message': f'Database vacuumed. Reclaimed {result["space_reclaimed_mb"]} MB'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error vacuuming database: {e}", exc_info=True)
+        return create_error_response(
+            'VACUUM_ERROR',
+            'Database vacuum failed',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/clear-images', methods=['POST'])
+def clear_catalog_images():
+    """
+    Clear all uploaded image files but keep metadata.
+    
+    Returns:
+    - 200: Success with count
+    - 500: Server error
+    """
+    try:
+        result = clear_uploaded_images()
+        
+        return jsonify({
+            'status': 'success',
+            **result,
+            'message': f'Deleted {result["files_deleted"]} image file(s), reclaimed {result["space_reclaimed_mb"]} MB'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error clearing images: {e}", exc_info=True)
+        return create_error_response(
+            'CLEAR_IMAGES_ERROR',
+            'Failed to clear images',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalog/export', methods=['GET'])
+def export_catalog():
+    """
+    Export catalog to CSV.
+    
+    Returns:
+    - 200: CSV file download
+    - 500: Server error
+    """
+    try:
+        from flask import Response
+        
+        csv_content = export_catalog_csv()
+        
+        return Response(
+            csv_content,
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=catalog-backup-{datetime.now().strftime("%Y%m%d")}.csv'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting catalog: {e}", exc_info=True)
+        return create_error_response(
+            'EXPORT_ERROR',
+            'Failed to export catalog',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+# ============ Catalog Snapshot API Endpoints ============
+
+@app.route('/api/catalogs/list', methods=['GET'])
+def list_catalog_snapshots():
+    """
+    List all available catalog snapshots.
+    
+    Returns:
+    - 200: Success with historical and new snapshot lists
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import list_snapshots, migrate_legacy_database
+        
+        # Check for migration on first access
+        migrate_legacy_database()
+        
+        result = list_snapshots()
+        
+        if result.get('error'):
+            return create_error_response(
+                'LIST_ERROR',
+                result['error'],
+                status_code=500
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing snapshots: {e}", exc_info=True)
+        return create_error_response(
+            'LIST_ERROR',
+            'Failed to list snapshots',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/create', methods=['POST'])
+def create_catalog_snapshot():
+    """
+    Create a new catalog snapshot.
+    
+    JSON body:
+    - name: Snapshot display name (required)
+    - is_historical: Whether this is a historical catalog (default: true)
+    - description: Optional description
+    - tags: Optional list of tags
+    
+    Returns:
+    - 200: Success with snapshot info
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import create_snapshot
+        
+        data = request.get_json()
+        
+        if not data or 'name' not in data:
+            return create_error_response(
+                'MISSING_NAME',
+                'Snapshot name is required',
+                status_code=400
+            )
+        
+        name = data['name'].strip()
+        if not name:
+            return create_error_response(
+                'INVALID_NAME',
+                'Snapshot name cannot be empty',
+                status_code=400
+            )
+        
+        if len(name) > 100:
+            return create_error_response(
+                'NAME_TOO_LONG',
+                'Snapshot name must be 100 characters or less',
+                status_code=400
+            )
+        
+        is_historical = data.get('is_historical', True)
+        description = data.get('description', '')
+        tags = data.get('tags', [])
+        
+        result = create_snapshot(
+            name=name,
+            is_historical=is_historical,
+            description=description,
+            tags=tags
+        )
+        
+        if result.get('error'):
+            return create_error_response(
+                'CREATE_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error creating snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'CREATE_ERROR',
+            'Failed to create snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/<path:snapshot_name>', methods=['DELETE'])
+def delete_catalog_snapshot(snapshot_name):
+    """
+    Delete a catalog snapshot.
+    
+    Returns:
+    - 200: Success
+    - 400: Cannot delete active snapshot
+    - 404: Snapshot not found
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import delete_snapshot
+        
+        result = delete_snapshot(snapshot_name)
+        
+        if result.get('error'):
+            if 'not found' in result['error'].lower():
+                return create_error_response(
+                    'NOT_FOUND',
+                    result['error'],
+                    status_code=404
+                )
+            return create_error_response(
+                'DELETE_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'DELETE_ERROR',
+            'Failed to delete snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/<path:snapshot_name>/rename', methods=['PUT'])
+def rename_catalog_snapshot(snapshot_name):
+    """
+    Rename a catalog snapshot.
+    
+    JSON body:
+    - new_name: New display name (required)
+    
+    Returns:
+    - 200: Success
+    - 400: Validation error
+    - 404: Snapshot not found
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import rename_snapshot
+        
+        data = request.get_json()
+        
+        if not data or 'new_name' not in data:
+            return create_error_response(
+                'MISSING_NAME',
+                'New name is required',
+                status_code=400
+            )
+        
+        new_name = data['new_name'].strip()
+        if not new_name:
+            return create_error_response(
+                'INVALID_NAME',
+                'New name cannot be empty',
+                status_code=400
+            )
+        
+        result = rename_snapshot(snapshot_name, new_name)
+        
+        if result.get('error'):
+            if 'not found' in result['error'].lower():
+                return create_error_response(
+                    'NOT_FOUND',
+                    result['error'],
+                    status_code=404
+                )
+            return create_error_response(
+                'RENAME_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error renaming snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'RENAME_ERROR',
+            'Failed to rename snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/merge', methods=['POST'])
+def merge_catalog_snapshots():
+    """
+    Merge multiple snapshots into a new one.
+    
+    JSON body:
+    - snapshots: List of snapshot filenames to merge (required, min 2)
+    - new_name: Name for merged snapshot (required)
+    - is_historical: Whether merged snapshot is historical (default: true)
+    
+    Returns:
+    - 200: Success with merged snapshot info
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import merge_snapshots
+        
+        data = request.get_json()
+        
+        if not data:
+            return create_error_response(
+                'MISSING_DATA',
+                'Request body is required',
+                status_code=400
+            )
+        
+        snapshots = data.get('snapshots', [])
+        if len(snapshots) < 2:
+            return create_error_response(
+                'INVALID_SNAPSHOTS',
+                'At least 2 snapshots are required for merge',
+                status_code=400
+            )
+        
+        new_name = data.get('new_name', '').strip()
+        if not new_name:
+            return create_error_response(
+                'MISSING_NAME',
+                'New name is required',
+                status_code=400
+            )
+        
+        is_historical = data.get('is_historical', True)
+        
+        result = merge_snapshots(snapshots, new_name, is_historical)
+        
+        if result.get('error'):
+            return create_error_response(
+                'MERGE_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error merging snapshots: {e}", exc_info=True)
+        return create_error_response(
+            'MERGE_ERROR',
+            'Failed to merge snapshots',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/active', methods=['GET'])
+def get_active_catalog_snapshots():
+    """
+    Get currently active catalog snapshots.
+    
+    Returns:
+    - 200: Success with active snapshot lists
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import get_active_catalogs, get_combined_products_count
+        
+        active = get_active_catalogs()
+        counts = get_combined_products_count()
+        
+        return jsonify({
+            'status': 'success',
+            **active,
+            **counts
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting active catalogs: {e}", exc_info=True)
+        return create_error_response(
+            'ACTIVE_ERROR',
+            'Failed to get active catalogs',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/active', methods=['POST'])
+def set_active_catalog_snapshots():
+    """
+    Set active catalog snapshots.
+    
+    JSON body:
+    - historical: List of historical snapshot filenames
+    - new: List of new product snapshot filenames
+    
+    Returns:
+    - 200: Success
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import set_active_catalogs
+        
+        data = request.get_json()
+        
+        if not data:
+            return create_error_response(
+                'MISSING_DATA',
+                'Request body is required',
+                status_code=400
+            )
+        
+        historical = data.get('historical', [])
+        new = data.get('new', [])
+        
+        if not isinstance(historical, list) or not isinstance(new, list):
+            return create_error_response(
+                'INVALID_DATA',
+                'historical and new must be arrays',
+                status_code=400
+            )
+        
+        result = set_active_catalogs(historical, new)
+        
+        if result.get('error'):
+            return create_error_response(
+                'SET_ACTIVE_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error setting active catalogs: {e}", exc_info=True)
+        return create_error_response(
+            'SET_ACTIVE_ERROR',
+            'Failed to set active catalogs',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/<path:snapshot_name>/info', methods=['GET'])
+def get_catalog_snapshot_info(snapshot_name):
+    """
+    Get detailed info for a specific snapshot.
+    
+    Returns:
+    - 200: Success with snapshot info
+    - 404: Snapshot not found
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import get_snapshot_info
+        
+        result = get_snapshot_info(snapshot_name)
+        
+        if result.get('error'):
+            if 'not found' in result['error'].lower():
+                return create_error_response(
+                    'NOT_FOUND',
+                    result['error'],
+                    status_code=404
+                )
+            return create_error_response(
+                'INFO_ERROR',
+                result['error'],
+                status_code=500
+            )
+        
+        return jsonify({
+            'status': 'success',
+            'snapshot': result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting snapshot info: {e}", exc_info=True)
+        return create_error_response(
+            'INFO_ERROR',
+            'Failed to get snapshot info',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/export', methods=['POST'])
+def export_catalog_snapshot():
+    """
+    Export a snapshot as a downloadable .zip file.
+    
+    JSON body:
+    - snapshot: Snapshot filename to export (required)
+    
+    Returns:
+    - 200: Zip file download
+    - 400: Validation error
+    - 404: Snapshot not found
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import export_snapshot, CATALOGS_DIR
+        
+        data = request.get_json()
+        
+        if not data or 'snapshot' not in data:
+            return create_error_response(
+                'MISSING_SNAPSHOT',
+                'Snapshot name is required',
+                status_code=400
+            )
+        
+        snapshot_name = data['snapshot']
+        result = export_snapshot(snapshot_name)
+        
+        if result.get('error'):
+            if 'not found' in result['error'].lower():
+                return create_error_response(
+                    'NOT_FOUND',
+                    result['error'],
+                    status_code=404
+                )
+            return create_error_response(
+                'EXPORT_ERROR',
+                result['error'],
+                status_code=500
+            )
+        
+        # Return the zip file
+        zip_path = result['zip_path']
+        return send_file(
+            zip_path,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=os.path.basename(zip_path)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'EXPORT_ERROR',
+            'Failed to export snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/import', methods=['POST'])
+def import_catalog_snapshot():
+    """
+    Import a snapshot from an uploaded .zip file.
+    
+    Form data:
+    - file: Zip file to import (required)
+    
+    Returns:
+    - 200: Success with imported snapshot info
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import import_snapshot, CATALOGS_DIR
+        
+        if 'file' not in request.files:
+            return create_error_response(
+                'MISSING_FILE',
+                'Zip file is required',
+                status_code=400
+            )
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return create_error_response(
+                'EMPTY_FILENAME',
+                'No file selected',
+                status_code=400
+            )
+        
+        if not file.filename.endswith('.zip'):
+            return create_error_response(
+                'INVALID_FORMAT',
+                'File must be a .zip archive',
+                status_code=400
+            )
+        
+        # Save uploaded file temporarily
+        temp_path = os.path.join(CATALOGS_DIR, f"temp-import-{datetime.now().strftime('%Y%m%d%H%M%S')}.zip")
+        file.save(temp_path)
+        
+        try:
+            result = import_snapshot(temp_path)
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        if result.get('error'):
+            return create_error_response(
+                'IMPORT_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error importing snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'IMPORT_ERROR',
+            'Failed to import snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/save-current', methods=['POST'])
+def save_current_as_snapshot():
+    """
+    Save the current main database as a new snapshot.
+    
+    JSON body:
+    - name: Snapshot name (required)
+    - description: Optional description
+    - tags: Optional list of tags
+    
+    Returns:
+    - 200: Success with snapshot info
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import save_main_db_as_snapshot
+        
+        data = request.get_json()
+        
+        if not data or 'name' not in data:
+            return create_error_response(
+                'MISSING_NAME',
+                'Snapshot name is required',
+                status_code=400
+            )
+        
+        name = data['name'].strip()
+        if not name:
+            return create_error_response(
+                'INVALID_NAME',
+                'Snapshot name cannot be empty',
+                status_code=400
+            )
+        
+        description = data.get('description', '')
+        tags = data.get('tags', [])
+        
+        result = save_main_db_as_snapshot(name, description, tags)
+        
+        if result.get('error'):
+            return create_error_response(
+                'SAVE_ERROR',
+                result['error'],
+                status_code=400
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error saving current as snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'SAVE_ERROR',
+            'Failed to save snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/load/<path:snapshot_name>', methods=['POST'])
+def load_snapshot_to_main(snapshot_name):
+    """
+    Load a snapshot into the main database.
+    
+    This replaces the current main database with the snapshot contents.
+    
+    Returns:
+    - 200: Success
+    - 404: Snapshot not found
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import load_snapshot_to_main_db
+        
+        result = load_snapshot_to_main_db(snapshot_name)
+        
+        if result.get('error'):
+            if 'not found' in result['error'].lower():
+                return create_error_response(
+                    'NOT_FOUND',
+                    result['error'],
+                    status_code=404
+                )
+            return create_error_response(
+                'LOAD_ERROR',
+                result['error'],
+                status_code=500
+            )
+        
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error loading snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'LOAD_ERROR',
+            'Failed to load snapshot',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/main-db-stats', methods=['GET'])
+def get_main_database_stats():
+    """
+    Get statistics about the main database and loaded snapshot info.
+    
+    Returns:
+    - 200: Success with stats
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import get_main_db_stats
+        
+        stats = get_main_db_stats()
+        
+        return jsonify({
+            'status': 'success',
+            **stats
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting main db stats: {e}", exc_info=True)
+        return create_error_response(
+            'STATS_ERROR',
+            'Failed to get database stats',
             {'error': str(e)},
             status_code=500
         )

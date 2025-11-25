@@ -19,11 +19,13 @@
                 <p>The CSV Builder helps you create a CSV file with product metadata (SKU, names, prices, sales data) that matches your product images.</p>
                 <p><strong>HOW IT WORKS:</strong></p>
                 <p>1. Upload your product images - filenames are automatically extracted</p>
-                <p>2. Add metadata for each product (SKU, name, price, etc.)</p>
-                <p>3. Optionally add price and performance history</p>
-                <p>4. Export the CSV file</p>
-                <p>5. Use this CSV file in the main app when uploading products</p>
-                <p><strong>WHY USE IT?</strong> The CSV Builder ensures your filenames match perfectly and makes it easy to add metadata without manually creating a CSV file.</p>
+                <p>2. Link existing product data OR export template to fill in Excel</p>
+                <p>3. Review and edit metadata for each product</p>
+                <p>4. Optionally add price and performance history</p>
+                <p>5. Export the CSV file</p>
+                <p>6. Use this CSV file in the main app when uploading products</p>
+                <p><strong>WHY USE IT?</strong> The CSV Builder ensures your filenames match perfectly and makes it easy to add metadata without manually creating a CSV file. It works with YOUR existing data structure!</p>
+                <p><strong>FLEXIBLE LINKING:</strong> Already have product data in Excel or your ERP? Import it and we'll automatically link it to your images using smart matching strategies.</p>
             </div>
             <a href="/" class="btn-link">← BACK TO APP</a>
         </header>
@@ -37,14 +39,18 @@
                 </div>
                 <div class="progress-step" data-step="2">
                     <span class="step">2</span>
-                    <span>METADATA</span>
+                    <span>LINK</span>
                 </div>
                 <div class="progress-step" data-step="3">
                     <span class="step">3</span>
-                    <span>HISTORY</span>
+                    <span>METADATA</span>
                 </div>
                 <div class="progress-step" data-step="4">
                     <span class="step">4</span>
+                    <span>HISTORY</span>
+                </div>
+                <div class="progress-step" data-step="5">
+                    <span class="step">5</span>
                     <span>EXPORT</span>
                 </div>
             </div>
@@ -59,9 +65,10 @@
                     <p><strong>HOW TO UPLOAD:</strong></p>
                     <p>1. Click "BROWSE" or drag and drop a folder</p>
                     <p>2. Select a folder containing your product images</p>
-                    <p>3. Images can be in subfolders (categories will be auto-detected)</p>
+                    <p>3. Images can be in subfolders (categories will be auto-detected from folder names)</p>
                     <p>4. Supported formats: JPG, PNG, WebP</p>
-                    <p><strong>WHAT HAPPENS:</strong> The builder will extract filenames from your images and create a table where you can add metadata for each product.</p>
+                    <p><strong>WHAT HAPPENS:</strong> We'll extract filenames and detect categories from your folder structure. Next, you can link existing product data or enter metadata manually.</p>
+                    <p><strong>TIP:</strong> Organize images in subfolders by category (e.g., /plates/, /placemats/) for automatic categorization!</p>
                 </div>
 
                 <div class="upload-box">
@@ -74,25 +81,145 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn btn-primary" id="nextToMetadata" disabled>NEXT →</button>
+                    <button class="btn btn-primary" id="nextToLink" disabled>NEXT →</button>
                 </div>
             </section>
 
-            <!-- Step 2: Metadata -->
+            <!-- Step 2: Link Data -->
             <section class="section" id="step2" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 2: ADD METADATA</h2>
+                    <h2>STEP 2: LINK PRODUCT DATA</h2>
                     <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
                 </div>
                 <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>FILL IN PRODUCT DETAILS:</strong></p>
+                    <p><strong>IMPORT YOUR EXISTING PRODUCT DATA:</strong></p>
+                    <p>Upload a CSV/Excel file with your product data (SKU, name, price, etc.) or paste from clipboard.</p>
+                    <p><strong>LINKING STRATEGIES:</strong></p>
+                    <p>• <strong>Filename = SKU:</strong> Image filename matches SKU exactly (e.g., PM-001.jpg → SKU: PM-001)</p>
+                    <p>• <strong>Filename contains SKU:</strong> SKU is embedded in filename (e.g., photo_PM-001_front.jpg → SKU: PM-001)</p>
+                    <p>• <strong>Folder name = SKU:</strong> Parent folder name is the SKU (e.g., /PM-001/image.jpg → SKU: PM-001)</p>
+                    <p>• <strong>Fuzzy name matching:</strong> Match filename to product name (e.g., blue-plate.jpg → "Blue Ceramic Plate")</p>
+                    <p>• <strong>Manual linking:</strong> Manually link unmatched products</p>
+                    <p><strong>OR SKIP THIS STEP:</strong> If you don't have existing data, skip to manually enter metadata.</p>
+                </div>
+
+                <div class="link-panel">
+                    <h3>IMPORT PRODUCT DATA</h3>
+                    <div class="import-options">
+                        <button class="btn" onclick="importFromFile()">UPLOAD CSV/EXCEL</button>
+                        <button class="btn" onclick="importFromClipboard()">PASTE FROM CLIPBOARD</button>
+                        <button class="btn" onclick="exportTemplate()">EXPORT TEMPLATE</button>
+                        <button class="btn" onclick="importCompletedTemplate()">IMPORT COMPLETED CSV</button>
+                        <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" hidden>
+                        <input type="file" id="importCompletedInput" accept=".csv" hidden>
+                    </div>
+                    
+                    <div id="importStatus" class="import-status" style="display: none;">
+                        <p id="importStatusText"></p>
+                    </div>
+                    
+                    <div id="importHelp" class="import-help" style="display: none; margin-top: 15px; padding: 15px; border: 2px dashed #000; background: #f9f9f9;">
+                        <p><strong>EXCEL WORKFLOW:</strong></p>
+                        <p>1. Click "EXPORT TEMPLATE" to download CSV with filenames</p>
+                        <p>2. Open in Excel and fill in metadata (SKU, name, price, etc.)</p>
+                        <p>3. Save the file</p>
+                        <p>4. Click "IMPORT COMPLETED CSV" to upload your filled template</p>
+                        <p>5. We'll match by filename and update your products!</p>
+                        <button class="btn-small" onclick="toggleImportHelp()" style="margin-top: 10px;">HIDE</button>
+                    </div>
+                    <button class="btn-small" onclick="toggleImportHelp()" style="margin-top: 10px;">SHOW EXCEL WORKFLOW</button>
+                </div>
+
+                <div id="linkingPanel" style="display: none;">
+                    <div class="linking-strategy">
+                        <h3>LINKING STRATEGY</h3>
+                        <div class="strategy-selector">
+                            <label>
+                                <input type="radio" name="linkStrategy" value="filename_equals_sku" checked onchange="previewLinking()">
+                                <span>Filename = SKU</span>
+                                <small>Remove extension, use as SKU</small>
+                            </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="filename_contains_sku" onchange="previewLinking()">
+                                <span>Filename contains SKU</span>
+                                <small>Extract SKU pattern from filename</small>
+                            </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="folder_equals_sku" onchange="previewLinking()">
+                                <span>Folder name = SKU</span>
+                                <small>Use parent folder as SKU</small>
+                            </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="fuzzy_name" onchange="previewLinking()">
+                                <span>Fuzzy name matching</span>
+                                <small>Match filename to product name</small>
+                            </label>
+                        </div>
+                        
+                        <div id="patternConfig" style="display: none; margin-top: 15px;">
+                            <label>SKU Pattern (regex):</label>
+                            <input type="text" id="skuPattern" value="[A-Z]+-\d+" placeholder="e.g., [A-Z]+-\d+ or \d{4,}">
+                            <button class="btn" onclick="previewLinking()">APPLY</button>
+                        </div>
+                    </div>
+
+                    <div class="linking-preview">
+                        <h3>PREVIEW</h3>
+                        <div class="preview-stats">
+                            <span id="linkedCount" class="stat-success">Linked: 0</span>
+                            <span id="unlinkedCount" class="stat-warning">Unlinked: 0</span>
+                        </div>
+                        <div class="preview-list" id="previewList"></div>
+                    </div>
+
+                    <div class="actions">
+                        <button class="btn" onclick="goToStep(1)">← BACK</button>
+                        <button class="btn" onclick="applyLinking()">APPLY LINKING</button>
+                    </div>
+                </div>
+
+                <div id="manualLinkingPanel" style="display: none;">
+                    <h3>MANUAL LINKING</h3>
+                    <p>Link unmatched images to product data manually:</p>
+                    <div class="manual-linking-container">
+                        <div class="unmatched-images">
+                            <h4>UNMATCHED IMAGES</h4>
+                            <div id="unmatchedImagesList"></div>
+                        </div>
+                        <div class="available-products">
+                            <h4>AVAILABLE PRODUCTS</h4>
+                            <input type="text" id="productSearchInput" placeholder="Search products..." onkeyup="filterAvailableProducts()">
+                            <div id="availableProductsList"></div>
+                        </div>
+                    </div>
+                    <div class="actions">
+                        <button class="btn" onclick="backToLinkingStrategy()">← BACK</button>
+                        <button class="btn btn-primary" onclick="finishLinking()">FINISH LINKING</button>
+                    </div>
+                </div>
+
+                <div class="actions" id="skipLinkingActions">
+                    <button class="btn" onclick="goToStep(1)">← BACK</button>
+                    <button class="btn btn-primary" onclick="skipLinking()">SKIP (ENTER MANUALLY) →</button>
+                </div>
+            </section>
+
+            <!-- Step 3: Metadata -->
+            <section class="section" id="step3" style="display: none;">
+                <div class="section-header">
+                    <h2>STEP 3: ADD METADATA</h2>
+                    <button class="help-btn" onclick="toggleHelp('step3Help')">?</button>
+                </div>
+                <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
+                    <p><strong>REVIEW AND EDIT PRODUCT DETAILS:</strong></p>
                     <p>• <strong>Filename:</strong> Auto-filled from your images (don't change this!)</p>
-                    <p>• <strong>Category:</strong> Auto-detected from folders or enter manually</p>
-                    <p>• <strong>SKU:</strong> Unique product identifier (optional)</p>
-                    <p>• <strong>Name:</strong> Descriptive product name (optional)</p>
-                    <p>• <strong>Price:</strong> Current price (optional)</p>
+                    <p>• <strong>Category:</strong> Auto-detected from folders or linked from imported data</p>
+                    <p>• <strong>SKU:</strong> Unique product identifier (may be auto-linked)</p>
+                    <p>• <strong>Name:</strong> Descriptive product name (may be auto-linked)</p>
+                    <p>• <strong>Price:</strong> Current price (may be auto-linked)</p>
                     <p><strong>BULK EDIT:</strong> Use the tools above the table to apply values to multiple products at once. Select products with checkboxes first.</p>
                     <p><strong>PASTE FROM EXCEL:</strong> Copy data from Excel and paste it directly into the table!</p>
+                    <p><strong>NOTE:</strong> If you imported data in Step 2, metadata may already be filled in. Review and make any necessary edits.</p>
                 </div>
 
                 <div class="bulk-panel">
@@ -135,20 +262,20 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn" onclick="goToStep(1)">← BACK</button>
+                    <button class="btn" onclick="goToStep(2)">← BACK</button>
                     <button class="btn" onclick="saveDraft()">SAVE</button>
                     <button class="btn" onclick="loadDraft()">LOAD</button>
-                    <button class="btn btn-primary" onclick="goToStep(3)">NEXT →</button>
+                    <button class="btn btn-primary" onclick="goToStep(4)">NEXT →</button>
                 </div>
             </section>
 
-            <!-- Step 3: History -->
-            <section class="section" id="step3" style="display: none;">
+            <!-- Step 4: History -->
+            <section class="section" id="step4" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 3: PRICE & PERFORMANCE</h2>
-                    <button class="help-btn" onclick="toggleHelp('step3Help')">?</button>
+                    <h2>STEP 4: PRICE & PERFORMANCE</h2>
+                    <button class="help-btn" onclick="toggleHelp('step4Help')">?</button>
                 </div>
-                <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="step4Help" style="display: none; margin-bottom: 20px;">
                     <p><strong>ADD HISTORICAL DATA (OPTIONAL):</strong></p>
                     <p><strong>Price History:</strong> Track how prices changed over time (up to 12 months). Add date and price for each entry.</p>
                     <p><strong>Performance History:</strong> Track sales metrics including:</p>
@@ -200,19 +327,19 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn" onclick="goToStep(2)">← BACK</button>
+                    <button class="btn" onclick="goToStep(3)">← BACK</button>
                     <button class="btn" onclick="skipHistory()">SKIP</button>
-                    <button class="btn btn-primary" onclick="goToStep(4)">NEXT →</button>
+                    <button class="btn btn-primary" onclick="goToStep(5)">NEXT →</button>
                 </div>
             </section>
 
-            <!-- Step 4: Export -->
-            <section class="section" id="step4" style="display: none;">
+            <!-- Step 5: Export -->
+            <section class="section" id="step5" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 4: EXPORT CSV</h2>
-                    <button class="help-btn" onclick="toggleHelp('step4Help')">?</button>
+                    <h2>STEP 5: EXPORT CSV</h2>
+                    <button class="help-btn" onclick="toggleHelp('step5Help')">?</button>
                 </div>
-                <div class="help-text" id="step4Help" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="step5Help" style="display: none; margin-bottom: 20px;">
                     <p><strong>EXPORT YOUR CSV FILE:</strong></p>
                     <p>1. Review the preview to make sure everything looks correct</p>
                     <p>2. Choose your export options (headers, separator, etc.)</p>
@@ -258,7 +385,7 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn" onclick="goToStep(3)">← BACK</button>
+                    <button class="btn" onclick="goToStep(4)">← BACK</button>
                     <button class="btn btn-primary" onclick="downloadCSV()">DOWNLOAD</button>
                     <button class="btn" onclick="copyToClipboard()">COPY</button>
                     <button class="btn" onclick="saveAsTemplate()">SAVE TEMPLATE</button>
