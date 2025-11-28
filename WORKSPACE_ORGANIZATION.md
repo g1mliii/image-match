@@ -293,7 +293,7 @@ find . -type f -name "*.pyc" -delete
 - **Documentation**: Complete ✅
 
 ### Server Status
-- **Running**: ✅ http://127.0.0.1:5000
+- **Running**: ✅ http://127.0.0.1:5001
 - **Database**: ✅ Initialized with all tables
 - **Features**: ✅ All working
 

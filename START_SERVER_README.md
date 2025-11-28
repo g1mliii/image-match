@@ -20,7 +20,7 @@ The startup script automatically:
 2. **Selects the correct Python version**:
    - **AMD GPU**: Uses Python 3.12 (required for ROCm)
    - **NVIDIA/Apple Silicon**: Uses any available Python 3.8+
-3. **Starts the Flask server** on http://127.0.0.1:5000
+3. **Starts the Flask server** on http://127.0.0.1:5001
 
 ## Manual Start (Advanced)
 
@@ -63,9 +63,10 @@ Install Python 3.12 from https://www.python.org/downloads/
 3. See `gpu/GPU_SETUP_GUIDE.md` for detailed setup
 
 ### Server won't start
-1. Check if port 5000 is already in use
+1. Check if port 5001 is already in use (or 5000 on Windows/Linux)
 2. Try running manually: `cd backend && python app.py`
 3. Check for error messages in the console
+4. **Mac users:** Port 5001 is used automatically to avoid AirPlay Receiver conflict
 
 ## First Run
 
@@ -75,8 +76,10 @@ On first run, the CLIP model (~350MB) will download automatically. This takes 1-
 
 Once started, open your browser to:
 ```
-http://127.0.0.1:5000
+http://127.0.0.1:5001
 ```
+
+> **Note:** Port 5001 is used by default. On macOS, this avoids conflicts with AirPlay Receiver.
 
 You should see the GPU status indicator in the top right:
 - ⚡ **AMD GPU Active** (black) - ROCm working

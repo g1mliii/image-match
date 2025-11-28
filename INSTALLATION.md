@@ -67,7 +67,9 @@ py -3.12 app.py
 
 ### Step 5: Open Browser
 
-Navigate to: http://127.0.0.1:5000
+Navigate to: 
+- **macOS:** http://127.0.0.1:5001 (port 5001 to avoid AirPlay Receiver conflict)
+- **Windows/Linux:** http://127.0.0.1:5000
 
 Check the GPU status indicator in the top right:
 - ⚡ **AMD GPU Active** - ROCm working
@@ -125,18 +127,24 @@ Version 3.0+ requires `torch.distributed.is_initialized()` which is missing in A
 #### Apple Silicon (macOS)
 
 **Requirements:**
-- Python 3.8 or later
+- Python 3.12 recommended (3.8+ works)
 - M1/M2/M3/M4/M5 chip
 - macOS 10.15 or later
 
 **Installation:**
-1. Install Python 3.8+
-2. Run: `python gpu/setup_gpu.py`
+1. Install Python 3.12 from python.org (recommended) or `brew install python@3.12`
+2. Run: `pip install -r requirements.txt`
 
 **What gets installed:**
 - PyTorch 2.x with MPS (Metal Performance Shaders)
 - sentence-transformers (latest compatible)
 - All dependencies
+
+**macOS-Specific Notes:**
+- Port 5001 used by default (port 5000 conflicts with AirPlay Receiver)
+- GPU acceleration works automatically - no drivers needed
+- Expected performance: 50-150 images/sec
+- Use python.org Python to avoid Homebrew's virtual environment requirement
 
 #### CPU Only (Any Platform)
 
@@ -258,11 +266,29 @@ This is automatically done by `gpu/setup_gpu.py` for AMD users.
 **Problem:** "Address already in use" error
 
 **Solutions:**
+
+**macOS Users:**
+- The app automatically uses port 5001 to avoid AirPlay Receiver conflict
+- Open http://127.0.0.1:5001 instead
+- To use port 5000: System Settings → General → AirDrop & Handoff → Turn off "AirPlay Receiver"
+
+**Windows/Linux Users:**
 1. Stop other Flask apps
 2. Change port in `backend/app.py`:
    ```python
    app.run(debug=True, port=5001)  # Use different port
    ```
+
+### Homebrew Python Issues (macOS)
+
+**Problem:** `error: externally-managed-environment` when installing packages
+
+**Solution:** Use Python from python.org instead of Homebrew, OR use `--break-system-packages` flag:
+```bash
+pip install -r requirements.txt --break-system-packages
+```
+
+**Recommended:** Download Python 3.12 from python.org to avoid this issue entirely.
 
 ---
 
