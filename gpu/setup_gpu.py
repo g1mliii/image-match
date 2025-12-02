@@ -137,10 +137,12 @@ def install_pytorch(gpu_type):
                 print("\n[INFO] Installing AMD ROCm PyTorch for Windows (Python 3.12)")
                 print("[INFO] This may take several minutes (~780MB download)...")
                 
-                # Install PyTorch with ROCm 6.4.4
-                success1, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torch-2.8.0a0%2Bgitfc14c65-cp312-cp312-win_amd64.whl")
-                success2, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchvision-0.24.0a0%2Bc85f008-cp312-cp312-win_amd64.whl")
-                success3, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchaudio-2.6.0a0%2B1a8f621-cp312-cp312-win_amd64.whl")
+                # Install PyTorch with ROCm 7.1.1 (Updated November 26, 2024)
+                # Note: ROCm 6.4.4 is more stable and doesn't affect graphics drivers
+                # Change URLs to rocm-rel-6.4.4 if you prefer stability over latest features
+                success1, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-7.1.1/torch-2.8.0a0%2Bgitfc14c65-cp312-cp312-win_amd64.whl")
+                success2, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-7.1.1/torchvision-0.24.0a0%2Bc85f008-cp312-cp312-win_amd64.whl")
+                success3, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-7.1.1/torchaudio-2.6.0a0%2B1a8f621-cp312-cp312-win_amd64.whl")
                 
                 if success1 and success2 and success3:
                     print("[OK] AMD ROCm PyTorch installed")
@@ -254,7 +256,7 @@ def install_rocm_windows():
     print("   https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html")
     print("   OR")
     print("   https://github.com/ROCm/rocm-install-on-windows/releases")
-    print("   - Choose ROCm 6.x (recommended)")
+    print("   - Choose ROCm 7.1.1 (latest) or ROCm 6.x (stable)")
     print("   - Accept license agreement")
     
     print("\n2. Run the installer as Administrator")
@@ -282,9 +284,13 @@ def install_rocm_windows():
     print("\n" + "-"*80)
     print("Important Notes:")
     print("-"*80)
-    print("• ROCm 6.x is NOT backward-compatible with 5.x")
-    print("• New DLLs: amdhip64_6.dll, amd_comgr_2.dll, hiprt0200564.dll")
+    print("• ROCm 7.1.1 (Nov 2024): PyTorch 2.9, SDPA improvements")
+    print("• ROCm 6.4.4: PyTorch 2.8, stable and well-tested (RECOMMENDED)")
+    print("• ROCm 7.x is NOT backward-compatible with 6.x")
+    print("• New DLLs: amdhip64_7.dll (7.x) or amdhip64_6.dll (6.x)")
     print("• Supported: Windows 10/11, Server 2022")
+    print("• Limitations: No training, Python 3.12 only, no torch.distributed")
+    print("• WARNING: ROCm may downgrade your graphics driver (affects gaming)")
     print("• AMD GPU required only to run apps (not for SDK install)")
     print("-"*80)
     

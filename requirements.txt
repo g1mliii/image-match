@@ -10,6 +10,9 @@
 #
 # GPU SUPPORT (Automatic Detection):
 # - AMD ROCm (Windows): Requires Python 3.12 ✓
+#   * ROCm 7.1.1 (Nov 2024): PyTorch 2.9, SDPA improvements, AOTriton 0.11b
+#   * ROCm 6.4.4: PyTorch 2.8, stable and well-tested
+#   * Both versions work with sentence-transformers < 3.0.0 restriction
 # - NVIDIA CUDA: Works with Python 3.12 ✓
 # - Apple Silicon (macOS): Works with Python 3.12 ✓
 # - CPU fallback: Works with Python 3.12 ✓
@@ -35,7 +38,7 @@ pywebview==4.4.1
 
 # Deep Learning (GPU users: install via gpu/setup_gpu.py for optimal GPU support)
 # PyTorch - Version depends on GPU:
-#   - AMD ROCm (Windows): 2.8.0 (Python 3.12 only)
+#   - AMD ROCm (Windows): 2.8.0 (ROCm 6.4.4) or 2.9.0 (ROCm 7.1.1) - Python 3.12 only
 #   - NVIDIA CUDA: 2.x with CUDA 12.4
 #   - Apple Silicon (macOS): 2.x with MPS
 #   - CPU: 2.x CPU-only
@@ -44,7 +47,9 @@ torch>=2.0.0
 # CLIP Model for Visual Matching
 # CRITICAL: sentence-transformers MUST BE < 3.0.0 for AMD ROCm compatibility
 # Version 3.0+ requires torch.distributed.is_initialized() which is missing in ROCm Windows builds
+# Tested with ROCm 6.4.4 and 7.1.1 (PyTorch 2.9) - restriction still applies
 # DO NOT UPGRADE to 3.0+ or AMD GPU support will break!
+# Note: sentence-transformers will auto-install transformers >= 4.55.5 (required for ROCm)
 sentence-transformers>=2.7.0,<3.0.0
 
 # Testing (optional - for development)

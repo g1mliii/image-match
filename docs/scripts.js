@@ -43,3 +43,50 @@ document.querySelectorAll('#mobile-menu a').forEach(link => {
     mobileMenu.classList.add('hidden');
   });
 });
+
+// Countdown Timer for Download Page
+function initCountdown() {
+  const windowsCountdown = document.getElementById('windows-countdown');
+  const macosCountdown = document.getElementById('macos-countdown');
+  
+  // Only run if countdown elements exist (on download page)
+  if (!windowsCountdown || !macosCountdown) return;
+  
+  // Set launch date to January 2, 2026 at midnight
+  const launchDate = new Date('2026-01-02T00:00:00').getTime();
+  
+  function updateCountdown() {
+    const now = new Date().getTime();
+    const distance = launchDate - now;
+    
+    // Calculate time units
+    const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+    
+    // Display countdown
+    const countdownText = `Available in: ${days}d ${hours}h ${minutes}m ${seconds}s`;
+    
+    if (windowsCountdown) windowsCountdown.textContent = countdownText;
+    if (macosCountdown) macosCountdown.textContent = countdownText;
+    
+    // If countdown is finished
+    if (distance < 0) {
+      if (windowsCountdown) windowsCountdown.textContent = 'Available Now!';
+      if (macosCountdown) macosCountdown.textContent = 'Available Now!';
+      clearInterval(countdownInterval);
+    }
+  }
+  
+  // Update immediately and then every second
+  updateCountdown();
+  const countdownInterval = setInterval(updateCountdown, 1000);
+}
+
+// Initialize countdown when DOM is loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initCountdown);
+} else {
+  initCountdown();
+}
