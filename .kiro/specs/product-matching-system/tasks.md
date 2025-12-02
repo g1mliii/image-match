@@ -580,28 +580,49 @@
   - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
 
 
+  - [ ] 16.5. Create application icons for cross-platform packaging
+  - **Windows Icon (.ico):**
+    - Create `app_icon.ico` with multiple sizes: 16x16, 32x32, 48x48, 256x256
+    - Use online tool (e.g., icoconvert.com) or GIMP to create multi-resolution .ico
+    - Place in project root for development, will be bundled during packaging
+  - **macOS Icon (.icns):**
+    - Create `app_icon.icns` with multiple sizes for Retina displays
+    - Use `iconutil` on macOS or online converter to create .icns from PNG
+    - Required sizes: 16x16, 32x32, 128x128, 256x256, 512x512, 1024x1024
+  - **Source Icon:**
+    - Create or obtain a 1024x1024 PNG as master icon
+    - Simple, recognizable design that works at small sizes
+    - Suggestion: Product/box icon or "PM" monogram
+  - **Testing:**
+    - Uncomment `icon=icon_path` line in main.py
+    - Run `python main.py` to verify icon appears in title bar
+    - Test on both Windows and macOS if possible
+  - _Note: Icons will be bundled into executables during tasks 17-18_
+
   - [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
   - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
-  - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --name "Product Matcher"`
+  - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --icon=app_icon.ico --name "Product Matcher"`
   - Create build.bat: `pyinstaller --clean product-matcher.spec`
   - Test packaged exe on clean Windows system: verify launches, creates AppData folders, full workflow works
   - Package: zip exe + README.txt + sample.csv template
-  - It should be a 1 click solution for everybody so that al lfeatures including clip and gpu for amd nvidia and arm chips accleration and all dependicies/requirements are instllaled and work correclty.
+  - It should be a 1 click solution for everybody so that all features including CLIP and GPU acceleration (AMD, NVIDIA, Intel, ARM) and all dependencies/requirements are installed and work correctly.
   - **Pre-Packaging Testing (CRITICAL):**
     - Test `python setup_gpu.py` on clean Windows system (no Python packages installed)
     - Verify PyTorch auto-installation works for NVIDIA GPUs (CUDA detection + install)
     - Verify PyTorch auto-installation works for AMD GPUs (ROCm detection + HIP SDK guidance)
+    - Verify Intel GPU support (optional): `intel-extension-for-pytorch` can be installed separately
     - Verify all dependencies from `requirements.txt` and `backend/requirements.txt` install correctly
-    - Test GPU detection: NVIDIA (nvidia-smi check), AMD (ROCm DLL check), CPU fallback
+    - Test GPU detection: NVIDIA (nvidia-smi check), AMD (ROCm DLL check), Intel (IPEX check), CPU fallback
     - Test CLIP model download and caching (first run downloads ~350MB model)
     - Verify `python check_gpu.py` shows correct GPU status after setup
     - Test full workflow after setup: upload images → extract CLIP features → match → verify results
     - Test on systems with/without GPU to ensure graceful CPU fallback
-    - Document any manual steps required (e.g., AMD HIP SDK installation)
+    - Test multiprocessing/multithreading: Verify batch matching uses CPU parallelization (built-in, no extra deps)
+    - Document any manual steps required (e.g., AMD HIP SDK installation, Intel IPEX for Intel GPU users)
   - _Requirements: 9.2_
 
 - [ ] 18. Package macOS application for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
-  - It should be a 1 click solution for everybody so that al lfeatures including clip and gpu for amd nvidia and arm chips accleration and all dependicies/requirements are instllaled and work correclty.
+  - It should be a 1 click solution for everybody so that all features including CLIP and GPU acceleration (Apple Silicon MPS, Intel GPU optional) and all dependencies/requirements are installed and work correctly.
   - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
   - **ARM (Apple Silicon M1-M5) Build:**
     - Create product-matcher-mac-arm64.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher" --target-arch arm64`
@@ -635,184 +656,20 @@
       - Verify PyTorch CPU installation (no GPU acceleration on Intel Macs)
       - Verify all dependencies install correctly (x86_64 versions)
       - Test Rosetta 2 compatibility if building ARM binary on Intel Mac
+    - **Intel Mac with Intel GPU (Optional):**
+      - Intel GPU support via `intel-extension-for-pytorch` (optional, user can install separately)
+      - Verify graceful fallback to CPU if Intel GPU extension not installed
     - **Universal Testing:**
       - Test CLIP model download and caching (~350MB, should work on both architectures)
       - Verify `python check_gpu.py` shows correct status (MPS for Apple Silicon, CPU for Intel)
       - Test full workflow: upload images → extract CLIP features → match → verify results
       - Verify database paths work correctly: `~/Library/Application Support/ProductMatcher/`
       - Test app launches without terminal/console window
+      - Test multiprocessing/multithreading: Verify batch matching uses CPU parallelization (built-in, no extra deps)
     - Document any manual steps required (should be none for macOS - everything auto-installs)
   - _Requirements: 9.2_
 
 
-- [x] 30. Implement catalog snapshot system with multi-file database support
-
-
-
-  - **Goal:** Replace single database with snapshot-based system where users can create, manage, and combine multiple catalog snapshots
-  - **Problem:** Current system uses one database that accumulates all uploads with no versioning, making it hard to organize, test different catalog combinations, or undo uploads
-  
-  - **Core Architecture Change:**
-    - Move from single `product_matching.db` to multiple snapshot files in `catalogs/` directory
-    - Each snapshot is independent SQLite database with same schema as current system
-    - Config file tracks which snapshots are currently active
-    - Matching engine loads products from all active snapshots and combines them
-  
-  - **Database Structure:**
-    ```
-    catalogs/
-    ├── summer-2024-plates.db (500 historical products)
-    ├── winter-2024-plates.db (300 historical products)
-    ├── new-arrivals-jan15.db (50 new products)
-    └── mobile-upload-jan20.db (20 new products)
-    
-    config/
-    └── active_catalogs.json
-        {
-          "active_historical": ["summer-2024-plates.db", "winter-2024-plates.db"],
-          "active_new": ["new-arrivals-jan15.db"]
-        }
-    ```
-  
-  - **Snapshot Metadata Table:**
-    - Add `snapshot_metadata` table to each .db file:
-      - name: Snapshot display name
-      - created_at: Creation timmp
-      - version: Version string (e.g., "1.0", "1.1")
-      - description: Optional user description
-  - product_count: Number of products in snapshot
-      - is_historical: Boolean (historical catalog vs new products)
-      - tags: JSON array of tags for organization
-      - last_modified: Timestamp of last edit
-  
-  - **Backend Changes (database.py):**
-    - **New Functions:**
-      - `create_snapshot(name, is_historical, description, tags)` - Create new snapshot database file
-      - `list_snapshots()` - Return all available snapshots with metadata
-      - `get_snapshot_info(snapshot_file)` - Get metadata for specific snapshot
-      - `delete_snapshot(snapshot_file)` - Delete snapshot .db file and associated images
-      - `rename_snapshot(old_name, new_name)` - Rename snapshot file
-      - `merge_snapshots(snapshot_files, new_name)` - Combine multiple snapshots into new one
-      - `export_snapshot(snapshot_file, output_path)` - Export as .zip with images
-      - `import_snapshot(zip_path)` - Import snapshot from .zip file
-      - `get_active_catalogs()` - Read active_catalogs.json
-      - `set_active_catalogs(historical_list, new_list)` - Update active_catalogs.json
-      - `load_products_from_snapshots(snapshot_files, is_historical)` - Load products from multiple snapshots
-    - **Modified Functions:**
-      - `init_db(snapshot_file)` - Accept snapshot file path parameter
-      - `insert_product()` - Accept snapshot file parameter
-      - All query functions - Accept optional snapshot file parameter
-    - **Backward Compatibility:**
-      - If `catalogs/` doesn't exist, create it and migrate existing `product_matching.db` as "Default Catalog"
-      - If no active catalogs configured, use default catalog
-  
-  - **Backend Changes (app.py):**
-    - **New API Endpoints:**
-      - `GET /api/catalogs/list` - List all snapshots (historical and new separately)
-      - `POST /api/catalogs/create` - Create new snapshot
-      - `DELETE /api/catalogs/{name}` - Delete snapshot
-      - `PUT /api/catalogs/{name}/rename` - Rename snapshot
-      - `POST /api/catalogs/merge` - Merge multiple snapshots
-      - `GET /api/catalogs/active` - Get currently active catalogs
-      - `POST /api/catalogs/active` - Set active catalogs
-      - `GET /api/catalogs/{name}/info` - Get snapshot metadata and stats
-      - `POST /api/catalogs/export` - Export snapshot as .zip
-      - `POST /api/catalogs/import` - Import snapshot from .zip
-    - **Modified Endpoints:**
-      - `POST /api/products/upload` - Add `snapshot_name` parameter (creates new snapshot or adds to existing)
-      - `POST /api/products/match` - Load products from active snapshots instead of single database
-      - All product endpoints - Work with active snapshots
-  
-  - **Catalog Manager UI (new file: catalog-manager.html):**
-    - **Layout:**
-      - Two-column view: Historical Catalogs (left) | New Products (right)
-      - Each snapshot shown as card with checkbox, name, product count, size, date
-      - Actions per snapshot: View, Rename, Export, Delete
-      - Bottom panel: Active selection summary + action buttons
-    - **Features:**
-      - Checkbox selection for each snapshot (multi-select)
-      - "Apply Selection" button to set active catalogs
-      - "Create New Snapshot" button (prompts for name, type, description)
-      - "Merge Selected" button (combines checked snapshots into new one)
-      - "Import Snapshot" button (upload .zip file)
-      - Real-time stats: "Active: 800 historical products (2 catalogs), 50 new products (1 catalog)"
-      - Search/filter snapshots by name or tags
-      - Sort by: name, date, size, product count
-    - **Snapshot Card Design:**
-      ```
-      ┌─────────────────────────────────────┐
-      │ ☑ Summer 2024 Plates (v1.0)        │
-      │ 500 products | 45 MB               │
-      │ Created: Jan 1, 2024               │
-      │ Tags: plates, summer, 2024         │
-      │ [View] [Rename] [Export] [Delete]  │
-      └─────────────────────────────────────┘
-      ```
-    - **View Snapshot Modal:**
-      - Opens catalog browser for that specific snapshot
-      - Shows all products in grid view
-      - Can edit/delete individual products
-      - Can re-extract features
-      - Shows data quality stats
-  
-  - **Main App Integration (index.html updates):**
-    - **Step 1 (Historical Catalog):**
-      - Add radio button: "Upload New Catalog" vs "Use Existing Snapshots"
-      - If "Upload New": Show folder upload + "Save as snapshot: [name]" field
-      - If "Use Existing": Show "Open Catalog Manager" button + current selection summary
-      - Display: "Currently selected: 800 products from 2 snapshots"
-    - **Step 2 (New Products):**
-      - Same pattern as Step 1
-      - Radio: "Upload New Products" vs "Use Existing Snapshots"
-    - **Matching Logic:**
-      - Load products from all active historical snapshots (combined)
-      - Load products from all active new snapshots (combined)
-      - Match as normal (no change to matching algorithm)
-    - **restoring database on browser refresh** 
-      - we can change this to just restore the selected database that was prebiolus slected or clear i thin kwe have both og thos features already.
-  - **Migration Strategy:**
-    - On first run with new system:
-      - Check if `catalogs/` directory exists
-      - If not, create it
-      - If `product_matching.db` exists in root:
-        - Move to `catalogs/default-catalog.db`
-        - Create metadata table with name "Default Catalog"
-        - Set as active in config
-      - Show migration notice to user: "Your catalog has been migrated to the new snapshot system"
-  
-  - **File Management:**
-    - Snapshots stored in: `catalogs/` directory
-    - Images stored in: `catalogs/{snapshot_name}/uploads/` (separate per snapshot)
-    - Config stored in: `config/active_catalogs.json`
-    - When deleting snapshot: Delete .db file + associated uploads folder
-    - When exporting snapshot: Create .zip with .db + uploads folder
-  
-  - **Version Stamping:**
-    - New snapshot: v1.0
-    - Edit products in snapshot: Increment minor version (v1.1, v1.2, ...)
-    - Merge snapshots: New snapshot starts at v1.0
-    - Show version in UI: "Summer 2024 Plates (v1.2)"
-  
-  - **Error Handling:**
-    - Handle missing snapshot files gracefully (show warning, remove from active list)
-    - Validate snapshot file integrity before loading
-    - Prevent deleting snapshot if it's currently active (prompt to deselect first)
-    - Handle disk space issues when creating/merging snapshots
-    - Validate snapshot names (no special characters, max length)
-  - **check if need to update hadnling of snapshots in csv builder**
-
-  - **Testing:**
-    - Test creating multiple snapshots
-    - Test selecting/deselecting snapshots
-    - Test merging snapshots (verify all products copied correctly)
-    - Test deleting snapshots (verify files removed)
-    - Test matching with multiple active snapshots (verify products combined correctly)
-    - Test export/import (verify .zip contains all data)
-    - Test migration from old single-database system
-    - Test with large snapshots (1000+ products)
-    - i belive our csv builder populates info and stasy synchornized with database in our main app and when we change things in catalog managment this should continue to work with the chanegs made
-  
-  - _Requirements: Improves Requirements 8.4, 9.1, 10.3 - better catalog organization and management_
 
 
 - [ ] 31. Implement mobile photo upload with QR code pairing
@@ -980,3 +837,6 @@
     - OCR to extract SKU from product labels in photos
   
   - _Requirements: New feature - improves Requirements 1.1, 6.1, 9.1 - mobile convenience and flexibility_
+
+
+

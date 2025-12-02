@@ -488,19 +488,66 @@ def compute_all_similarities(
     }
 
 
+def _compute_similarity_worker(args):
+    """Worker function for multiprocessing similarity computation
+    
+    Args:
+        args: Tuple of (query_features, candidate_features, color_weight, shape_weight, texture_weight)
+    
+    Returns:
+        Dictionary with similarity scores or error info
+    """
+    query_features, candidate_features, color_weight, shape_weight, texture_weight = args
+    
+    try:
+        return compute_all_similarities(
+            query_features,
+            candidate_features,
+            color_weight,
+            shape_weight,
+            texture_weight
+        )
+    except (InvalidFeatureError, FeatureDimensionError) as e:
+        return {
+            'color_similarity': 0.0,
+            'shape_similarity': 0.0,
+            'texture_similarity': 0.0,
+            'combined_similarity': 0.0,
+            'error': e.message,
+            'error_code': e.error_code,
+            'suggestion': e.suggestion
+        }
+    except Exception as e:
+        return {
+            'color_similarity': 0.0,
+            'shape_similarity': 0.0,
+            'texture_similarity': 0.0,
+            'combined_similarity': 0.0,
+            'error': str(e),
+            'error_code': 'UNKNOWN_ERROR'
+        }
+
+
 def batch_compute_similarities(
     query_features: Dict[str, np.ndarray],
     candidate_features_list: List[Dict[str, np.ndarray]],
     color_weight: float = 0.5,
     shape_weight: float = 0.3,
     texture_weight: float = 0.2,
-    skip_errors: bool = True
+    skip_errors: bool = True,
+    use_multiprocessing: bool = None,
+    max_workers: int = None
 ) -> List[Dict[str, float]]:
     """
     Compute similarities between one query and multiple candidates.
     
     This is optimized for the common use case of comparing one new product
     against many historical products. Handles real-world data issues gracefully.
+    
+    PERFORMANCE OPTIMIZATIONS:
+    - For large catalogs (>1000 products), uses multiprocessing for CPU parallelization
+    - For smaller catalogs, uses sequential processing (less overhead)
+    - Numpy vectorization for fast computation
     
     Args:
         query_features: Query product features
@@ -510,6 +557,8 @@ def batch_compute_similarities(
         texture_weight: Weight for texture similarity (default: 0.2)
         skip_errors: If True, continue processing on errors and return error info.
                     If False, raise exception on first error (default: True)
+        use_multiprocessing: Force multiprocessing on/off. If None, auto-detect based on catalog size
+        max_workers: Number of worker processes (default: cpu_count - 1)
     
     Returns:
         List of similarity dictionaries, one for each candidate.
@@ -519,46 +568,112 @@ def batch_compute_similarities(
         ValueError: If feature dictionaries are invalid (only if skip_errors=False)
         InvalidFeatureError: If features are corrupted (only if skip_errors=False)
     """
+    # Determine if we should use multiprocessing
+    # Only beneficial for large catalogs (>1000 products)
+    if use_multiprocessing is None:
+        use_multiprocessing = len(candidate_features_list) > 1000
+    
+    # Sequential processing for small catalogs or if multiprocessing disabled
+    if not use_multiprocessing or len(candidate_features_list) < 100:
+        results = []
+        
+        for i, candidate_features in enumerate(candidate_features_list):
+            try:
+                similarities = compute_all_similarities(
+                    query_features,
+                    candidate_features,
+                    color_weight,
+                    shape_weight,
+                    texture_weight
+                )
+                results.append(similarities)
+            except (InvalidFeatureError, FeatureDimensionError) as e:
+                if not skip_errors:
+                    raise
+                
+                # Add error result with details
+                warnings.warn(f"Failed to compute similarity for candidate {i}: {e.message}")
+                results.append({
+                    'color_similarity': 0.0,
+                    'shape_similarity': 0.0,
+                    'texture_similarity': 0.0,
+                    'combined_similarity': 0.0,
+                    'error': e.message,
+                    'error_code': e.error_code,
+                    'suggestion': e.suggestion
+                })
+            except Exception as e:
+                if not skip_errors:
+                    raise
+                
+                # Add generic error result
+                warnings.warn(f"Unexpected error computing similarity for candidate {i}: {str(e)}")
+                results.append({
+                    'color_similarity': 0.0,
+                    'shape_similarity': 0.0,
+                    'texture_similarity': 0.0,
+                    'combined_similarity': 0.0,
+                    'error': str(e),
+                    'error_code': 'UNKNOWN_ERROR'
+                })
+        
+        return results
+    
+    # Multiprocessing for large catalogs
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    
+    # Determine number of workers
+    if max_workers is None:
+        cpu_count = multiprocessing.cpu_count()
+        max_workers = max(1, cpu_count - 1)
+    
+    # Prepare arguments for workers
+    worker_args = [
+        (query_features, candidate_features, color_weight, shape_weight, texture_weight)
+        for candidate_features in candidate_features_list
+    ]
+    
     results = []
     
-    for i, candidate_features in enumerate(candidate_features_list):
-        try:
-            similarities = compute_all_similarities(
-                query_features,
-                candidate_features,
-                color_weight,
-                shape_weight,
-                texture_weight
-            )
-            results.append(similarities)
-        except (InvalidFeatureError, FeatureDimensionError) as e:
-            if not skip_errors:
-                raise
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            futures = [executor.submit(_compute_similarity_worker, args) for args in worker_args]
             
-            # Add error result with details
-            warnings.warn(f"Failed to compute similarity for candidate {i}: {e.message}")
-            results.append({
-                'color_similarity': 0.0,
-                'shape_similarity': 0.0,
-                'texture_similarity': 0.0,
-                'combined_similarity': 0.0,
-                'error': e.message,
-                'error_code': e.error_code,
-                'suggestion': e.suggestion
-            })
-        except Exception as e:
-            if not skip_errors:
-                raise
-            
-            # Add generic error result
-            warnings.warn(f"Unexpected error computing similarity for candidate {i}: {str(e)}")
-            results.append({
-                'color_similarity': 0.0,
-                'shape_similarity': 0.0,
-                'texture_similarity': 0.0,
-                'combined_similarity': 0.0,
-                'error': str(e),
-                'error_code': 'UNKNOWN_ERROR'
-            })
+            # Collect results in order
+            for future in futures:
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    if not skip_errors:
+                        raise
+                    
+                    warnings.warn(f"Process failed: {str(e)}")
+                    results.append({
+                        'color_similarity': 0.0,
+                        'shape_similarity': 0.0,
+                        'texture_similarity': 0.0,
+                        'combined_similarity': 0.0,
+                        'error': str(e),
+                        'error_code': 'PROCESS_ERROR'
+                    })
+    
+    except Exception as e:
+        if not skip_errors:
+            raise
+        
+        warnings.warn(f"Multiprocessing failed, falling back to sequential: {str(e)}")
+        # Fallback to sequential processing
+        return batch_compute_similarities(
+            query_features,
+            candidate_features_list,
+            color_weight,
+            shape_weight,
+            texture_weight,
+            skip_errors,
+            use_multiprocessing=False
+        )
     
     return results

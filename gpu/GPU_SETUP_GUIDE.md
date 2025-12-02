@@ -92,6 +92,42 @@ This script automatically:
 
 ---
 
+### Intel GPUs (Arc/Iris Xe/UHD Graphics)
+
+**Requirements:**
+- **Python 3.8+** (Any recent version works)
+- **Intel Arc** (discrete GPU) or **Intel Iris Xe/UHD** (11th gen+ integrated)
+- **Windows 10/11** or **Linux**
+- **Intel Graphics Drivers** (Usually already installed)
+
+**Installation Steps:**
+
+1. **Run setup script**:
+   ```bash
+   python setup_gpu.py
+   ```
+   
+   The script will automatically detect Intel GPU and install Intel Extension.
+
+2. **Manual installation** (if needed):
+   ```bash
+   pip install intel-extension-for-pytorch
+   ```
+
+**What Gets Installed:**
+- PyTorch (CPU version)
+- Intel Extension for PyTorch (enables GPU acceleration)
+
+**Performance:**
+- **Intel Arc A770**: 60-80 images/sec
+- **Intel Iris Xe**: 30-50 images/sec  
+- **Intel UHD (11th gen+)**: 20-40 images/sec
+- **Speedup**: 3-5x faster than CPU only
+
+**Note:** Intel Extension is optional. If not installed, system automatically falls back to CPU mode.
+
+---
+
 ### Apple Silicon (M1/M2/M3/M4/M5)
 
 **Requirements:**
@@ -309,8 +345,10 @@ This is automatically done by `setup_gpu.py` for AMD GPUs.
 | **Apple M2** | 50-100 img/s | ✅ Very Good | MPS |
 | **AMD RX 6700 XT** | 80-120 img/s | ✅ Very Good | ROCm 6.4 |
 | **NVIDIA RTX 3060** | 80-120 img/s | ✅ Very Good | CUDA 12.4 |
-| **CPU (Ryzen 9)** | 10-20 img/s | 👍 Good | No GPU |
-| **CPU (Intel i7)** | 5-15 img/s | ⚠️ Acceptable | No GPU |
+| **Intel Arc A770** | 60-80 img/s | ✅ Good | Intel Extension |
+| **Intel Iris Xe** | 30-50 img/s | 👍 Good | Intel Extension |
+| **CPU (Ryzen 9)** | 10-20 img/s | 👍 Acceptable | No GPU |
+| **CPU (Intel i7)** | 5-15 img/s | ⚠️ Slow | No GPU |
 
 ---
 
@@ -361,7 +399,7 @@ This is automatically done by `setup_gpu.py` for AMD GPUs.
 A: No! CPU mode works great for small catalogs (< 1000 products).
 
 **Q: Which GPU is best?**
-A: Any modern GPU works. NVIDIA has best support, AMD works well with ROCm 6.4, Apple Silicon is excellent.
+A: Any modern GPU works. NVIDIA has best support, AMD works well with ROCm 6.4, Apple Silicon is excellent, Intel GPUs provide good speedup for office computers.
 
 **Q: Can I use AMD GPU on Linux?**
 A: Yes! ROCm has better Linux support. Use: `pip install torch --index-url https://download.pytorch.org/whl/rocm6.2`

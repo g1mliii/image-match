@@ -19,6 +19,21 @@ let filterDuplicatesOnly = false;
 let sortBy = 'similarity'; // similarity, price, performance
 let sortOrder = 'desc';
 
+// Dynamic result filters
+let dynamicThreshold = 0;
+let dynamicLimit = 10;
+
+// Similarity weights for matching (default values for CLIP)
+let similarityWeights = {
+    color: 0.33,
+    shape: 0.33,
+    texture: 0.34
+};
+
+// Pagination state
+let currentPage = 1;
+const RESULTS_PER_PAGE = 20; // Show 20 products per page
+
 // Undo/Redo state
 let historyStack = [];
 let historyIndex = -1;
@@ -91,7 +106,8 @@ function initHistoricalUpload() {
         }
     });
 
-    processBtn.addEventListener('click', processHistoricalCatalog);
+    // Don't set up the click handler here - it's handled by processHistoricalCatalogWithOptions
+    // processBtn.addEventListener('click', processHistoricalCatalog);
 }
 
 function handleHistoricalFiles(files) {
@@ -637,10 +653,48 @@ async function startMatching() {
     const limit = parseInt(document.getElementById('limitSelect').value);
     const progressDiv = document.getElementById('matchProgress');
     const matchBtn = document.getElementById('matchBtn');
+    
+    // Initialize dynamic filters with the matching parameters
+    dynamicThreshold = threshold;
+    dynamicLimit = limit;
 
     progressDiv.classList.add('show');
     matchBtn.disabled = true;
     showLoadingSpinner(matchBtn, true);
+
+    // Load new products from database if not in memory
+    if (!newProducts || newProducts.length === 0) {
+        console.log('[MATCHING] newProducts array empty, loading from database...');
+        try {
+            const response = await fetch('/api/catalog/products?type=new&limit=10000');
+            if (!response.ok) throw new Error('Failed to load new products');
+            
+            const data = await response.json();
+            newProducts = data.products.map(p => ({
+                id: p.id,
+                filename: p.filename,
+                category: p.category,
+                sku: p.sku,
+                name: p.product_name,
+                hasFeatures: true,  // Assume features exist if product is in DB
+                is_historical: false
+            }));
+            console.log(`[MATCHING] Loaded ${newProducts.length} new products from database`);
+        } catch (error) {
+            console.error('[MATCHING] Failed to load new products:', error);
+            showToast('Failed to load new products from database', 'error');
+            showLoadingSpinner(matchBtn, false);
+            matchBtn.disabled = false;
+            return;
+        }
+    }
+
+    if (newProducts.length === 0) {
+        showToast('No new products to match. Upload new products first.', 'warning');
+        showLoadingSpinner(matchBtn, false);
+        matchBtn.disabled = false;
+        return;
+    }
 
     progressDiv.innerHTML = '<h4>Finding matches...</h4><div class="progress-bar"><div class="progress-fill" id="matchProgressFill"></div></div><p id="matchProgressText">0 of ' + newProducts.length + ' products matched</p><div class="spinner-inline"></div>';
 
@@ -661,6 +715,7 @@ async function startMatching() {
         }
 
         try {
+            console.log(`[MATCHING] Matching product ${product.id} (${product.filename})`);
             const response = await fetchWithRetry('/api/products/match', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -668,13 +723,12 @@ async function startMatching() {
                     product_id: product.id,
                     threshold: threshold,
                     limit: limit,
-                    color_weight: similarityWeights.color,
-                    shape_weight: similarityWeights.shape,
-                    texture_weight: similarityWeights.texture
+                    match_against_all: true  // Match against all categories by default
                 })
             });
 
             const data = await response.json();
+            console.log(`[MATCHING] Product ${product.id} got ${data.matches?.length || 0} matches`, data);
             
             const matches = data.matches || [];
             
@@ -745,15 +799,22 @@ function initResults() {
     document.getElementById('modalClose').addEventListener('click', closeModal);
 }
 
-function displayResults() {
+function displayResults(resetPage = true) {
+    console.log('[DISPLAY] displayResults called with matchResults:', matchResults);
     const summaryDiv = document.getElementById('resultsSummary');
     const listDiv = document.getElementById('resultsList');
+
+    // Reset to page 1 when filters change
+    if (resetPage) {
+        currentPage = 1;
+    }
 
     // Populate category filter
     populateCategoryFilter();
     
     // Apply filters and sorting
     const filteredResults = filterAndSortResults(matchResults);
+    console.log('[DISPLAY] Filtered results:', filteredResults);
     
     const totalProducts = matchResults.length;
     const totalMatches = matchResults.reduce((sum, r) => sum + r.matches.length, 0);
@@ -761,6 +822,13 @@ function displayResults() {
     const avgMatches = productsWithMatches > 0 ? (totalMatches / productsWithMatches).toFixed(1) : 0;
     
     const filteredCount = filteredResults.length;
+    console.log('[DISPLAY] Stats - Total:', totalProducts, 'With matches:', productsWithMatches, 'Total matches:', totalMatches);
+
+    // Calculate pagination
+    const totalPages = Math.ceil(filteredCount / RESULTS_PER_PAGE);
+    const startIndex = (currentPage - 1) * RESULTS_PER_PAGE;
+    const endIndex = Math.min(startIndex + RESULTS_PER_PAGE, filteredCount);
+    const paginatedResults = filteredResults.slice(startIndex, endIndex);
 
     summaryDiv.innerHTML = `
         <h3>Match Results Summary</h3>
@@ -788,6 +856,32 @@ function displayResults() {
             </div>
             ` : ''}
         </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 30px; align-items: center; justify-content: center; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-weight: 600; color: #2d3748;">Min Similarity:</label>
+                <input type="range" id="dynamicThresholdSlider" min="0" max="100" value="${dynamicThreshold}" 
+                       style="width: 150px;" oninput="updateDynamicThreshold(this.value)">
+                <span id="dynamicThresholdValue" style="font-weight: 600; min-width: 40px;">${dynamicThreshold}%</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-weight: 600; color: #2d3748;">Max Matches:</label>
+                <select id="dynamicLimitSelect" onchange="updateDynamicLimit(this.value)" 
+                        style="padding: 5px 10px; border: 2px solid #000; background: white; font-weight: 600;">
+                    <option value="5" ${dynamicLimit === 5 ? 'selected' : ''}>5</option>
+                    <option value="10" ${dynamicLimit === 10 ? 'selected' : ''}>10</option>
+                    <option value="20" ${dynamicLimit === 20 ? 'selected' : ''}>20</option>
+                    <option value="50" ${dynamicLimit === 50 ? 'selected' : ''}>50</option>
+                    <option value="0" ${dynamicLimit === 0 ? 'selected' : ''}>All</option>
+                </select>
+            </div>
+        </div>
+        
+        ${filteredCount > RESULTS_PER_PAGE ? `
+            <div style="text-align: center; margin-top: 15px; color: #718096;">
+                Showing ${startIndex + 1}-${endIndex} of ${filteredCount} products
+            </div>
+        ` : ''}
     `;
 
     if (filteredResults.length === 0) {
@@ -804,7 +898,7 @@ function displayResults() {
         return;
     }
 
-    listDiv.innerHTML = filteredResults.map((result, index) => {
+    listDiv.innerHTML = paginatedResults.map((result, index) => {
         const product = result.product;
         const matches = result.matches;
 
@@ -860,8 +954,55 @@ function displayResults() {
         `;
     }).join('');
     
+    // Add pagination controls if needed
+    if (filteredCount > RESULTS_PER_PAGE) {
+        const hasMore = currentPage < totalPages;
+        const hasPrevious = currentPage > 1;
+        
+        listDiv.innerHTML += `
+            <div style="display: flex; justify-content: center; gap: 15px; margin-top: 30px; padding: 20px;">
+                ${hasPrevious ? `
+                    <button class="btn" onclick="loadPreviousPage()" style="min-width: 120px;">
+                        ← Previous
+                    </button>
+                ` : ''}
+                <div style="display: flex; align-items: center; color: #718096; font-weight: 500;">
+                    Page ${currentPage} of ${totalPages}
+                </div>
+                ${hasMore ? `
+                    <button class="btn" onclick="loadNextPage()" style="min-width: 120px;">
+                        Next →
+                    </button>
+                ` : ''}
+            </div>
+        `;
+    }
+    
     // Initialize lazy loading for images
     initLazyLoading();
+}
+
+function loadNextPage() {
+    currentPage++;
+    displayResults(false);
+    document.getElementById('resultsList').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function loadPreviousPage() {
+    currentPage--;
+    displayResults(false);
+    document.getElementById('resultsList').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function updateDynamicThreshold(value) {
+    dynamicThreshold = parseInt(value);
+    document.getElementById('dynamicThresholdValue').textContent = value + '%';
+    displayResults(true); // Reset to page 1 when filter changes
+}
+
+function updateDynamicLimit(value) {
+    dynamicLimit = parseInt(value);
+    displayResults(true); // Reset to page 1 when filter changes
 }
 
 function getScoreClass(score) {
@@ -2110,52 +2251,61 @@ function resetWeights() {
 // Initialize Advanced Features
 function initAdvancedFeatures() {
     // Advanced Settings Button
-    document.getElementById('advancedSettingsBtn').addEventListener('click', toggleAdvancedSettings);
-    document.getElementById('resetWeightsBtn').addEventListener('click', resetWeights);
+    const advancedSettingsBtn = document.getElementById('advancedSettingsBtn');
+    const resetWeightsBtn = document.getElementById('resetWeightsBtn');
+    
+    if (advancedSettingsBtn) advancedSettingsBtn.addEventListener('click', toggleAdvancedSettings);
+    if (resetWeightsBtn) resetWeightsBtn.addEventListener('click', resetWeights);
+    
+    // Helper function to safely add event listener
+    const safeAddListener = (id, event, handler) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener(event, handler);
+    };
     
     // Weight Sliders - Mode 1 (Visual)
-    document.getElementById('colorWeightSlider').addEventListener('input', updateWeights);
-    document.getElementById('shapeWeightSlider').addEventListener('input', updateWeights);
-    document.getElementById('textureWeightSlider').addEventListener('input', updateWeights);
+    safeAddListener('colorWeightSlider', 'input', updateWeights);
+    safeAddListener('shapeWeightSlider', 'input', updateWeights);
+    safeAddListener('textureWeightSlider', 'input', updateWeights);
     
     // Weight Sliders - Mode 2 (Metadata)
-    document.getElementById('skuWeightSlider').addEventListener('input', updateMetadataWeights);
-    document.getElementById('nameWeightSlider').addEventListener('input', updateMetadataWeights);
-    document.getElementById('categoryWeightSlider').addEventListener('input', updateMetadataWeights);
-    document.getElementById('priceWeightSlider').addEventListener('input', updateMetadataWeights);
-    document.getElementById('performanceWeightSlider').addEventListener('input', updateMetadataWeights);
+    safeAddListener('skuWeightSlider', 'input', updateMetadataWeights);
+    safeAddListener('nameWeightSlider', 'input', updateMetadataWeights);
+    safeAddListener('categoryWeightSlider', 'input', updateMetadataWeights);
+    safeAddListener('priceWeightSlider', 'input', updateMetadataWeights);
+    safeAddListener('performanceWeightSlider', 'input', updateMetadataWeights);
     
     // Weight Sliders - Mode 3 (Hybrid Main)
-    document.getElementById('hybridVisualWeightSlider').addEventListener('input', updateHybridWeights);
-    document.getElementById('hybridMetadataWeightSlider').addEventListener('input', updateHybridWeights);
+    safeAddListener('hybridVisualWeightSlider', 'input', updateHybridWeights);
+    safeAddListener('hybridMetadataWeightSlider', 'input', updateHybridWeights);
     
     // Weight Sliders - Mode 3 (Hybrid Visual Sub)
-    document.getElementById('hybridColorWeightSlider').addEventListener('input', updateHybridVisualSubWeights);
-    document.getElementById('hybridShapeWeightSlider').addEventListener('input', updateHybridVisualSubWeights);
-    document.getElementById('hybridTextureWeightSlider').addEventListener('input', updateHybridVisualSubWeights);
+    safeAddListener('hybridColorWeightSlider', 'input', updateHybridVisualSubWeights);
+    safeAddListener('hybridShapeWeightSlider', 'input', updateHybridVisualSubWeights);
+    safeAddListener('hybridTextureWeightSlider', 'input', updateHybridVisualSubWeights);
     
     // Weight Sliders - Mode 3 (Hybrid Metadata Sub)
-    document.getElementById('hybridSkuWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
-    document.getElementById('hybridNameWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
-    document.getElementById('hybridCategoryWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
-    document.getElementById('hybridPriceWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
-    document.getElementById('hybridPerformanceWeightSlider').addEventListener('input', updateHybridMetadataSubWeights);
+    safeAddListener('hybridSkuWeightSlider', 'input', updateHybridMetadataSubWeights);
+    safeAddListener('hybridNameWeightSlider', 'input', updateHybridMetadataSubWeights);
+    safeAddListener('hybridCategoryWeightSlider', 'input', updateHybridMetadataSubWeights);
+    safeAddListener('hybridPriceWeightSlider', 'input', updateHybridMetadataSubWeights);
+    safeAddListener('hybridPerformanceWeightSlider', 'input', updateHybridMetadataSubWeights);
     
     // Export Buttons
-    document.getElementById('exportCsvBtn').addEventListener('click', exportResults);
-    document.getElementById('exportWithImagesBtn').addEventListener('click', exportWithImages);
-    document.getElementById('duplicateReportBtn').addEventListener('click', showDuplicateReport);
+    safeAddListener('exportCsvBtn', 'click', exportResults);
+    safeAddListener('exportWithImagesBtn', 'click', exportWithImages);
+    safeAddListener('duplicateReportBtn', 'click', showDuplicateReport);
     
     // Session Management
-    document.getElementById('saveSessionBtn').addEventListener('click', saveSession);
-    document.getElementById('loadSessionBtn').addEventListener('click', loadSession);
+    safeAddListener('saveSessionBtn', 'click', saveSession);
+    safeAddListener('loadSessionBtn', 'click', loadSession);
     
     // Search and Filter
-    document.getElementById('searchInput').addEventListener('input', applyFilters);
-    document.getElementById('categoryFilter').addEventListener('change', applyFilters);
-    document.getElementById('sortBySelect').addEventListener('change', applyFilters);
-    document.getElementById('duplicatesOnlyCheckbox').addEventListener('change', applyFilters);
-    document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+    safeAddListener('searchInput', 'input', applyFilters);
+    safeAddListener('categoryFilter', 'change', applyFilters);
+    safeAddListener('sortBySelect', 'change', applyFilters);
+    safeAddListener('duplicatesOnlyCheckbox', 'change', applyFilters);
+    safeAddListener('clearFiltersBtn', 'click', clearFilters);
 }
 
 // Export with Images
@@ -2500,7 +2650,20 @@ function populateCategoryFilter() {
 
 // Filter and Sort Results
 function filterAndSortResults(results) {
-    let filtered = results.filter(result => {
+    let filtered = results.map(result => {
+        // Apply dynamic threshold and limit to matches
+        let filteredMatches = result.matches.filter(m => m.similarity_score >= dynamicThreshold);
+        
+        // Apply dynamic limit
+        if (dynamicLimit > 0) {
+            filteredMatches = filteredMatches.slice(0, dynamicLimit);
+        }
+        
+        return {
+            ...result,
+            matches: filteredMatches
+        };
+    }).filter(result => {
         const product = result.product;
         
         // Search filter
@@ -3122,6 +3285,9 @@ function updateGPUStatus(status) {
         } else if (status.device === 'mps') {
             deviceName = 'Apple Silicon';
             tooltip = `GPU: ${status.gpu_name || 'Apple Silicon'} (MPS) - ${status.throughput || 'N/A'} img/s`;
+        } else if (status.device === 'xpu') {
+            deviceName = 'Intel GPU';
+            tooltip = `GPU: ${status.gpu_name || 'Intel GPU'} (Intel Extension) - ${status.throughput || '30-80'} img/s`;
         }
         
         statusText.textContent = `${deviceName} Active`;
@@ -3189,33 +3355,61 @@ function initCatalogOptions() {
 
 async function checkExistingCatalog() {
     try {
-        const response = await fetch('/api/catalog/stats');
+        const response = await fetch('/api/catalogs/main-db-stats');
+        // Use the same endpoint as the active catalog info bar
         if (!response.ok) throw new Error('Failed to fetch catalog stats');
         
-        const stats = await response.json();
-        existingCatalogStats = stats;
+        const data = await response.json();
+        existingCatalogStats = data;
         
         const catalogOptions = document.getElementById('catalogOptions');
         const statsEl = document.getElementById('existingCatalogStats');
         
-        if (stats.historical_products > 0) {
-            // Show catalog options
+        if (data.exists) {
+            // Show catalog options - ALWAYS visible when there's an existing catalog
             catalogOptions.style.display = 'block';
-            statsEl.innerHTML = `<strong>${stats.historical_products.toLocaleString()}</strong> historical products | ` +
-                               `<strong>${stats.unique_categories}</strong> categories | ` +
-                               `<strong>${stats.database_size_mb.toFixed(1)} MB</strong>`;
+            
+            let statsText = `<strong>${data.total_products.toLocaleString()}</strong> products`;
+            if (data.historical_products > 0) {
+                statsText = `<strong>${data.historical_products.toLocaleString()}</strong> historical products`;
+                if (data.new_products > 0) {
+                    statsText += ` | <strong>${data.new_products.toLocaleString()}</strong> new products`;
+                }
+            }
+            if (data.loaded_snapshot && data.loaded_snapshot.loaded) {
+                statsText += ` | 📂 <strong>${data.loaded_snapshot.name}</strong>`;
+            }
+            
+            statsEl.innerHTML = statsText;
             
             // Check for large database warning
-            if (stats.database_size_mb > 500) {
-                showToast('⚠️ Database is large (' + stats.database_size_mb.toFixed(0) + ' MB). Consider cleaning up old products.', 'warning', 8000);
+            if (data.database_size_mb && data.database_size_mb > 500) {
+                showToast('⚠️ Database is large (' + data.database_size_mb.toFixed(0) + ' MB). Consider cleaning up old products.', 'warning', 8000);
             }
         } else {
-            // No existing catalog, hide options
-            catalogOptions.style.display = 'none';
+            // No existing catalog - still show options but with different message
+            catalogOptions.style.display = 'block';
+            statsEl.innerHTML = `<em>No existing catalog</em>`;
+            // Disable "use existing" option when there's no catalog
+            const useExistingRadio = document.querySelector('input[name="catalogLoadOption"][value="use_existing"]');
+            if (useExistingRadio) {
+                useExistingRadio.disabled = true;
+                // Select "add_to_existing" by default when no catalog exists
+                const addToExistingRadio = document.querySelector('input[name="catalogLoadOption"][value="add_to_existing"]');
+                if (addToExistingRadio) {
+                    addToExistingRadio.checked = true;
+                }
+            }
         }
     } catch (error) {
         console.error('Error checking existing catalog:', error);
-        document.getElementById('catalogOptions').style.display = 'none';
+        // Still show options even on error
+        const catalogOptions = document.getElementById('catalogOptions');
+        const statsEl = document.getElementById('existingCatalogStats');
+        if (catalogOptions && statsEl) {
+            catalogOptions.style.display = 'block';
+            statsEl.innerHTML = `<em>Unable to load catalog info</em>`;
+        }
     }
 }
 
@@ -3305,6 +3499,7 @@ async function processHistoricalCatalogWithOptions() {
     if (option === 'replace') {
         // Clear existing catalog first
         try {
+            console.log('[REPLACE] Starting catalog cleanup...');
             showToast('Clearing existing catalog...', 'info');
             const response = await fetch('/api/catalog/cleanup', {
                 method: 'POST',
@@ -3312,20 +3507,27 @@ async function processHistoricalCatalogWithOptions() {
                 body: JSON.stringify({ type: 'historical' })
             });
             
-            if (!response.ok) throw new Error('Failed to clear catalog');
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('[REPLACE] Cleanup failed:', errorData);
+                throw new Error('Failed to clear catalog');
+            }
             
-            showToast('Existing catalog cleared', 'success');
+            const result = await response.json();
+            console.log('[REPLACE] Cleanup successful:', result);
+            showToast(`Existing catalog cleared (${result.products_deleted} products deleted)`, 'success');
+            
+            // Wait a moment to ensure cleanup is complete
+            await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
-            console.error('Error clearing catalog:', error);
+            console.error('[REPLACE] Error clearing catalog:', error);
             showToast('Failed to clear existing catalog', 'error');
             return;
         }
     }
     
     // Continue with normal processing (add_to_existing or replace after clearing)
-    if (originalProcessHistoricalCatalog) {
-        originalProcessHistoricalCatalog();
-    }
+    await processHistoricalCatalog();
 }
 
 // Hook into the process button
@@ -3337,22 +3539,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const originalHandler = processBtn.onclick;
             
             processBtn.onclick = async (e) => {
-                const option = getCatalogLoadOption();
-                
-                if (option === 'use_existing') {
-                    await processHistoricalCatalogWithOptions();
-                } else if (option === 'replace') {
-                    await processHistoricalCatalogWithOptions();
-                    // After clearing, call original handler if files are selected
-                    if (historicalFiles.length > 0 && originalHandler) {
-                        originalHandler.call(processBtn, e);
-                    }
-                } else {
-                    // add_to_existing - just use original handler
-                    if (originalHandler) {
-                        originalHandler.call(processBtn, e);
-                    }
-                }
+                // Always use the processHistoricalCatalogWithOptions which handles all cases
+                await processHistoricalCatalogWithOptions();
             };
         }
     }, 100);

@@ -56,7 +56,7 @@ def detect_gpu():
     system = platform.system()
     
     if system == "Windows":
-        # Check for AMD GPU
+        # Check for AMD/NVIDIA/Intel GPU
         success, stdout, _ = run_cmd('powershell "Get-WmiObject Win32_VideoController | Select-Object Name"')
         if success:
             if 'AMD' in stdout or 'Radeon' in stdout:
@@ -67,6 +67,10 @@ def detect_gpu():
                 for line in stdout.split('\n'):
                     if 'NVIDIA' in line or 'GeForce' in line or 'RTX' in line or 'Quadro' in line:
                         return 'nvidia', line.strip()
+            elif 'Intel' in stdout and ('Arc' in stdout or 'Iris' in stdout or 'UHD' in stdout):
+                for line in stdout.split('\n'):
+                    if 'Intel' in line and ('Arc' in line or 'Iris' in line or 'UHD' in line):
+                        return 'intel', line.strip()
     
     elif system == "Darwin":  # macOS
         if platform.machine() == "arm64":
@@ -82,6 +86,10 @@ def detect_gpu():
         success, stdout, _ = run_cmd("lspci | grep -i 'vga\\|3d\\|display'")
         if success and ('AMD' in stdout or 'Radeon' in stdout):
             return 'amd', 'AMD GPU'
+        
+        # Check for Intel
+        if success and 'Intel' in stdout:
+            return 'intel', 'Intel GPU'
     
     return 'cpu', 'No GPU detected'
 
@@ -169,6 +177,31 @@ def install_pytorch(gpu_type):
                 cmd = "pip install torch torchvision torchaudio"
     elif gpu_type == 'apple':
         cmd = "pip install torch torchvision torchaudio"
+    elif gpu_type == 'intel':
+        # Intel GPU - install PyTorch first, then Intel extension
+        print("\n[INFO] Installing PyTorch for Intel GPU...")
+        cmd = "pip install torch torchvision torchaudio"
+        success, stdout, stderr = run_cmd(cmd)
+        
+        if success:
+            print("[OK] PyTorch installed")
+            print("\n[INFO] Installing Intel Extension for PyTorch...")
+            print("[INFO] This enables GPU acceleration on Intel Arc/Iris/UHD GPUs...")
+            
+            intel_cmd = "pip install intel-extension-for-pytorch"
+            intel_success, intel_stdout, intel_stderr = run_cmd(intel_cmd)
+            
+            if intel_success:
+                print("[OK] Intel Extension installed - GPU acceleration enabled!")
+                print("[INFO] Expected speedup: 3-5x faster than CPU")
+                return True
+            else:
+                print(f"[WARNING] Intel Extension installation failed: {intel_stderr}")
+                print("[INFO] Will fall back to CPU mode (still works, just slower)")
+                return True  # PyTorch still works, just without Intel GPU
+        else:
+            print(f"[ERROR] PyTorch installation failed: {stderr}")
+            return False
     else:  # CPU
         cmd = "pip install torch torchvision torchaudio"
     

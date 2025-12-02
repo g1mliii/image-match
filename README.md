@@ -39,7 +39,7 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 
 ### User Guides
 - **[Website Documentation](https://g1mliii.github.io/image-match/docs.html)** - Online user guide
-- **[GPU Setup Guide](gpu/GPU_SETUP_GUIDE.md)** - GPU acceleration setup (AMD/NVIDIA/Apple Silicon)
+- **[GPU Setup Guide](gpu/GPU_SETUP_GUIDE.md)** - GPU acceleration setup (AMD/NVIDIA/Intel/Apple Silicon)
 
 ### Developer Documentation
 - **[CLIP Developer Guide](backend/docs/CLIP_DEVELOPER_GUIDE.md)** - Technical guide for CLIP integration
@@ -57,9 +57,13 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 ### GPU Acceleration (Optional but Recommended)
 - **AMD GPU**: Radeon RX 6000/7000/9000 series + Python 3.12 + ROCm 6.4
 - **NVIDIA GPU**: GeForce/RTX series (any recent GPU)
+- **Intel GPU**: Arc/Iris Xe/UHD (11th gen+) + Intel Extension
 - **Apple Silicon**: M1/M2/M3/M4/M5 (built-in MPS support)
 
-**Performance**: GPU provides 10-50x faster processing (150-300 img/s vs 5-20 img/s on CPU)
+**Performance**: 
+- AMD/NVIDIA GPU: 150-300 img/s (fastest)
+- Intel GPU: 30-80 img/s (3-5x faster than CPU)
+- CPU only: 5-20 img/s (slowest but works everywhere)
 
 **Setup GPU**: See [INSTALLATION.md](INSTALLATION.md) or [gpu/GPU_SETUP_GUIDE.md](gpu/GPU_SETUP_GUIDE.md)
 

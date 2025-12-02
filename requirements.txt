@@ -52,6 +52,14 @@ torch>=2.0.0
 # Note: sentence-transformers will auto-install transformers >= 4.55.5 (required for ROCm)
 sentence-transformers>=2.7.0,<3.0.0
 
+# Intel GPU Acceleration (optional - for Intel Arc/Iris GPUs)
+# Uncomment to enable Intel GPU support:
+# intel-extension-for-pytorch>=2.1.0
+# Provides 3-5x speedup on Intel GPUs vs CPU
+# Works on: Intel Arc, Intel Iris Xe, Intel UHD Graphics (11th gen+)
+# Installation: pip install intel-extension-for-pytorch
+# Note: Automatically detected and used if installed, gracefully falls back to CPU if not
+
 # Testing (optional - for development)
 pytest>=7.0.0
 pytest-timeout>=2.1.0

@@ -12,7 +12,7 @@ comprehensive real-world data handling. It handles:
 - Detailed error reporting and logging
 
 Matching Modes:
-- Mode 1 (Visual): CLIP embeddings or legacy features (color/shape/texture)
+- Mode 1 (Visual): CLIP embeddings (GPU or CPU)
 - Mode 2 (Metadata): SKU, name, category, price, performance
 - Mode 3 (Hybrid): Combination of visual + metadata
 
@@ -45,7 +45,7 @@ from similarity import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import CLIP functions (optional - graceful fallback if not available)
+# Import CLIP functions (required)
 try:
     from image_processing_clip import (
         compute_clip_similarity,
@@ -54,9 +54,11 @@ try:
         CLIPModelError
     )
     CLIP_AVAILABLE = is_clip_available()
+    if not CLIP_AVAILABLE:
+        logger.error("CLIP not available - install PyTorch and sentence-transformers")
 except ImportError:
     CLIP_AVAILABLE = False
-    logger.warning("CLIP not available - install torch and sentence-transformers for CLIP support")
+    logger.error("CLIP not available - install torch and sentence-transformers for CLIP support")
 
 
 class MatchingError(Exception):

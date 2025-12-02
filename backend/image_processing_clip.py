@@ -40,6 +40,15 @@ except ImportError:
     SentenceTransformer = None
     Image = None
 
+# Try to import Intel Extension for PyTorch (optional - for Intel GPU acceleration)
+try:
+    import intel_extension_for_pytorch as ipex
+    INTEL_EXTENSION_AVAILABLE = True
+    logger.info("Intel Extension for PyTorch detected - Intel GPU acceleration available")
+except ImportError:
+    INTEL_EXTENSION_AVAILABLE = False
+    ipex = None
+
 # Import error handling from existing module
 try:
     from image_processing import (
@@ -316,10 +325,18 @@ def clear_model_cache(keep_config: bool = True) -> Dict[str, Any]:
 def detect_device() -> str:
     """Detect best available device for CLIP processing
     
-    Priority: CUDA (NVIDIA/AMD ROCm) > MPS (Apple Silicon) > CPU
+    Priority: Discrete GPU > Integrated GPU > MPS (Apple Silicon) > CPU
+    
+    When multiple CUDA GPUs are present, prioritizes discrete GPUs over integrated GPUs
+    by checking VRAM capacity and GPU names. Discrete GPUs typically have more VRAM
+    and don't have "Intel" in their name.
+    
+    Environment Variables:
+        FORCE_GPU_DEVICE: Override GPU selection (e.g., 'cuda:0', 'cpu')
+                         Useful for testing fallback with iGPU
     
     Returns:
-        Device string: 'cuda', 'mps', or 'cpu'
+        Device string: 'cuda', 'cuda:N' (where N is device index), 'mps', or 'cpu'
     
     Raises:
         CLIPModelError: If PyTorch is not available
@@ -328,6 +345,8 @@ def detect_device() -> str:
         - CUDA supports both NVIDIA GPUs and AMD GPUs (via ROCm)
         - ROCm uses the same 'cuda' device string in PyTorch
         - MPS is for Apple Silicon (M1/M2/M3/M4/M5)
+        - Integrated GPUs (iGPUs) are typically Intel with lower VRAM
+        - Discrete GPUs are typically NVIDIA/AMD with higher VRAM
     """
     if not TORCH_AVAILABLE:
         raise CLIPModelError(
@@ -335,17 +354,108 @@ def detect_device() -> str:
             "Install PyTorch: pip install torch"
         )
     
-    if torch.cuda.is_available():
-        device = 'cuda'
-        try:
-            gpu_name = torch.cuda.get_device_name(0)
-            # Detect if it's AMD (ROCm) or NVIDIA
-            if 'AMD' in gpu_name.upper() or 'RADEON' in gpu_name.upper():
-                logger.info(f"GPU detected: {gpu_name} (AMD ROCm via CUDA)")
+    # Check for forced device override (for testing)
+    force_device = os.environ.get('FORCE_GPU_DEVICE', '').strip()
+    if force_device:
+        logger.warning(f"⚠️  FORCE_GPU_DEVICE set to '{force_device}' - overriding automatic detection")
+        if force_device == 'cpu':
+            logger.info("Forced to CPU mode")
+            return 'cpu'
+        elif force_device.startswith('cuda'):
+            if torch.cuda.is_available():
+                # Validate device index
+                try:
+                    device_idx = int(force_device.split(':')[1]) if ':' in force_device else 0
+                    if device_idx < torch.cuda.device_count():
+                        gpu_name = torch.cuda.get_device_name(device_idx)
+                        logger.info(f"Forced to {force_device}: {gpu_name}")
+                        return force_device
+                    else:
+                        logger.error(f"Invalid device index {device_idx}, falling back to auto-detection")
+                except:
+                    logger.error(f"Invalid FORCE_GPU_DEVICE format, falling back to auto-detection")
             else:
-                logger.info(f"GPU detected: {gpu_name} (NVIDIA CUDA)")
-        except:
-            logger.info(f"GPU detected: CUDA device available")
+                logger.error("CUDA not available, ignoring FORCE_GPU_DEVICE")
+    
+    # Check for Intel XPU (Intel GPU via Intel Extension)
+    if INTEL_EXTENSION_AVAILABLE and hasattr(torch, 'xpu') and torch.xpu.is_available():
+        device_count = torch.xpu.device_count()
+        logger.info(f"Intel GPU detected ({device_count} device(s))")
+        
+        if device_count == 1:
+            device = 'xpu:0'
+            try:
+                gpu_name = torch.xpu.get_device_name(0)
+                logger.info(f"Intel GPU: {gpu_name} (Intel Extension for PyTorch)")
+            except:
+                logger.info("Intel GPU: Device 0 (Intel Extension for PyTorch)")
+        else:
+            # Multiple Intel GPUs - use first one
+            device = 'xpu:0'
+            try:
+                gpu_name = torch.xpu.get_device_name(0)
+                logger.info(f"Selected Intel GPU: Device 0 - {gpu_name}")
+            except:
+                logger.info("Selected Intel GPU: Device 0")
+    
+    elif torch.cuda.is_available():
+        device_count = torch.cuda.device_count()
+        
+        if device_count == 1:
+            # Only one GPU, use it
+            device = 'cuda:0'
+            try:
+                gpu_name = torch.cuda.get_device_name(0)
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if 'AMD' in gpu_name.upper() or 'RADEON' in gpu_name.upper():
+                    logger.info(f"GPU detected: {gpu_name} ({vram_gb:.1f}GB VRAM) (AMD ROCm via CUDA)")
+                else:
+                    logger.info(f"GPU detected: {gpu_name} ({vram_gb:.1f}GB VRAM) (NVIDIA CUDA)")
+            except:
+                logger.info(f"GPU detected: CUDA device 0 available")
+        else:
+            # Multiple GPUs - select the best one (discrete over integrated)
+            logger.info(f"Multiple GPUs detected ({device_count} devices), selecting best GPU...")
+            
+            best_device_idx = 0
+            best_score = -1
+            
+            for i in range(device_count):
+                try:
+                    gpu_name = torch.cuda.get_device_name(i)
+                    vram_gb = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+                    
+                    # Score each GPU (higher is better)
+                    score = 0
+                    
+                    # Prioritize discrete GPUs (not Intel integrated)
+                    is_integrated = 'INTEL' in gpu_name.upper() or 'UHD' in gpu_name.upper() or 'IRIS' in gpu_name.upper()
+                    if not is_integrated:
+                        score += 1000  # Big bonus for discrete GPU
+                    
+                    # Add VRAM to score (more VRAM = better)
+                    score += vram_gb * 10
+                    
+                    logger.info(f"  Device {i}: {gpu_name} ({vram_gb:.1f}GB VRAM) - Score: {score:.1f} {'[Integrated]' if is_integrated else '[Discrete]'}")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_device_idx = i
+                
+                except Exception as e:
+                    logger.warning(f"  Device {i}: Failed to get info - {e}")
+            
+            device = f'cuda:{best_device_idx}'
+            try:
+                gpu_name = torch.cuda.get_device_name(best_device_idx)
+                vram_gb = torch.cuda.get_device_properties(best_device_idx).total_memory / (1024**3)
+                if 'AMD' in gpu_name.upper() or 'RADEON' in gpu_name.upper():
+                    logger.info(f"Selected GPU: Device {best_device_idx} - {gpu_name} ({vram_gb:.1f}GB VRAM) (AMD ROCm via CUDA)")
+                else:
+                    logger.info(f"Selected GPU: Device {best_device_idx} - {gpu_name} ({vram_gb:.1f}GB VRAM) (NVIDIA CUDA)")
+            except:
+                logger.info(f"Selected GPU: Device {best_device_idx}")
+    
     elif torch.backends.mps.is_available():
         device = 'mps'
         logger.info("GPU detected: Apple Silicon (MPS)")
@@ -382,7 +492,15 @@ def get_device_info() -> Dict[str, Any]:
     }
     
     try:
-        if torch.cuda.is_available():
+        # Check Intel GPU first
+        if INTEL_EXTENSION_AVAILABLE and hasattr(torch, 'xpu') and torch.xpu.is_available():
+            info['device'] = 'xpu'
+            try:
+                info['gpu_name'] = torch.xpu.get_device_name(0)
+            except:
+                info['gpu_name'] = 'Intel GPU'
+        
+        elif torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             
             # Detect if AMD (ROCm) or NVIDIA
@@ -493,8 +611,40 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
             if progress_callback:
                 progress_callback("Model loaded, moving to device...", 80)
             
-            # Move to device
-            model = model.to(device)
+            # Try to move to device with GPU fallback to CPU
+            try:
+                model = model.to(device)
+                
+                # Optimize for Intel GPU if available
+                if device.startswith('xpu') and INTEL_EXTENSION_AVAILABLE:
+                    try:
+                        model = ipex.optimize(model)
+                        logger.info(f"CLIP model optimized for Intel GPU on {device}")
+                    except Exception as opt_error:
+                        logger.warning(f"Intel optimization failed: {opt_error}, continuing without optimization")
+                        logger.info(f"CLIP model loaded successfully on {device}")
+                else:
+                    logger.info(f"CLIP model loaded successfully on {device}")
+            except Exception as gpu_error:
+                # GPU failed, fallback to CPU
+                if device != 'cpu':
+                    logger.warning(f"Failed to load model on {device}: {gpu_error}")
+                    logger.info("Falling back to CPU...")
+                    device = 'cpu'
+                    try:
+                        model = model.to(device)
+                        logger.info("CLIP model loaded successfully on CPU (GPU fallback)")
+                        if progress_callback:
+                            progress_callback("GPU failed, using CPU...", 90)
+                    except Exception as cpu_error:
+                        logger.error(f"Failed to load model on CPU: {cpu_error}")
+                        raise CLIPModelError(
+                            f"Failed to load model on both GPU and CPU: {str(cpu_error)}",
+                            "Check PyTorch installation and available memory"
+                        )
+                else:
+                    # Already on CPU and still failed
+                    raise
             
             if progress_callback:
                 progress_callback("Model ready!", 100)
@@ -504,7 +654,6 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
             _clip_device = device
             _clip_model_name = model_name
             
-            logger.info(f"CLIP model loaded successfully on {device}")
             return model, device
         
         except Exception as download_error:
@@ -770,24 +919,58 @@ def extract_clip_embedding(image_path: str, model_name: str = None,
             else:
                 raise
         
-        # Extract embedding with optimizations
-        if use_amp and device in ['cuda', 'mps']:
-            # Use Automatic Mixed Precision for faster GPU inference
-            with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=True):
-                embedding = model.encode(
-                    pil_image,
-                    convert_to_numpy=True,
-                    show_progress_bar=False,
-                    normalize_embeddings=normalize
-                )
-        else:
-            with torch.no_grad():
-                embedding = model.encode(
-                    pil_image,
-                    convert_to_numpy=True,
-                    show_progress_bar=False,
-                    normalize_embeddings=normalize
-                )
+        # Extract embedding with optimizations and GPU fallback
+        # Check if device is CUDA (handles both 'cuda' and 'cuda:N' formats)
+        is_cuda = device.startswith('cuda')
+        device_type = 'cuda' if is_cuda else device
+        
+        try:
+            if use_amp and (is_cuda or device == 'mps'):
+                # Use Automatic Mixed Precision for faster GPU inference
+                with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=True):
+                    embedding = model.encode(
+                        pil_image,
+                        convert_to_numpy=True,
+                        show_progress_bar=False,
+                        normalize_embeddings=normalize
+                    )
+            else:
+                with torch.no_grad():
+                    embedding = model.encode(
+                        pil_image,
+                        convert_to_numpy=True,
+                        show_progress_bar=False,
+                        normalize_embeddings=normalize
+                    )
+        except RuntimeError as gpu_error:
+            # GPU runtime error (OOM, CUDA error, etc.) - fallback to CPU
+            error_str = str(gpu_error).lower()
+            if device != 'cpu' and any(keyword in error_str for keyword in ['cuda', 'gpu', 'out of memory', 'device']):
+                logger.warning(f"GPU inference failed: {gpu_error}")
+                logger.info("Falling back to CPU for this image...")
+                
+                # Move model to CPU temporarily
+                try:
+                    model_cpu = model.to('cpu')
+                    with torch.no_grad():
+                        embedding = model_cpu.encode(
+                            pil_image,
+                            convert_to_numpy=True,
+                            show_progress_bar=False,
+                            normalize_embeddings=normalize
+                        )
+                    # Move model back to original device
+                    model.to(device)
+                    logger.info("Successfully processed on CPU")
+                except Exception as cpu_error:
+                    logger.error(f"CPU fallback also failed: {cpu_error}")
+                    raise CLIPModelError(
+                        f"Failed on both GPU and CPU: {str(cpu_error)}",
+                        "Check available memory and PyTorch installation"
+                    )
+            else:
+                # Not a GPU error, re-raise
+                raise
         
         # Ensure float32 for consistency (optimized - single conversion)
         embedding = np.ascontiguousarray(embedding, dtype=np.float32)
@@ -847,16 +1030,192 @@ def extract_clip_embedding(image_path: str, model_name: str = None,
         )
 
 
+def _extract_clip_embedding_worker(args):
+    """Worker function for multiprocessing CLIP extraction (CPU mode only)
+    
+    This function is designed to be called by multiprocessing.Pool.
+    Each worker loads its own CLIP model instance to avoid sharing issues.
+    
+    Args:
+        args: Tuple of (image_path, model_name, normalize, use_amp)
+    
+    Returns:
+        Tuple of (image_path, embedding or None, error_message or None)
+    """
+    image_path, model_name, normalize, use_amp = args
+    
+    try:
+        # Each worker needs its own model instance
+        # This is necessary because PyTorch models can't be shared across processes
+        import torch
+        
+        # Set thread count to 1 to avoid thread contention between workers
+        torch.set_num_threads(1)
+        
+        # Extract embedding (will load model if not cached in this process)
+        embedding = extract_clip_embedding(
+            image_path,
+            model_name=model_name,
+            normalize=normalize,
+            use_amp=use_amp,
+            fallback_to_legacy=False
+        )
+        
+        return (image_path, embedding, None)
+    
+    except Exception as e:
+        error_msg = str(e)
+        logger.warning(f"Worker failed to extract embedding for {image_path}: {error_msg}")
+        return (image_path, None, error_msg)
+
+
+def _extract_clip_embedding_worker_indexed(args):
+    """Worker function for multiprocessing CLIP extraction with index tracking
+    
+    This version preserves the order of results by returning the index.
+    
+    Args:
+        args: Tuple of (index, image_path, model_name, normalize, use_amp)
+    
+    Returns:
+        Tuple of (index, (image_path, embedding or None, error_message or None))
+    """
+    idx, image_path, model_name, normalize, use_amp = args
+    
+    try:
+        # Each worker needs its own model instance
+        # This is necessary because PyTorch models can't be shared across processes
+        import torch
+        
+        # Set thread count to 1 to avoid thread contention between workers
+        torch.set_num_threads(1)
+        
+        # Extract embedding (will load model if not cached in this process)
+        embedding = extract_clip_embedding(
+            image_path,
+            model_name=model_name,
+            normalize=normalize,
+            use_amp=use_amp,
+            fallback_to_legacy=False
+        )
+        
+        result = (idx, (image_path, embedding, None))
+        logger.debug(f"Worker returning: idx={idx}, path={image_path}, success=True")
+        return result
+    
+    except Exception as e:
+        error_msg = str(e)
+        logger.warning(f"Worker failed to extract embedding for {image_path}: {error_msg}")
+        result = (idx, (image_path, None, error_msg))
+        logger.debug(f"Worker returning: idx={idx}, path={image_path}, success=False, error={error_msg}")
+        return result
+
+
+def _batch_extract_clip_embeddings_multiprocessing(
+    image_paths: List[str],
+    model_name: str = 'clip-ViT-B-32',
+    skip_errors: bool = True,
+    use_amp: bool = False,
+    max_workers: int = None
+) -> List[Tuple[str, Optional[np.ndarray], Optional[str]]]:
+    """Extract CLIP embeddings using multiprocessing (CPU mode only)
+    
+    This function uses ProcessPoolExecutor to parallelize CPU-based CLIP extraction.
+    Each worker process loads its own model instance to avoid sharing issues.
+    
+    PERFORMANCE CHARACTERISTICS:
+    - Significant overhead: Each worker loads ~350MB CLIP model (~2-5s per worker)
+    - Beneficial for large batches (50+ images) where processing time > overhead
+    - For small batches (< 50 images), sequential processing may be faster
+    - Each process needs ~2GB RAM for model
+    - Speedup depends on: CPU cores, batch size, and model loading time
+    
+    WHEN TO USE:
+    - Large batches (50+ images) on CPU
+    - Multi-core systems (4+ cores)
+    - When total processing time > model loading overhead
+    
+    Args:
+        image_paths: List of image file paths
+        model_name: CLIP model name
+        skip_errors: If True, skip failed images and continue
+        use_amp: Use Automatic Mixed Precision (not recommended for CPU)
+        max_workers: Number of worker processes (default: cpu_count - 1)
+    
+    Returns:
+        List of tuples: (image_path, embedding or None, error_message or None)
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    
+    # Determine number of workers
+    if max_workers is None:
+        cpu_count = multiprocessing.cpu_count()
+        max_workers = max(1, cpu_count - 1)  # Leave one core free
+    
+    logger.info(f"Using {max_workers} worker processes for CPU-based CLIP extraction")
+    
+    # Prepare arguments for workers with indices to preserve order
+    normalize = True  # Always normalize for faster similarity computation
+    worker_args = [(idx, path, model_name, normalize, use_amp) for idx, path in enumerate(image_paths)]
+    
+    results = {}  # Use dict with index as key to preserve order
+    
+    try:
+        # Use ProcessPoolExecutor for CPU-intensive work
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks with index tracking
+            future_to_idx = {
+                executor.submit(_extract_clip_embedding_worker_indexed, args): args[0]
+                for args in worker_args
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_idx):
+                try:
+                    idx, result = future.result()
+                    logger.debug(f"Received result for index {idx}: path={result[0]}, success={result[1] is not None}")
+                    results[idx] = result
+                except Exception as e:
+                    idx = future_to_idx[future]
+                    image_path = image_paths[idx]
+                    error_msg = f"Process failed: {str(e)}"
+                    logger.error(f"Failed to process {image_path}: {error_msg}")
+                    results[idx] = (image_path, None, error_msg)
+                    
+                    if not skip_errors:
+                        raise
+    
+    except Exception as e:
+        logger.error(f"Multiprocessing batch extraction failed: {e}")
+        
+        if not skip_errors:
+            raise CLIPModelError(
+                f"Multiprocessing batch extraction failed: {str(e)}",
+                "Check system resources and try reducing number of workers."
+            )
+    
+    # Sort results by index to match input order
+    sorted_results = [results.get(i, (image_paths[i], None, "Not processed")) for i in range(len(image_paths))]
+    
+    success_count = sum(1 for _, emb, _ in sorted_results if emb is not None)
+    logger.info(f"Multiprocessing extraction complete: {success_count}/{len(image_paths)} successful ({success_count/len(image_paths)*100:.1f}%)")
+    
+    return sorted_results
+
+
 def batch_extract_clip_embeddings(image_paths: List[str], 
                                   model_name: str = 'clip-ViT-B-32',
                                   batch_size: int = 32,
                                   skip_errors: bool = True,
                                   use_amp: bool = True,
-                                  auto_adjust_batch: bool = True) -> List[Tuple[str, Optional[np.ndarray], Optional[str]]]:
+                                  auto_adjust_batch: bool = True,
+                                  use_multiprocessing: bool = None) -> List[Tuple[str, Optional[np.ndarray], Optional[str]]]:
     """Extract CLIP embeddings for multiple images in batch with performance optimizations
     
     PERFORMANCE OPTIMIZATIONS:
-    - Batch processing for GPU efficiency (10-50x speedup)
+    - GPU: Batch processing for efficiency (10-50x speedup)
+    - CPU: Multiprocessing for parallel extraction (2-3x speedup for 10+ images)
     - Automatic Mixed Precision (AMP) for faster GPU inference
     - Optimized batch size based on device and VRAM
     - Pre-allocated numpy arrays for results
@@ -870,6 +1229,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         skip_errors: If True, skip failed images and continue
         use_amp: Use Automatic Mixed Precision for faster GPU inference (default: True)
         auto_adjust_batch: Automatically adjust batch size based on VRAM (default: True)
+        use_multiprocessing: Force multiprocessing on/off. If None, auto-detect based on device
     
     Returns:
         List of tuples: (image_path, embedding or None, error_message or None)
@@ -885,8 +1245,36 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     # Get CLIP model
     model, device = get_clip_model(model_name)
     
+    # Determine if we should use multiprocessing
+    # Only use multiprocessing for CPU mode with large batches
+    # Threshold is higher (50+) due to model loading overhead in each worker
+    is_cpu = device == 'cpu'
+    
+    if use_multiprocessing is None:
+        # Auto-detect: use multiprocessing for CPU with 50+ images
+        # Lower threshold has too much overhead from model loading
+        use_multiprocessing = is_cpu and len(image_paths) >= 50
+    
+    # If multiprocessing is requested but we're on GPU, disable it
+    if use_multiprocessing and not is_cpu:
+        logger.warning("Multiprocessing requested but device is GPU. Disabling multiprocessing to avoid CUDA context issues.")
+        use_multiprocessing = False
+    
+    # CPU multiprocessing path
+    if use_multiprocessing:
+        logger.info(f"Using multiprocessing for CPU-based extraction ({len(image_paths)} images)")
+        return _batch_extract_clip_embeddings_multiprocessing(
+            image_paths,
+            model_name=model_name,
+            skip_errors=skip_errors,
+            use_amp=use_amp
+        )
+    
     # Optimize batch size based on device and VRAM
-    if device == 'cuda':
+    # Check if device is CUDA (handles both 'cuda' and 'cuda:N' formats)
+    is_cuda = device.startswith('cuda')
+    
+    if is_cuda:
         # GPU: Check VRAM and adjust batch size
         if auto_adjust_batch:
             mem_info = get_gpu_memory_info()
@@ -921,7 +1309,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         # CPU: Smaller batches to avoid memory issues
         batch_size = min(batch_size, 16)
     
-    results = []
+    results = {}  # Use dict with index as key to preserve order
     import cv2
     
     # Process in batches
@@ -932,6 +1320,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         
         # Load and validate images (optimized)
         for idx, image_path in enumerate(batch_paths):
+            global_idx = i + idx  # Track global index
             try:
                 # Load and validate image
                 img_array = safe_imread(image_path, flags=1)
@@ -941,11 +1330,11 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                 pil_image = Image.fromarray(img_rgb)
                 
                 batch_images.append(pil_image)
-                batch_valid_indices.append(idx)
+                batch_valid_indices.append(global_idx)
             
             except (InvalidImageFormatError, CorruptedImageError, ImageTooSmallError, ImageProcessingFailedError) as e:
                 logger.warning(f"Failed to load image {image_path}: {e.message}")
-                results.append((image_path, None, e.message))
+                results[global_idx] = (image_path, None, e.message)
                 
                 if not skip_errors:
                     raise
@@ -953,9 +1342,13 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         # Extract embeddings for valid images (optimized)
         if batch_images:
             try:
+                # Check if device is CUDA (handles both 'cuda' and 'cuda:N' formats)
+                is_cuda = device.startswith('cuda')
+                device_type = 'cuda' if is_cuda else device
+                
                 # Use Automatic Mixed Precision for faster GPU inference
-                if use_amp and device in ['cuda', 'mps']:
-                    with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=True):
+                if use_amp and (is_cuda or device == 'mps'):
+                    with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=True):
                         embeddings = model.encode(
                             batch_images,
                             convert_to_numpy=True,
@@ -976,28 +1369,28 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                 # Add successful results (optimized - pre-convert to float32)
                 embeddings = embeddings.astype(np.float32)
                 
-                for idx, embedding in zip(batch_valid_indices, embeddings):
-                    image_path = batch_paths[idx]
+                for global_idx, embedding in zip(batch_valid_indices, embeddings):
+                    image_path = image_paths[global_idx]
                     
                     # Verify embedding (fast checks)
                     if len(embedding) != 512:
                         error_msg = f"Invalid embedding dimension: {len(embedding)}"
                         logger.warning(f"{image_path}: {error_msg}")
-                        results.append((image_path, None, error_msg))
+                        results[global_idx] = (image_path, None, error_msg)
                     elif np.any(np.isnan(embedding)) or np.any(np.isinf(embedding)):
                         error_msg = "Embedding contains NaN or Inf"
                         logger.warning(f"{image_path}: {error_msg}")
-                        results.append((image_path, None, error_msg))
+                        results[global_idx] = (image_path, None, error_msg)
                     else:
-                        results.append((image_path, embedding, None))
+                        results[global_idx] = (image_path, embedding, None)
             
             except Exception as e:
                 logger.error(f"Batch embedding extraction failed: {e}")
                 
                 # Mark all images in batch as failed
-                for idx in batch_valid_indices:
-                    image_path = batch_paths[idx]
-                    results.append((image_path, None, str(e)))
+                for global_idx in batch_valid_indices:
+                    image_path = image_paths[global_idx]
+                    results[global_idx] = (image_path, None, str(e))
                 
                 if not skip_errors:
                     raise CLIPModelError(
@@ -1005,7 +1398,10 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                         "Check GPU memory and model status."
                     )
     
-    success_count = sum(1 for _, emb, _ in results if emb is not None)
+    # Sort results by index to match input order
+    sorted_results = [results.get(i, (image_paths[i], None, "Not processed")) for i in range(len(image_paths))]
+    
+    success_count = sum(1 for _, emb, _ in sorted_results if emb is not None)
     logger.info(f"Batch extraction complete: {success_count}/{len(image_paths)} successful ({success_count/len(image_paths)*100:.1f}%)")
     
     # Clean up GPU memory after batch processing
@@ -1013,7 +1409,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         torch.cuda.empty_cache()
         logger.debug("GPU memory cache cleared after batch processing")
     
-    return results
+    return sorted_results
 
 
 def compute_clip_similarity(embedding1: np.ndarray, embedding2: np.ndarray) -> float:

@@ -270,6 +270,7 @@ def upload_product():
         category = request.form.get('category', None)
         product_name = request.form.get('product_name', None)
         sku = request.form.get('sku', None)
+        is_historical = request.form.get('is_historical', 'false').lower() == 'true'
         
         # Normalize empty strings to None
         if category and category.strip() == '':
@@ -382,7 +383,7 @@ def upload_product():
                 category=category,
                 product_name=product_name,
                 sku=sku,
-                is_historical=False
+                is_historical=is_historical
             )
             logger.info(f"Product inserted with ID: {product_id}")
         except Exception as e:
@@ -661,9 +662,6 @@ def match_products():
                     limit=limit,
                     visual_weight=visual_weight,
                     metadata_weight=metadata_weight,
-                    color_weight=color_weight,
-                    shape_weight=shape_weight,
-                    texture_weight=texture_weight,
                     sku_weight=sku_weight,
                     name_weight=name_weight,
                     category_weight=category_weight_meta,
