@@ -3293,11 +3293,7 @@ function updateGPUStatus(status) {
         statusText.textContent = `${deviceName} Active`;
         gpuStatusEl.setAttribute('data-tooltip', tooltip);
         
-        // Show first-run model download message if applicable (once per session)
-        if (status.first_run && !sessionStorage.getItem('clipDownloadShown')) {
-            showToast('First run: Downloading AI model (~350MB). This may take 1-2 minutes.', 'info', 10000);
-            sessionStorage.setItem('clipDownloadShown', 'true');
-        }
+        // Model is now pre-cached, no download notification needed
     } else if (status.error) {
         // GPU error
         gpuStatusEl.classList.add('gpu-error');

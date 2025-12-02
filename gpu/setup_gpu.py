@@ -478,6 +478,24 @@ def main():
     if not verify_gpu():
         return False
     
+    # Download CLIP model
+    print("\n" + "="*80)
+    print("Downloading CLIP Model")
+    print("="*80)
+    
+    try:
+        print("\n[INFO] Pre-downloading CLIP model to cache...")
+        download_script = os.path.join(os.path.dirname(__file__), "..", "download_clip_model.py")
+        success, stdout, stderr = run_cmd(f"python {download_script}")
+        if success:
+            print("[OK] CLIP model downloaded and cached")
+        else:
+            print(f"[WARNING] CLIP model download failed: {stderr}")
+            print("[INFO] Model will download automatically on first app launch")
+    except Exception as e:
+        print(f"[WARNING] Could not pre-download CLIP model: {e}")
+        print("[INFO] Model will download automatically on first app launch")
+    
     # Run benchmark
     print("\n" + "="*80)
     print("Running Quick Benchmark")

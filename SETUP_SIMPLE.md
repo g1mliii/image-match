@@ -49,10 +49,11 @@ product-matching-system/
 ## Features
 
 - Upload product images with optional metadata (name, SKU, category)
-- Find similar products using color, shape, and texture features
+- Find similar products using CLIP visual embeddings (GPU-accelerated)
 - Manage historical product catalog
-- Batch upload multiple products
+- Batch upload multiple products with CSV support
 - Filter results by similarity threshold
+- Cross-platform GPU support (AMD, NVIDIA, Intel, Apple Silicon)
 - No complex build process - just Python!
 
 ## Building Executable (Optional)

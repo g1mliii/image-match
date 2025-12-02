@@ -86,6 +86,14 @@ logger = logging.getLogger(__name__)
 import warnings
 warnings.filterwarnings('ignore', message='.*slow image processor.*')
 
+# Set cache directory BEFORE any model loading to ensure consistency
+# This must be set at module level before sentence_transformers is used
+_CLIP_CACHE_DIR = Path.home() / '.cache' / 'clip-models'
+_CLIP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+os.environ['SENTENCE_TRANSFORMERS_HOME'] = str(_CLIP_CACHE_DIR)
+os.environ['HF_HOME'] = str(_CLIP_CACHE_DIR)  # Also set HuggingFace cache
+os.environ['TRANSFORMERS_CACHE'] = str(_CLIP_CACHE_DIR)  # And transformers cache
+
 # Global model cache (singleton pattern)
 _clip_model = None
 _clip_device = None
@@ -139,9 +147,7 @@ def get_clip_cache_dir() -> Path:
     Returns:
         Path to cache directory (~/.cache/clip-models/)
     """
-    cache_dir = Path.home() / '.cache' / 'clip-models'
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
+    return _CLIP_CACHE_DIR
 
 
 def get_clip_config_file() -> Path:
@@ -588,15 +594,16 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
         if progress_callback:
             progress_callback(f"Device: {device}", 10)
         
-        # Set cache directory
+        # Get cache directory (already set at module level)
         cache_dir = get_clip_cache_dir()
-        os.environ['SENTENCE_TRANSFORMERS_HOME'] = str(cache_dir)
         
         if progress_callback:
             progress_callback("Loading model...", 20)
         
         # Check if model is already downloaded
-        model_path = cache_dir / model_name
+        # HuggingFace uses format: models--sentence-transformers--{model_name}
+        model_cache_name = f"models--sentence-transformers--{model_name}"
+        model_path = cache_dir / model_cache_name
         is_first_download = not model_path.exists()
         
         if is_first_download:

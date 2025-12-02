@@ -64,9 +64,9 @@ image-match/
 - **`gpu/verify_setup.py`** - Complete verification (runs all tests)
 
 ### Core Functionality
-- **`backend/image_processing_clip.py`** - CLIP embeddings (GPU-accelerated)
-- **`backend/product_matching.py`** - Matching logic (Mode 1, 2, 3)
-- **`backend/similarity.py`** - Similarity computation
+- **`backend/image_processing_clip.py`** - CLIP embeddings (GPU-accelerated, cross-platform)
+- **`backend/product_matching.py`** - Matching logic (CLIP visual + optional metadata/category)
+- **`backend/similarity.py`** - Similarity computation (cosine similarity on CLIP embeddings)
 - **`backend/database.py`** - SQLite database layer
 
 ### Testing
@@ -201,11 +201,12 @@ python benchmark_gpu.py
 - All 55 GPU tests passing
 
 ### 2025-11-23: Comprehensive Testing
-- Mode 1 (Visual) matching: ✅ Working
-- Mode 3 (Hybrid) matching: ✅ Working
-- GPU acceleration: ✅ Working (183.7 img/s)
+- CLIP visual matching: ✅ Working
+- Category filtering: ✅ Working
+- GPU acceleration: ✅ Working (183.7 img/s on AMD RX 9070 XT)
 - CPU fallback: ✅ Working
 - Batch processing: ✅ Working (10.5x speedup)
+- Cross-platform GPU support: ✅ AMD, NVIDIA, Intel, Apple Silicon
 
 ## Contributing
 

@@ -504,6 +504,20 @@
     - Config file: `~/.cache/clip-models/config.json`
   - _Note: This implementation is production-ready and works across all platforms_
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 - [ ] 25.1. GPU acceleration performance monitoring and metrics
   - Log processing times for GPU vs CPU operations
   - Add optional performance metrics to help menu
@@ -518,20 +532,6 @@
   - Ensure ARM compatibility is maintained
   - Verify Mode 2 (Metadata) unaffected by GPU settings
   - Test CLIP batch processing with different batch sizes (8, 16, 32, 64)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -564,7 +564,6 @@
   - Reach out to relevant communities (e-commerce, retail)
   - SEO optimization for website
   - Social media presence (Twitter, LinkedIn)
-
 
 
 - [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
@@ -600,10 +599,15 @@
   - _Note: Icons will be bundled into executables during tasks 17-18_
 
   - [ ] 17. Package Windows executable with PyInstaller for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
+  - **Pre-download CLIP model:** Run `python download_clip_model.py` to cache model (~350MB) before packaging
   - Modify database.py to store data in `%APPDATA%\ProductMatcher\` (detect PyInstaller with `getattr(sys, 'frozen', False)`)
-  - Create product-matcher.spec: `--onefile --windowed --add-data "backend/static;backend/static" --icon=app_icon.ico --name "Product Matcher"`
+  - Create product-matcher.spec: 
+    - `--onefile --windowed --add-data "backend/static;backend/static" --icon=app_icon.ico --name "Product Matcher"`
+    - Add CLIP model cache: `--add-data "C:\Users\{user}\.cache\clip-models;.cache/clip-models"`
+    - This bundles the model so users don't need to download on first run
   - Create build.bat: `pyinstaller --clean product-matcher.spec`
   - Test packaged exe on clean Windows system: verify launches, creates AppData folders, full workflow works
+  - Verify CLIP model loads from bundled cache (no download on first run)
   - Package: zip exe + README.txt + sample.csv template
   - It should be a 1 click solution for everybody so that all features including CLIP and GPU acceleration (AMD, NVIDIA, Intel, ARM) and all dependencies/requirements are installed and work correctly.
   - **Pre-Packaging Testing (CRITICAL):**
@@ -623,9 +627,12 @@
 
 - [ ] 18. Package macOS application for public release whic users will download by clicking link on site and some solution to enable download without triggerig virus issue on chrome and other browsers
   - It should be a 1 click solution for everybody so that all features including CLIP and GPU acceleration (Apple Silicon MPS, Intel GPU optional) and all dependencies/requirements are installed and work correctly.
+  - **Pre-download CLIP model:** Run `python download_clip_model.py` to cache model (~350MB) before packaging
   - Update database.py to detect OS with `platform.system()`: use `~/Library/Application Support/ProductMatcher/` on macOS
   - **ARM (Apple Silicon M1-M5) Build:**
-    - Create product-matcher-mac-arm64.spec: `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher" --target-arch arm64`
+    - Create product-matcher-mac-arm64.spec: 
+      - `--onefile --windowed --add-data "backend/static:backend/static" --icon=app_icon.icns --name "Product Matcher" --target-arch arm64`
+      - Add CLIP model cache: `--add-data "~/.cache/clip-models:.cache/clip-models"`
     - Create build-mac-arm.sh: `pyinstaller --clean product-matcher-mac-arm64.spec`
     - Ensure all dependencies (numpy, opencv-python, etc.) are ARM-compatible versions
     - Test on Apple Silicon Mac (M1/M2/M3/M4/M5): verify native ARM performance
