@@ -201,7 +201,36 @@ async function processHistoricalCatalog() {
 
     statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + historicalFiles.length + ' processed</p><div class="spinner-inline"></div>';
 
-    historicalProducts = [];
+    // Load existing products from DB if using "add_to_existing" option
+    const loadOption = getCatalogLoadOption();
+    if (loadOption === 'add_to_existing') {
+        try {
+            console.log('[ADD_TO_EXISTING] Loading existing historical products from DB...');
+            const response = await fetch('/api/catalog/products?type=historical&limit=10000');
+            if (response.ok) {
+                const data = await response.json();
+                historicalProducts = data.products.map(p => ({
+                    id: p.id,
+                    filename: p.filename,
+                    category: p.category,
+                    sku: p.sku,
+                    name: p.product_name,
+                    is_historical: true,
+                    hasFeatures: p.has_features
+                }));
+                console.log(`[ADD_TO_EXISTING] Loaded ${historicalProducts.length} existing products`);
+            } else {
+                console.warn('[ADD_TO_EXISTING] Failed to load existing products, starting fresh');
+                historicalProducts = [];
+            }
+        } catch (error) {
+            console.warn('[ADD_TO_EXISTING] Error loading existing products:', error);
+            historicalProducts = [];
+        }
+    } else {
+        // For 'replace' option, start with empty array (products already deleted)
+        historicalProducts = [];
+    }
     const progressFill = document.getElementById('historicalProgress');
     const progressText = document.getElementById('historicalProgressText');
 
@@ -329,11 +358,19 @@ async function processHistoricalCatalog() {
         progressText.textContent = `${i + 1} of ${historicalFiles.length} processed`;
     }
 
+    const catalogOption = getCatalogLoadOption();
+    const existingCount = catalogOption === 'add_to_existing' ? historicalProducts.filter(p => p.id).length - historicalFiles.length : 0;
+    const newlyUploaded = historicalProducts.length - existingCount;
     const successful = historicalProducts.filter(p => p.hasFeatures).length;
-    const failed = historicalFiles.length - historicalProducts.length;
+    const failed = historicalFiles.length - newlyUploaded;
     const withoutMetadata = historicalProducts.filter(p => !p.category && !p.sku).length;
     
-    let statusMsg = `<h4>✓ Historical catalog processed</h4><p>${successful} products ready for matching`;
+    let statusMsg = `<h4>✓ Historical catalog processed</h4>`;
+    if (catalogOption === 'add_to_existing' && existingCount > 0) {
+        statusMsg += `<p>${successful} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)`;
+    } else {
+        statusMsg += `<p>${successful} products ready for matching`;
+    }
     if (failed > 0) statusMsg += ` (${failed} failed)`;
     if (withoutMetadata > 0) statusMsg += ` (${withoutMetadata} without CSV metadata)`;
     statusMsg += `</p>`;
@@ -489,7 +526,36 @@ async function processNewProducts() {
 
     statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + newFiles.length + ' processed</p><div class="spinner-inline"></div>';
 
-    newProducts = [];
+    // Load existing products from DB if using "add_to_existing" option
+    const newLoadOption = getNewCatalogLoadOption();
+    if (newLoadOption === 'add_to_existing') {
+        try {
+            console.log('[ADD_TO_EXISTING] Loading existing new products from DB...');
+            const response = await fetch('/api/catalog/products?type=new&limit=10000');
+            if (response.ok) {
+                const data = await response.json();
+                newProducts = data.products.map(p => ({
+                    id: p.id,
+                    filename: p.filename,
+                    category: p.category,
+                    sku: p.sku,
+                    name: p.product_name,
+                    is_historical: false,
+                    hasFeatures: p.has_features
+                }));
+                console.log(`[ADD_TO_EXISTING] Loaded ${newProducts.length} existing products`);
+            } else {
+                console.warn('[ADD_TO_EXISTING] Failed to load existing products, starting fresh');
+                newProducts = [];
+            }
+        } catch (error) {
+            console.warn('[ADD_TO_EXISTING] Error loading existing products:', error);
+            newProducts = [];
+        }
+    } else {
+        // For 'replace' option, start with empty array (products already deleted)
+        newProducts = [];
+    }
     const progressFill = document.getElementById('newProgress');
     const progressText = document.getElementById('newProgressText');
 
@@ -617,11 +683,19 @@ async function processNewProducts() {
         progressText.textContent = `${i + 1} of ${newFiles.length} processed`;
     }
 
+    const newCatalogOption = getNewCatalogLoadOption();
+    const existingCount = newCatalogOption === 'add_to_existing' ? newProducts.filter(p => p.id).length - newFiles.length : 0;
+    const newlyUploaded = newProducts.length - existingCount;
     const successful = newProducts.filter(p => p.hasFeatures).length;
-    const failed = newFiles.length - newProducts.length;
+    const failed = newFiles.length - newlyUploaded;
     const withoutMetadata = newProducts.filter(p => !p.category && !p.sku).length;
     
-    let statusMsg = `<h4>✓ New products processed</h4><p>${successful} products ready for matching`;
+    let statusMsg = `<h4>✓ New products processed</h4>`;
+    if (newCatalogOption === 'add_to_existing' && existingCount > 0) {
+        statusMsg += `<p>${successful} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)`;
+    } else {
+        statusMsg += `<p>${successful} products ready for matching`;
+    }
     if (failed > 0) statusMsg += ` (${failed} failed)`;
     if (withoutMetadata > 0) statusMsg += ` (${withoutMetadata} without CSV metadata)`;
     statusMsg += `</p>`;
@@ -3424,8 +3498,9 @@ function handleCatalogOptionChange(e) {
         // Replace catalog - show warning
         if (existingCatalogStats && existingCatalogStats.historical_products > 0) {
             const confirmed = confirm(
-                `⚠️ WARNING: This will delete ${existingCatalogStats.historical_products.toLocaleString()} existing products.\n\n` +
-                `This action cannot be undone. Continue?`
+                `⚠️ WARNING: This will DELETE all ${existingCatalogStats.historical_products.toLocaleString()} existing historical products and create a NEW catalog!\n\n` +
+                `A backup snapshot will be created automatically.\n\n` +
+                `Are you sure you want to replace with a new catalog?`
             );
             if (!confirmed) {
                 // Revert to use_existing
@@ -3474,7 +3549,8 @@ async function processHistoricalCatalogWithOptions() {
                 category: p.category,
                 sku: p.sku,
                 name: p.product_name,
-                is_historical: true
+                is_historical: true,
+                hasFeatures: p.has_features  // Use actual feature status from DB
             }));
             
             // Update UI
@@ -3493,7 +3569,40 @@ async function processHistoricalCatalogWithOptions() {
     }
     
     if (option === 'replace') {
-        // Clear existing catalog first
+        // Create automatic backup snapshot before replacing
+        try {
+            console.log('[REPLACE] Creating automatic backup snapshot...');
+            showToast('Creating backup snapshot...', 'info');
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const snapshotName = `auto-backup-before-replace-historical-${timestamp}`;
+            
+            const snapshotResponse = await fetch('/api/catalogs/save-current', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    name: snapshotName,
+                    description: 'Automatic backup created before replacing historical catalog'
+                })
+            });
+            
+            if (snapshotResponse.ok) {
+                console.log('[REPLACE] Backup snapshot created:', snapshotName);
+                showToast('Backup snapshot created', 'success');
+            } else {
+                console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
+                showToast('Warning: Could not create backup snapshot', 'warning');
+            }
+            
+            // Wait a moment to ensure snapshot is complete
+            await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (error) {
+            console.warn('[REPLACE] Error creating backup snapshot:', error);
+            showToast('Warning: Could not create backup snapshot', 'warning');
+            // Continue with replace even if snapshot fails
+        }
+        
+        // Clear existing catalog
         try {
             console.log('[REPLACE] Starting catalog cleanup...');
             showToast('Clearing existing catalog...', 'info');
@@ -3526,6 +3635,207 @@ async function processHistoricalCatalogWithOptions() {
     await processHistoricalCatalog();
 }
 
+// ============ NEW PRODUCTS CATALOG OPTIONS ============
+
+function initNewCatalogOptions() {
+    // Check if there's an existing new products catalog
+    checkExistingNewCatalog();
+    
+    // Add event listeners for new catalog options
+    const radioButtons = document.querySelectorAll('input[name="newCatalogLoadOption"]');
+    radioButtons.forEach(radio => {
+        radio.addEventListener('change', handleNewCatalogOptionChange);
+    });
+}
+
+async function checkExistingNewCatalog() {
+    try {
+        const response = await fetch('/api/catalog/stats');
+        if (!response.ok) throw new Error('Failed to fetch catalog stats');
+        
+        const data = await response.json();
+        
+        const statsEl = document.getElementById('existingNewCatalogStats');
+        
+        if (data.new_products > 0) {
+            statsEl.innerHTML = `<strong>${data.new_products.toLocaleString()}</strong> new products in database`;
+            
+            // Enable "use existing" option
+            const useExistingRadio = document.querySelector('input[name="newCatalogLoadOption"][value="use_existing"]');
+            if (useExistingRadio) {
+                useExistingRadio.disabled = false;
+            }
+        } else {
+            statsEl.innerHTML = `<em>No existing new products</em>`;
+            
+            // Disable "use existing" option when there's no new products
+            const useExistingRadio = document.querySelector('input[name="newCatalogLoadOption"][value="use_existing"]');
+            if (useExistingRadio) {
+                useExistingRadio.disabled = true;
+                // Select "add_to_existing" by default
+                const addToExistingRadio = document.querySelector('input[name="newCatalogLoadOption"][value="add_to_existing"]');
+                if (addToExistingRadio) {
+                    addToExistingRadio.checked = true;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error checking existing new catalog:', error);
+    }
+}
+
+function handleNewCatalogOptionChange() {
+    const option = getNewCatalogLoadOption();
+    const dropZone = document.getElementById('newDropZone');
+    const processBtn = document.getElementById('processNewBtn');
+    
+    if (option === 'use_existing') {
+        // Using existing catalog - disable upload, enable process
+        dropZone.style.opacity = '0.5';
+        dropZone.style.pointerEvents = 'none';
+        processBtn.disabled = false;
+        processBtn.textContent = 'USE EXISTING NEW PRODUCTS';
+    } else if (option === 'replace') {
+        // Replacing - enable upload, show warning
+        dropZone.style.opacity = '1';
+        dropZone.style.pointerEvents = 'auto';
+        processBtn.disabled = newFiles.length === 0;
+        processBtn.textContent = 'PROCESS NEW PRODUCTS';
+        
+        // Show warning
+        if (existingCatalogStats && existingCatalogStats.new_products > 0) {
+            const confirmed = confirm(
+                `⚠️ WARNING: This will DELETE all ${existingCatalogStats.new_products} existing new products and create a NEW catalog!\n\n` +
+                `A backup snapshot will be created automatically.\n\n` +
+                `Are you sure you want to replace with a new catalog?`
+            );
+            if (!confirmed) {
+                // Revert to add_to_existing
+                document.querySelector('input[name="newCatalogLoadOption"][value="add_to_existing"]').checked = true;
+                handleNewCatalogOptionChange();
+                return;
+            }
+        }
+    } else {
+        // add_to_existing - enable upload
+        dropZone.style.opacity = '1';
+        dropZone.style.pointerEvents = 'auto';
+        processBtn.disabled = newFiles.length === 0;
+        processBtn.textContent = 'PROCESS NEW PRODUCTS';
+    }
+}
+
+function getNewCatalogLoadOption() {
+    const selected = document.querySelector('input[name="newCatalogLoadOption"]:checked');
+    return selected ? selected.value : 'add_to_existing';
+}
+
+// Override processNewProducts to handle catalog options
+async function processNewCatalogWithOptions() {
+    const option = getNewCatalogLoadOption();
+    
+    if (option === 'use_existing') {
+        // Skip upload, use existing catalog
+        showToast('Using existing new products', 'success');
+        
+        // Load existing new products from database
+        try {
+            const response = await fetch('/api/catalog/products?type=new&limit=10000');
+            if (!response.ok) throw new Error('Failed to load existing new products');
+            
+            const data = await response.json();
+            newProducts = data.products.map(p => ({
+                id: p.id,
+                filename: p.filename,
+                category: p.category,
+                sku: p.sku,
+                name: p.product_name,
+                is_historical: false,
+                hasFeatures: p.has_features  // Use actual feature status from DB
+            }));
+            
+            // Update UI
+            document.getElementById('newStatus').innerHTML = 
+                `<p class="success">✓ Loaded ${newProducts.length} new products from existing catalog</p>`;
+            
+            // Show next section
+            document.getElementById('matchSection').style.display = 'block';
+            document.getElementById('matchSection').scrollIntoView({ behavior: 'smooth' });
+            
+        } catch (error) {
+            console.error('Error loading existing new products:', error);
+            showToast('Failed to load existing new products', 'error');
+        }
+        return;
+    }
+    
+    if (option === 'replace') {
+        // Create automatic backup snapshot before replacing
+        try {
+            console.log('[REPLACE] Creating automatic backup snapshot...');
+            showToast('Creating backup snapshot...', 'info');
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const snapshotName = `auto-backup-before-replace-new-${timestamp}`;
+            
+            const snapshotResponse = await fetch('/api/catalogs/save-current', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    name: snapshotName,
+                    description: 'Automatic backup created before replacing new products catalog'
+                })
+            });
+            
+            if (snapshotResponse.ok) {
+                console.log('[REPLACE] Backup snapshot created:', snapshotName);
+                showToast('Backup snapshot created', 'success');
+            } else {
+                console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
+                showToast('Warning: Could not create backup snapshot', 'warning');
+            }
+            
+            // Wait a moment to ensure snapshot is complete
+            await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (error) {
+            console.warn('[REPLACE] Error creating backup snapshot:', error);
+            showToast('Warning: Could not create backup snapshot', 'warning');
+            // Continue with replace even if snapshot fails
+        }
+        
+        // Clear existing new products
+        try {
+            console.log('[REPLACE] Starting new products cleanup...');
+            showToast('Clearing existing new products...', 'info');
+            const response = await fetch('/api/catalog/cleanup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'new' })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('[REPLACE] Cleanup failed:', errorData);
+                throw new Error('Failed to clear new products');
+            }
+            
+            const result = await response.json();
+            console.log('[REPLACE] Cleanup successful:', result);
+            showToast(`Existing new products cleared (${result.products_deleted} products deleted)`, 'success');
+            
+            // Wait a moment to ensure cleanup is complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+            console.error('[REPLACE] Error clearing new products:', error);
+            showToast('Failed to clear existing new products', 'error');
+            return;
+        }
+    }
+    
+    // Continue with normal processing (add_to_existing or replace after clearing)
+    await processNewProducts();
+}
+
 // Hook into the process button
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
@@ -3537,6 +3847,18 @@ document.addEventListener('DOMContentLoaded', () => {
             processBtn.onclick = async (e) => {
                 // Always use the processHistoricalCatalogWithOptions which handles all cases
                 await processHistoricalCatalogWithOptions();
+            };
+        }
+        
+        // Initialize new catalog options
+        initNewCatalogOptions();
+        
+        const processNewBtn = document.getElementById('processNewBtn');
+        if (processNewBtn) {
+            const originalNewHandler = processNewBtn.onclick;
+            
+            processNewBtn.onclick = async (e) => {
+                await processNewCatalogWithOptions();
             };
         }
     }, 100);

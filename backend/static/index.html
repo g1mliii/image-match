@@ -202,6 +202,26 @@
                     <p><strong>Recommendation:</strong> Start with Simple Mode to test. Use Advanced Mode for production workflows with analytics and reporting.</p>
                 </div>
                 
+                <div class="catalog-info-box">
+                    <div style="margin-bottom: 10px;">
+                        <strong>EXISTING NEW PRODUCTS:</strong> <span id="existingNewCatalogStats">Loading...</span>
+                    </div>
+                    <div class="catalog-radio-options">
+                        <label style="display: block; margin: 8px 0; cursor: pointer;">
+                            <input type="radio" name="newCatalogLoadOption" value="use_existing">
+                            <strong>Use existing new products</strong> - Skip upload, use saved data
+                        </label>
+                        <label style="display: block; margin: 8px 0; cursor: pointer;">
+                            <input type="radio" name="newCatalogLoadOption" value="add_to_existing" checked>
+                            <strong>Add to existing new products</strong> - Upload new products, merge with existing
+                        </label>
+                        <label style="display: block; margin: 8px 0; cursor: pointer;">
+                            <input type="radio" name="newCatalogLoadOption" value="replace">
+                            <strong>Replace new products</strong> - Clear all new products and upload fresh
+                        </label>
+                    </div>
+                </div>
+                
                 <div class="upload-box">
                     <div class="info">
                         <div class="info-header">
