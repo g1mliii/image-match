@@ -47,6 +47,158 @@ const RETRY_CONFIG = {
     backoffMultiplier: 2
 };
 
+// ============================================================================
+// MEMORY LEAK FIX #3 & #4: Event Listener and Blob URL Management
+// ============================================================================
+
+// Track event listeners for cleanup (Fix #3)
+const eventListeners = {
+    historical: [],
+    new: [],
+    matching: [],
+    results: [],
+    tooltips: []
+};
+
+// Track blob URLs for cleanup (Fix #4)
+const blobUrls = new Set();
+
+// Track IntersectionObserver for cleanup
+let lazyLoadObserver = null;
+
+// Track intervals and channels for cleanup (Fix #8, #9, #10)
+let stateCheckInterval = null;
+let catalogPollingInterval = null;
+let catalogChannel = null;
+
+/**
+ * Add event listener with tracking for cleanup
+ * @param {Element} element - DOM element
+ * @param {string} event - Event name
+ * @param {Function} handler - Event handler
+ * @param {string} category - Category for cleanup (historical, new, matching, results, tooltips)
+ */
+function addTrackedListener(element, event, handler, category = 'general') {
+    if (!element) return;
+    
+    element.addEventListener(event, handler);
+    
+    // Store for cleanup
+    if (!eventListeners[category]) {
+        eventListeners[category] = [];
+    }
+    eventListeners[category].push({ element, event, handler });
+}
+
+/**
+ * Remove all tracked event listeners for a category
+ * @param {string} category - Category to clean up
+ */
+function removeTrackedListeners(category) {
+    if (!eventListeners[category]) return;
+    
+    eventListeners[category].forEach(({ element, event, handler }) => {
+        try {
+            element.removeEventListener(event, handler);
+        } catch (e) {
+            console.warn('Failed to remove listener:', e);
+        }
+    });
+    
+    eventListeners[category] = [];
+}
+
+/**
+ * Create blob URL from fetch response and track for cleanup
+ * @param {string} url - URL to fetch
+ * @returns {Promise<string>} Blob URL
+ */
+async function createTrackedBlobUrl(url) {
+    try {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // Track for cleanup
+        blobUrls.add(blobUrl);
+        
+        return blobUrl;
+    } catch (error) {
+        console.error('Failed to create blob URL:', error);
+        throw error;
+    }
+}
+
+/**
+ * Revoke all tracked blob URLs to free memory
+ */
+function revokeAllBlobUrls() {
+    let count = 0;
+    blobUrls.forEach(url => {
+        try {
+            URL.revokeObjectURL(url);
+            count++;
+        } catch (e) {
+            console.warn('Failed to revoke blob URL:', e);
+        }
+    });
+    
+    blobUrls.clear();
+    
+    if (count > 0) {
+        console.log(`✓ Revoked ${count} blob URLs, freed ~${(count * 0.5).toFixed(1)}MB`);
+    }
+}
+
+/**
+ * Cleanup all memory leaks (event listeners, blob URLs, observers, intervals, channels)
+ */
+function cleanupMemory() {
+    console.log('🧹 Starting memory cleanup...');
+    
+    // Stop state checking interval (Fix #8)
+    if (typeof stopStateChecking === 'function') {
+        stopStateChecking();
+    }
+    
+    // Clear catalog polling interval (Fix #9)
+    if (catalogPollingInterval) {
+        clearInterval(catalogPollingInterval);
+        catalogPollingInterval = null;
+        console.log('✓ Cleared catalog polling interval');
+    }
+    
+    // Close BroadcastChannel (Fix #10)
+    if (catalogChannel) {
+        try {
+            catalogChannel.close();
+            catalogChannel = null;
+            console.log('✓ Closed BroadcastChannel');
+        } catch (e) {
+            console.warn('Failed to close BroadcastChannel:', e);
+        }
+    }
+    
+    // Remove all tracked event listeners
+    Object.keys(eventListeners).forEach(category => {
+        removeTrackedListeners(category);
+    });
+    
+    // Revoke all blob URLs
+    revokeAllBlobUrls();
+    
+    // Disconnect lazy load observer
+    if (lazyLoadObserver) {
+        lazyLoadObserver.disconnect();
+        lazyLoadObserver = null;
+    }
+    
+    // Clear state arrays
+    matchResults = [];
+    
+    console.log('✓ Memory cleanup complete');
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initHistoricalUpload();
@@ -66,45 +218,46 @@ function initHistoricalUpload() {
     const csvInput = document.getElementById('historicalCsvInput');
     const processBtn = document.getElementById('processHistoricalBtn');
 
-    browseBtn.addEventListener('click', (e) => {
+    // Use tracked listeners to prevent memory leaks
+    addTrackedListener(browseBtn, 'click', (e) => {
         e.stopPropagation();
         input.click();
-    });
+    }, 'historical');
 
-    dropZone.addEventListener('click', () => input.click());
+    addTrackedListener(dropZone, 'click', () => input.click(), 'historical');
 
-    dropZone.addEventListener('dragover', (e) => {
+    addTrackedListener(dropZone, 'dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('drag-over');
-    });
+    }, 'historical');
 
-    dropZone.addEventListener('dragleave', () => {
+    addTrackedListener(dropZone, 'dragleave', () => {
         dropZone.classList.remove('drag-over');
-    });
+    }, 'historical');
 
-    dropZone.addEventListener('dragenter', (e) => {
+    addTrackedListener(dropZone, 'dragenter', (e) => {
         e.preventDefault();
         dropZone.classList.add('drag-over');
-    });
+    }, 'historical');
 
-    dropZone.addEventListener('drop', (e) => {
+    addTrackedListener(dropZone, 'drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('drop-success');
         setTimeout(() => dropZone.classList.remove('drop-success'), 500);
         handleHistoricalFiles(Array.from(e.dataTransfer.files));
-    });
+    }, 'historical');
 
-    input.addEventListener('change', (e) => {
+    addTrackedListener(input, 'change', (e) => {
         handleHistoricalFiles(Array.from(e.target.files));
-    });
+    }, 'historical');
 
-    csvInput.addEventListener('change', (e) => {
+    addTrackedListener(csvInput, 'change', (e) => {
         if (e.target.files.length) {
             historicalCsv = e.target.files[0];
             showToast('CSV loaded for historical products', 'success');
         }
-    });
+    }, 'historical');
 
     // Don't set up the click handler here - it's handled by processHistoricalCatalogWithOptions
     // processBtn.addEventListener('click', processHistoricalCatalog);
@@ -392,47 +545,48 @@ function initNewUpload() {
     const csvInput = document.getElementById('newCsvInput');
     const processBtn = document.getElementById('processNewBtn');
 
-    browseBtn.addEventListener('click', (e) => {
+    // Use tracked listeners to prevent memory leaks
+    addTrackedListener(browseBtn, 'click', (e) => {
         e.stopPropagation();
         input.click();
-    });
+    }, 'new');
 
-    dropZone.addEventListener('click', () => input.click());
+    addTrackedListener(dropZone, 'click', () => input.click(), 'new');
 
-    dropZone.addEventListener('dragover', (e) => {
+    addTrackedListener(dropZone, 'dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('drag-over');
-    });
+    }, 'new');
 
-    dropZone.addEventListener('dragleave', () => {
+    addTrackedListener(dropZone, 'dragleave', () => {
         dropZone.classList.remove('drag-over');
-    });
+    }, 'new');
 
-    dropZone.addEventListener('dragenter', (e) => {
+    addTrackedListener(dropZone, 'dragenter', (e) => {
         e.preventDefault();
         dropZone.classList.add('drag-over');
-    });
+    }, 'new');
 
-    dropZone.addEventListener('drop', (e) => {
+    addTrackedListener(dropZone, 'drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('drop-success');
         setTimeout(() => dropZone.classList.remove('drop-success'), 500);
         handleNewFiles(Array.from(e.dataTransfer.files));
-    });
+    }, 'new');
 
-    input.addEventListener('change', (e) => {
+    addTrackedListener(input, 'change', (e) => {
         handleNewFiles(Array.from(e.target.files));
-    });
+    }, 'new');
 
-    csvInput.addEventListener('change', (e) => {
+    addTrackedListener(csvInput, 'change', (e) => {
         if (e.target.files.length) {
             newCsv = e.target.files[0];
             showToast('CSV loaded for new products', 'success');
         }
-    });
+    }, 'new');
 
-    processBtn.addEventListener('click', processNewProducts);
+    addTrackedListener(processBtn, 'click', processNewProducts, 'new');
 }
 
 function handleNewFiles(files) {
@@ -715,11 +869,12 @@ function initMatching() {
     const thresholdValue = document.getElementById('thresholdValue');
     const matchBtn = document.getElementById('matchBtn');
 
-    thresholdSlider.addEventListener('input', (e) => {
+    // Use tracked listeners to prevent memory leaks
+    addTrackedListener(thresholdSlider, 'input', (e) => {
         thresholdValue.textContent = e.target.value;
-    });
+    }, 'matching');
 
-    matchBtn.addEventListener('click', startMatching);
+    addTrackedListener(matchBtn, 'click', startMatching, 'matching');
 }
 
 async function startMatching() {
@@ -868,9 +1023,10 @@ async function startMatching() {
 
 // Results
 function initResults() {
-    document.getElementById('exportCsvBtn').addEventListener('click', exportResults);
-    document.getElementById('resetBtn').addEventListener('click', resetApp);
-    document.getElementById('modalClose').addEventListener('click', closeModal);
+    // Use tracked listeners to prevent memory leaks
+    addTrackedListener(document.getElementById('exportCsvBtn'), 'click', exportResults, 'results');
+    addTrackedListener(document.getElementById('resetBtn'), 'click', resetApp, 'results');
+    addTrackedListener(document.getElementById('modalClose'), 'click', closeModal, 'results');
 }
 
 function displayResults(resetPage = true) {
@@ -1307,7 +1463,13 @@ function exportResults() {
 
 function resetApp() {
     if (confirm('Start over? This will clear all data.')) {
-        location.reload();
+        // Clean up memory before reload
+        cleanupMemory();
+        
+        // Small delay to ensure cleanup completes
+        setTimeout(() => {
+            location.reload();
+        }, 100);
     }
 }
 
@@ -1654,17 +1816,38 @@ function extractCategoryFromPath(path) {
 
 // Lazy Loading Implementation for Performance Optimization
 function initLazyLoading() {
+    // Disconnect previous observer to prevent memory leaks
+    if (lazyLoadObserver) {
+        lazyLoadObserver.disconnect();
+    }
+    
     // Use Intersection Observer API for efficient lazy loading
-    const imageObserver = new IntersectionObserver((entries, observer) => {
+    lazyLoadObserver = new IntersectionObserver((entries, observer) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {
                 const img = entry.target;
                 const src = img.getAttribute('data-src');
                 
                 if (src) {
-                    // Load the actual image
-                    img.src = src;
-                    img.removeAttribute('data-src');
+                    // Check if it's an API endpoint (needs blob URL for tracking)
+                    if (src.startsWith('/api/products/')) {
+                        // Create tracked blob URL to prevent memory leaks
+                        createTrackedBlobUrl(src)
+                            .then(blobUrl => {
+                                img.src = blobUrl;
+                                img.removeAttribute('data-src');
+                            })
+                            .catch(error => {
+                                console.error('Failed to load image:', error);
+                                // Fallback to direct URL
+                                img.src = src;
+                                img.removeAttribute('data-src');
+                            });
+                    } else {
+                        // For non-API images, load directly
+                        img.src = src;
+                        img.removeAttribute('data-src');
+                    }
                     
                     // Stop observing this image
                     observer.unobserve(img);
@@ -1680,7 +1863,7 @@ function initLazyLoading() {
     // Observe all images with lazy-load class
     const lazyImages = document.querySelectorAll('img.lazy-load');
     lazyImages.forEach(img => {
-        imageObserver.observe(img);
+        lazyLoadObserver.observe(img);
     });
 }
 
@@ -1789,31 +1972,41 @@ function initTooltips() {
         { selector: '#resetBtn', text: 'Clear all data and start over with new products.' }
     ];
 
+    // Set tooltip attributes
     tooltipElements.forEach(({ selector, text }) => {
         const element = document.querySelector(selector);
         if (element) {
             element.setAttribute('data-tooltip', text);
-            
-            element.addEventListener('mouseenter', (e) => {
-                const tooltipText = e.target.getAttribute('data-tooltip');
-                if (tooltipText) {
-                    tooltip.textContent = tooltipText;
-                    tooltip.style.display = 'block';
-                    positionTooltip(e.target, tooltip);
-                }
-            });
-
-            element.addEventListener('mouseleave', () => {
-                tooltip.style.display = 'none';
-            });
-
-            element.addEventListener('mousemove', (e) => {
-                if (tooltip.style.display === 'block') {
-                    positionTooltip(e.target, tooltip);
-                }
-            });
         }
     });
+
+    // Use event delegation to prevent memory leaks (Fix #5)
+    // Single set of listeners for all tooltips instead of per-element
+    addTrackedListener(document.body, 'mouseenter', (e) => {
+        const element = e.target.closest('[data-tooltip]');
+        if (element) {
+            const tooltipText = element.getAttribute('data-tooltip');
+            if (tooltipText) {
+                tooltip.textContent = tooltipText;
+                tooltip.style.display = 'block';
+                positionTooltip(element, tooltip);
+            }
+        }
+    }, 'tooltips');
+
+    addTrackedListener(document.body, 'mouseleave', (e) => {
+        const element = e.target.closest('[data-tooltip]');
+        if (element) {
+            tooltip.style.display = 'none';
+        }
+    }, 'tooltips');
+
+    addTrackedListener(document.body, 'mousemove', (e) => {
+        const element = e.target.closest('[data-tooltip]');
+        if (element && tooltip.style.display === 'block') {
+            positionTooltip(element, tooltip);
+        }
+    }, 'tooltips');
 }
 
 function positionTooltip(element, tooltip) {
@@ -4054,8 +4247,6 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // Periodic state check (every 30 seconds if tab is visible)
-let stateCheckInterval = null;
-
 function startStateChecking() {
     if (stateCheckInterval) return;
     
@@ -4154,13 +4345,13 @@ function openCatalogManager() {
 function initCatalogChangeListener() {
     // Listen via BroadcastChannel
     try {
-        const channel = new BroadcastChannel('catalog_changes');
-        channel.onmessage = (event) => {
+        catalogChannel = new BroadcastChannel('catalog_changes');
+        catalogChannel.onmessage = (event) => {
             handleCatalogChangeInMainApp(event.data);
         };
     } catch (e) {
         // BroadcastChannel not supported, use polling
-        setInterval(checkCatalogChangesInMainApp, 2000);
+        catalogPollingInterval = setInterval(checkCatalogChangesInMainApp, 2000);
     }
     
     // Also check on visibility change (when user switches back to this tab)

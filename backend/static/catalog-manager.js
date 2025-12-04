@@ -10,6 +10,7 @@ let totalProducts = 0;
 let selectedProducts = new Set();
 let searchTimeout = null;
 let catalogStats = null;
+let imageObserver = null; // Track IntersectionObserver for cleanup
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -241,7 +242,12 @@ function renderProducts(products) {
 function lazyLoadImages() {
     const images = document.querySelectorAll('img[data-src]');
     
-    const imageObserver = new IntersectionObserver((entries, observer) => {
+    // Disconnect previous observer if exists (Fix #13: Memory leak)
+    if (imageObserver) {
+        imageObserver.disconnect();
+    }
+    
+    imageObserver = new IntersectionObserver((entries, observer) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {
                 const img = entry.target;
@@ -257,6 +263,18 @@ function lazyLoadImages() {
     
     images.forEach(img => imageObserver.observe(img));
 }
+
+// Cleanup on page unload (Fix #13: Memory leak)
+window.addEventListener('beforeunload', () => {
+    if (imageObserver) {
+        imageObserver.disconnect();
+        imageObserver = null;
+    }
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+        searchTimeout = null;
+    }
+});
 
 function updatePagination() {
     const totalPages = Math.ceil(totalProducts / pageSize);

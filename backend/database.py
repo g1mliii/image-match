@@ -13,17 +13,33 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'product_matching.db')
 
 @contextmanager
 def get_db_connection():
-    """Context manager for database connections"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    """
+    Context manager for database connections with memory leak prevention.
+    
+    Improvements:
+    - Added connection timeout to prevent hanging connections
+    - Explicit connection close in finally block
+    - Proper error handling to ensure cleanup
+    """
+    conn = None
     try:
+        # Add timeout to prevent connection leaks from hanging operations
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        
         yield conn
         conn.commit()
     except Exception as e:
-        conn.rollback()
+        if conn:
+            conn.rollback()
         raise e
     finally:
-        conn.close()
+        # Ensure connection is always closed, even on exceptions
+        if conn:
+            try:
+                conn.close()
+            except Exception as close_error:
+                logger.error(f"Error closing database connection: {close_error}")
 
 def migrate_features_table():
     """Migrate existing features table to support CLIP embeddings

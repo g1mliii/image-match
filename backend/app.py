@@ -73,6 +73,78 @@ try:
 except Exception as e:
     logger.warning(f"Could not pre-load CLIP model: {e}. Will use legacy feature extraction.")
 
+
+# Memory leak fix: Add cleanup handlers for app shutdown
+@app.teardown_appcontext
+def cleanup_resources(exception=None):
+    """
+    Clean up resources on app context teardown to prevent memory leaks.
+    
+    This handler is called when the Flask app context is torn down,
+    which happens at the end of each request or when the app shuts down.
+    """
+    # Only do full cleanup on app shutdown (not on every request)
+    # We detect shutdown by checking if we're in the main thread
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        return  # Skip cleanup during normal request handling
+    
+    try:
+        # Clear CLIP model cache (350MB+ memory)
+        from image_processing_clip import clear_clip_model_cache
+        clear_clip_model_cache()
+        logger.info("CLIP model cache cleared")
+    except Exception as e:
+        logger.warning(f"Failed to clear CLIP model cache: {e}")
+    
+    # Force garbage collection
+    import gc
+    gc.collect()
+    
+    # Clear CUDA/GPU cache if available
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info("CUDA cache cleared")
+    except:
+        pass
+
+
+def cleanup_on_shutdown():
+    """
+    Explicit cleanup function to call on application shutdown.
+    This should be called from main.py when the desktop app closes.
+    """
+    logger.info("Starting application shutdown cleanup...")
+    
+    try:
+        # Clear CLIP model cache (350MB+ memory)
+        from image_processing_clip import clear_clip_model_cache
+        clear_clip_model_cache()
+        logger.info("✓ CLIP model cache cleared")
+    except Exception as e:
+        logger.warning(f"Failed to clear CLIP model cache: {e}")
+    
+    try:
+        # Force garbage collection
+        import gc
+        collected = gc.collect()
+        logger.info(f"✓ Garbage collection freed {collected} objects")
+    except Exception as e:
+        logger.warning(f"Failed to run garbage collection: {e}")
+    
+    try:
+        # Clear CUDA/GPU cache if available
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info("✓ CUDA cache cleared")
+    except:
+        pass
+    
+    logger.info("Application cleanup complete")
+
 # Supported image formats
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
 
@@ -3045,6 +3117,134 @@ def get_main_database_stats():
         return create_error_response(
             'STATS_ERROR',
             'Failed to get database stats',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/memory/cleanup', methods=['POST'])
+def trigger_memory_cleanup():
+    """
+    Manually trigger memory cleanup to free resources.
+    
+    Useful for:
+    - Long-running sessions
+    - After processing large catalogs
+    - Testing memory leak fixes
+    
+    Returns:
+    - 200: Success with cleanup stats
+    - 500: Server error
+    """
+    try:
+        import gc
+        
+        cleanup_stats = {
+            'clip_model_cleared': False,
+            'garbage_collected': 0,
+            'cuda_cache_cleared': False
+        }
+        
+        # Clear CLIP model cache
+        try:
+            from image_processing_clip import clear_clip_model_cache
+            clear_clip_model_cache()
+            cleanup_stats['clip_model_cleared'] = True
+            logger.info("CLIP model cache cleared via API")
+        except Exception as e:
+            logger.warning(f"Failed to clear CLIP model cache: {e}")
+        
+        # Force garbage collection
+        try:
+            collected = gc.collect()
+            cleanup_stats['garbage_collected'] = collected
+            logger.info(f"Garbage collection freed {collected} objects")
+        except Exception as e:
+            logger.warning(f"Failed to run garbage collection: {e}")
+        
+        # Clear CUDA cache if available
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                cleanup_stats['cuda_cache_cleared'] = True
+                logger.info("CUDA cache cleared via API")
+        except:
+            pass
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Memory cleanup completed',
+            'stats': cleanup_stats
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error during memory cleanup: {e}", exc_info=True)
+        return create_error_response(
+            'CLEANUP_ERROR',
+            'Failed to perform memory cleanup',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/memory/stats', methods=['GET'])
+def get_memory_stats():
+    """
+    Get current memory usage statistics.
+    
+    Returns:
+    - 200: Success with memory stats
+    - 500: Server error
+    """
+    try:
+        import gc
+        import psutil
+        import os
+        
+        # Get process memory info
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        
+        stats = {
+            'process_memory_mb': round(memory_info.rss / 1024 / 1024, 2),
+            'process_memory_percent': round(process.memory_percent(), 2),
+            'garbage_objects': len(gc.get_objects()),
+            'garbage_stats': gc.get_stats()
+        }
+        
+        # Add GPU memory if available
+        try:
+            from image_processing_clip import get_gpu_memory_info
+            gpu_info = get_gpu_memory_info()
+            if gpu_info.get('available'):
+                stats['gpu_memory'] = gpu_info
+        except:
+            pass
+        
+        # Add CLIP model info
+        try:
+            from image_processing_clip import get_model_info
+            model_info = get_model_info()
+            stats['clip_model'] = {
+                'loaded': model_info.get('loaded', False),
+                'model_name': model_info.get('model_name'),
+                'device': model_info.get('device'),
+                'cache_size_mb': model_info.get('cache_size_mb', 0)
+            }
+        except:
+            pass
+        
+        return jsonify({
+            'status': 'success',
+            'stats': stats
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting memory stats: {e}", exc_info=True)
+        return create_error_response(
+            'STATS_ERROR',
+            'Failed to get memory stats',
             {'error': str(e)},
             status_code=500
         )

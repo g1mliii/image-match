@@ -158,6 +158,9 @@ def check_all_dependencies():
         # CRITICAL: sentence-transformers must be < 3.0.0 for AMD ROCm
         ("sentence-transformers", "sentence-transformers", "2.7.0", "3.0.0", None),
         
+        # System Monitoring (for memory leak detection)
+        ("psutil", "psutil", "5.9.0", None, None),
+        
         # Testing
         ("pytest", "pytest", "7.0.0", None, None),
     ]

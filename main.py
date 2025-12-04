@@ -20,6 +20,14 @@ def start_flask():
     port = 5001 if platform.system() == 'Darwin' else 5000
     app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
 
+def cleanup_on_exit():
+    """Clean up resources when application exits"""
+    try:
+        from backend.app import cleanup_on_shutdown
+        cleanup_on_shutdown()
+    except Exception as e:
+        print(f"Warning: Cleanup failed: {e}")
+
 def main():
     """Main application entry point"""
     # Start Flask in background thread
@@ -73,7 +81,11 @@ def main():
         # easy_drag=True,  # Allows dragging frameless window
     )
     
-    webview.start()
+    try:
+        webview.start()
+    finally:
+        # Clean up resources when window closes
+        cleanup_on_exit()
 
 if __name__ == '__main__':
     main()

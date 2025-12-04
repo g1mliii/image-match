@@ -60,6 +60,9 @@ sentence-transformers>=2.7.0,<3.0.0
 # Installation: pip install intel-extension-for-pytorch
 # Note: Automatically detected and used if installed, gracefully falls back to CPU if not
 
+# System Monitoring (for memory leak detection and stats)
+psutil>=5.9.0
+
 # Testing (optional - for development)
 pytest>=7.0.0
 pytest-timeout>=2.1.0

@@ -14,6 +14,10 @@ const state = {
     skuPattern: '[A-Z]+-\\d+'
 };
 
+// Track intervals and channels for cleanup (Fix #11, #12)
+let catalogPollingInterval = null;
+let catalogChannel = null;
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initializeStep1();
@@ -26,13 +30,13 @@ document.addEventListener('DOMContentLoaded', () => {
 function initCatalogChangeListener() {
     // Listen via BroadcastChannel
     try {
-        const channel = new BroadcastChannel('catalog_changes');
-        channel.onmessage = (event) => {
+        catalogChannel = new BroadcastChannel('catalog_changes');
+        catalogChannel.onmessage = (event) => {
             handleCatalogChange(event.data);
         };
     } catch (e) {
         // BroadcastChannel not supported, use polling
-        setInterval(checkCatalogChanges, 2000);
+        catalogPollingInterval = setInterval(checkCatalogChanges, 2000);
     }
     
     // Also check on visibility change (when user switches back to this tab)
@@ -42,6 +46,25 @@ function initCatalogChangeListener() {
         }
     });
 }
+
+// Cleanup on window unload (Fix #11, #12)
+window.addEventListener('beforeunload', () => {
+    // Clear polling interval
+    if (catalogPollingInterval) {
+        clearInterval(catalogPollingInterval);
+        catalogPollingInterval = null;
+    }
+    
+    // Close BroadcastChannel
+    if (catalogChannel) {
+        try {
+            catalogChannel.close();
+            catalogChannel = null;
+        } catch (e) {
+            console.warn('Failed to close BroadcastChannel:', e);
+        }
+    }
+});
 
 // Check for catalog changes via sessionStorage
 function checkCatalogChanges() {
