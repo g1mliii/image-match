@@ -179,17 +179,30 @@ def create_match_result(
     Returns:
         Match result dictionary
     """
+    # Apply penalty for uncategorized matches (lower confidence)
+    # Uncategorized products get a 10% penalty to signal lower confidence
+    similarity_score = similarities['combined_similarity']
+    category = safe_get_metadata(candidate_product, 'category')
+    is_uncategorized = category is None or category == ''
+    
+    if is_uncategorized:
+        # Apply 10% penalty (multiply by 0.90)
+        similarity_score = similarity_score * 0.90
+        # Ensure it doesn't go below 0
+        similarity_score = max(0, similarity_score)
+    
     return {
         'product_id': candidate_id,
         'image_path': safe_get_metadata(candidate_product, 'image_path', ''),
         'category': safe_get_metadata(candidate_product, 'category'),
         'product_name': safe_get_metadata(candidate_product, 'product_name'),
         'sku': safe_get_metadata(candidate_product, 'sku'),
-        'similarity_score': similarities['combined_similarity'],
+        'similarity_score': similarity_score,
         'color_score': similarities['color_similarity'],
         'shape_score': similarities['shape_similarity'],
         'texture_score': similarities['texture_similarity'],
-        'is_potential_duplicate': similarities['combined_similarity'] > 90,
+        'is_potential_duplicate': similarity_score > 90,
+        'is_uncategorized': is_uncategorized,  # Flag for UI display
         'created_at': safe_get_metadata(candidate_product, 'created_at', ''),
         'has_missing_metadata': len(missing_fields) > 0 if missing_fields else False,
         'missing_fields': missing_fields if missing_fields else None

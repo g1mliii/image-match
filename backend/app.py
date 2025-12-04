@@ -75,40 +75,42 @@ except Exception as e:
 
 
 # Memory leak fix: Add cleanup handlers for app shutdown
-@app.teardown_appcontext
-def cleanup_resources(exception=None):
-    """
-    Clean up resources on app context teardown to prevent memory leaks.
-    
-    This handler is called when the Flask app context is torn down,
-    which happens at the end of each request or when the app shuts down.
-    """
-    # Only do full cleanup on app shutdown (not on every request)
-    # We detect shutdown by checking if we're in the main thread
-    import threading
-    if threading.current_thread() is threading.main_thread():
-        return  # Skip cleanup during normal request handling
-    
-    try:
-        # Clear CLIP model cache (350MB+ memory)
-        from image_processing_clip import clear_clip_model_cache
-        clear_clip_model_cache()
-        logger.info("CLIP model cache cleared")
-    except Exception as e:
-        logger.warning(f"Failed to clear CLIP model cache: {e}")
-    
-    # Force garbage collection
-    import gc
-    gc.collect()
-    
-    # Clear CUDA/GPU cache if available
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            logger.info("CUDA cache cleared")
-    except:
-        pass
+# DISABLED: This was running after EVERY request, killing performance
+# The CLIP model should stay cached in memory for fast processing
+# @app.teardown_appcontext
+# def cleanup_resources(exception=None):
+#     """
+#     Clean up resources on app context teardown to prevent memory leaks.
+#     
+#     This handler is called when the Flask app context is torn down,
+#     which happens at the end of each request or when the app shuts down.
+#     """
+#     # Only do full cleanup on app shutdown (not on every request)
+#     # We detect shutdown by checking if we're in the main thread
+#     import threading
+#     if threading.current_thread() is threading.main_thread():
+#         return  # Skip cleanup during normal request handling
+#     
+#     try:
+#         # Clear CLIP model cache (350MB+ memory)
+#         from image_processing_clip import clear_clip_model_cache
+#         clear_clip_model_cache()
+#         logger.info("CLIP model cache cleared")
+#     except Exception as e:
+#         logger.warning(f"Failed to clear CLIP model cache: {e}")
+#     
+#     # Force garbage collection
+#     import gc
+#     gc.collect()
+#     
+#     # Clear CUDA/GPU cache if available
+#     try:
+#         import torch
+#         if torch.cuda.is_available():
+#             torch.cuda.empty_cache()
+#             logger.info("CUDA cache cleared")
+#     except:
+#         pass
 
 
 def cleanup_on_shutdown():
@@ -291,6 +293,116 @@ def get_product_image(product_id):
             status_code=500
         )
 
+@app.route('/api/products/metadata', methods=['POST'])
+def create_metadata_product():
+    """
+    Create a product with metadata only (no image) - Mode 2 support.
+    
+    JSON body:
+    - sku: Product SKU (required)
+    - product_name: Product name (required)
+    - category: Product category (optional)
+    - price: Product price (optional)
+    - performance_history: Performance history array (optional)
+    - is_historical: Boolean (default: false)
+    
+    Returns:
+    - 200: Success with product_id
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return create_error_response(
+                'MISSING_DATA',
+                'No JSON data provided',
+                'Please provide product metadata in JSON format',
+                status_code=400
+            )
+        
+        # Validate required fields
+        sku = data.get('sku')
+        product_name = data.get('product_name')
+        
+        if not sku or not product_name:
+            return create_error_response(
+                'MISSING_REQUIRED_FIELDS',
+                'SKU and product_name are required',
+                'Please provide both SKU and product_name',
+                status_code=400
+            )
+        
+        # Get optional fields
+        category = data.get('category', None)
+        price = data.get('price', None)
+        performance_history = data.get('performance_history', None)
+        is_historical = data.get('is_historical', False)
+        
+        # Normalize empty strings to None
+        if category and str(category).strip() == '':
+            category = None
+        
+        # Create product in database without image
+        # Use a placeholder for image_path since it's NOT NULL in schema
+        product_id = insert_product(
+            image_path='[METADATA_ONLY]',  # Placeholder for Mode 2 (no actual image)
+            category=category,
+            product_name=product_name,
+            sku=sku,
+            is_historical=is_historical
+        )
+        
+        # Add performance history if provided
+        if performance_history and isinstance(performance_history, list):
+            try:
+                from database import bulk_insert_performance_history
+                from datetime import timedelta
+                
+                # Convert simple numbers to complex format with auto-generated dates
+                performance_records = []
+                today = datetime.now()
+                
+                for i, perf_value in enumerate(performance_history):
+                    if isinstance(perf_value, (int, float)) and perf_value >= 0:
+                        # Generate monthly dates going backwards
+                        date_obj = today - timedelta(days=30 * (len(performance_history) - 1 - i))
+                        date_str = date_obj.strftime('%Y-%m-%d')
+                        
+                        # Simple format: just sales numbers, rest are 0
+                        performance_records.append({
+                            'date': date_str,
+                            'sales': int(perf_value),
+                            'views': 0,
+                            'conversion_rate': 0.0,
+                            'revenue': 0.0
+                        })
+                
+                if performance_records:
+                    bulk_insert_performance_history(product_id, performance_records)
+                    logger.info(f"Added {len(performance_records)} performance history records for product {product_id}")
+            except Exception as e:
+                logger.warning(f"Failed to add performance history for product {product_id}: {e}")
+        
+        logger.info(f"Created metadata-only product: {product_id} (SKU: {sku}, Name: {product_name})")
+        
+        return jsonify({
+            'success': True,
+            'product_id': product_id,
+            'message': 'Product created successfully (metadata only)',
+            'mode': 'metadata_only'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error creating metadata product: {e}")
+        return create_error_response(
+            'PRODUCT_CREATION_ERROR',
+            str(e),
+            'Failed to create product with metadata',
+            status_code=500
+        )
+
 @app.route('/api/products/upload', methods=['POST'])
 def upload_product():
     """
@@ -343,6 +455,18 @@ def upload_product():
         product_name = request.form.get('product_name', None)
         sku = request.form.get('sku', None)
         is_historical = request.form.get('is_historical', 'false').lower() == 'true'
+        
+        # Get performance history (simple format: JSON array of numbers)
+        performance_history_str = request.form.get('performance_history', None)
+        performance_history = None
+        if performance_history_str:
+            try:
+                import json
+                performance_history = json.loads(performance_history_str)
+                if not isinstance(performance_history, list):
+                    performance_history = None
+            except:
+                performance_history = None
         
         # Normalize empty strings to None
         if category and category.strip() == '':
@@ -508,6 +632,37 @@ def upload_product():
                 'error_code': 'UNKNOWN_ERROR',
                 'suggestion': 'Please try re-uploading the image'
             }
+        
+        # Add performance history if provided (simple format: array of numbers)
+        if performance_history and isinstance(performance_history, list):
+            try:
+                from database import bulk_insert_performance_history
+                from datetime import timedelta
+                
+                # Convert simple numbers to complex format with auto-generated dates
+                performance_records = []
+                today = datetime.now()
+                
+                for i, perf_value in enumerate(performance_history):
+                    if isinstance(perf_value, (int, float)) and perf_value >= 0:
+                        # Generate monthly dates going backwards
+                        date_obj = today - timedelta(days=30 * (len(performance_history) - 1 - i))
+                        date_str = date_obj.strftime('%Y-%m-%d')
+                        
+                        # Simple format: just sales numbers, rest are 0
+                        performance_records.append({
+                            'date': date_str,
+                            'sales': int(perf_value),
+                            'views': 0,
+                            'conversion_rate': 0.0,
+                            'revenue': 0.0
+                        })
+                
+                if performance_records:
+                    bulk_insert_performance_history(product_id, performance_records)
+                    logger.info(f"Added {len(performance_records)} performance history records for product {product_id}")
+            except Exception as e:
+                logger.warning(f"Failed to add performance history for product {product_id}: {e}")
         
         # Prepare response
         response = {
@@ -1101,7 +1256,6 @@ def add_product_price_history(product_id):
                 continue
             
             try:
-                from datetime import datetime
                 datetime.strptime(date, '%Y-%m-%d')
             except ValueError:
                 errors.append(f"Record {i}: invalid date format (use YYYY-MM-DD)")
@@ -1292,7 +1446,6 @@ def add_product_performance_history(product_id):
                 continue
             
             try:
-                from datetime import datetime
                 datetime.strptime(date, '%Y-%m-%d')
             except ValueError:
                 errors.append(f"Record {i}: invalid date format (use YYYY-MM-DD)")

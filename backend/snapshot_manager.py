@@ -1101,14 +1101,18 @@ def save_main_db_as_snapshot(name: str, description: str = None,
         uploads_dir = get_snapshot_uploads_dir(db_path)
         os.makedirs(uploads_dir, exist_ok=True)
         
-        # Copy uploaded images if they exist
-        main_uploads = os.path.join(BACKEND_DIR, 'uploads')
-        if os.path.exists(main_uploads):
-            for filename in os.listdir(main_uploads):
-                src = os.path.join(main_uploads, filename)
-                dst = os.path.join(uploads_dir, filename)
-                if os.path.isfile(src):
-                    shutil.copy2(src, dst)
+        # NOTE: Image copying disabled to save space and time
+        # All snapshots will reference images from the main backend/uploads/ folder
+        # This prevents copying 100s-1000s of images for each snapshot
+        # 
+        # # Copy uploaded images if they exist
+        # main_uploads = os.path.join(BACKEND_DIR, 'uploads')
+        # if os.path.exists(main_uploads):
+        #     for filename in os.listdir(main_uploads):
+        #         src = os.path.join(main_uploads, filename)
+        #         dst = os.path.join(uploads_dir, filename)
+        #         if os.path.isfile(src):
+        #             shutil.copy2(src, dst)
         
         logger.info(f"Saved main database as snapshot: {db_filename}")
         
@@ -1169,14 +1173,15 @@ def load_snapshot_to_main_db(snapshot_file: str) -> Dict[str, Any]:
                     except:
                         pass
         
-        # Copy snapshot uploads to main
-        if os.path.exists(snapshot_uploads):
-            os.makedirs(main_uploads, exist_ok=True)
-            for filename in os.listdir(snapshot_uploads):
-                src = os.path.join(snapshot_uploads, filename)
-                dst = os.path.join(main_uploads, filename)
-                if os.path.isfile(src):
-                    shutil.copy2(src, dst)
+        # NOTE: Image copying disabled - all snapshots use shared backend/uploads/
+        # # Copy snapshot uploads to main
+        # if os.path.exists(snapshot_uploads):
+        #     os.makedirs(main_uploads, exist_ok=True)
+        #     for filename in os.listdir(snapshot_uploads):
+        #         src = os.path.join(snapshot_uploads, filename)
+        #         dst = os.path.join(main_uploads, filename)
+        #         if os.path.isfile(src):
+        #             shutil.copy2(src, dst)
         
         # Store which snapshot is loaded (for UI display)
         config = get_active_catalogs()

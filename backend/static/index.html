@@ -19,7 +19,7 @@
                         <span class="status-icon">⚡</span>
                         <span class="status-text">Checking GPU...</span>
                     </div>
-                    <a href="/catalog-manager" class="btn-link" data-tooltip="View and manage your product catalog, cleanup database">CATALOG →</a>
+                    <a href="/catalog-manager" target="_self" class="btn-link" data-tooltip="View and manage your product catalog, cleanup database">CATALOG →</a>
                     <a href="/static/csv-builder.html" class="btn-link" data-tooltip="Open CSV Builder tool to create product metadata files">CSV BUILDER →</a>
                 </div>
             </div>
@@ -75,25 +75,24 @@
                     <span class="step">1</span>
                     <h2>HISTORICAL CATALOG</h2>
                     <div class="mode-toggle" id="historicalModeToggle">
-                        <button class="mode-option active" onclick="setMode('historical', 'simple')">SIMPLE</button>
-                        <button class="mode-option" onclick="setMode('historical', 'advanced')">ADVANCED</button>
+                        <button class="mode-option active" onclick="setMode('historical', 'visual')" data-tooltip="Images only - Visual AI matching">VISUAL</button>
+                        <button class="mode-option" onclick="setMode('historical', 'metadata')" data-tooltip="CSV only - Metadata matching (no images needed)">METADATA</button>
+                        <button class="mode-option" onclick="setMode('historical', 'hybrid')" data-tooltip="Images + CSV - Combined matching">HYBRID</button>
                     </div>
                     <button class="help-btn" onclick="toggleHelp('modeHelp1')">?</button>
                 </div>
                 <div class="help-text" id="modeHelp1" style="display: none; margin-bottom: 20px;">
-                    <p><strong>SIMPLE MODE vs ADVANCED MODE:</strong></p>
-                    <p><strong>Simple Mode:</strong> Upload images → Visual similarity matching. Fast and easy for quick comparisons.</p>
-                    <p><strong>Advanced Mode:</strong> Upload CSV with metadata (required) + optionally images:</p>
-                    <p>&nbsp;&nbsp;• <strong>CSV only:</strong> Metadata analysis (SKU matching, price trends, performance reports)</p>
-                    <p>&nbsp;&nbsp;• <strong>CSV + Images:</strong> Visual matching + Metadata analysis (full business intelligence)</p>
-                    <p><strong>Recommendation:</strong> Start with Simple Mode to test. Use Advanced Mode for production workflows with analytics and reporting.</p>
-                </div>
-                
+                    <p><strong>MATCHING MODES:</strong></p>
+                    <p><strong> VISUAL MODE:</strong> Upload images only → AI visual similarity matching (color, shape, texture). Fast and simple.</p>
+                    <p><strong> METADATA MODE:</strong> Upload CSV only (no images needed) → Match by SKU, name, category, price, performance history. Perfect for data-only workflows.</p>
+                    <p><strong> HYBRID MODE:</strong> Upload both images + CSV → Combined visual + metadata matching with adjustable weights. Most comprehensive analysis.</p>
+                    <p><strong> Tip:</strong> Use Metadata Mode for testing your CSV files without needing product images!</p>
+                </div>                
                 <!-- Catalog Loading Options -->
                 <div class="catalog-options" id="catalogOptions" style="display: none; margin-bottom: 20px; padding: 15px; border: 2px solid #000; background: #f9f9f9;">
                     <div class="catalog-stats" style="margin-bottom: 15px;">
                         <strong>EXISTING CATALOG:</strong> <span id="existingCatalogStats">Loading...</span>
-                        <a href="/catalog-manager" style="margin-left: 10px; font-size: 0.9em;">MANAGE →</a>
+                        <a href="/catalog-manager" target="_self" style="margin-left: 10px; font-size: 0.9em;">MANAGE →</a>
                     </div>
                     <div class="catalog-radio-options">
                         <label style="display: block; margin: 8px 0; cursor: pointer;">
@@ -112,7 +111,7 @@
                 </div>
 
                 <div class="upload-box">
-                    <div class="info">
+                    <div class="info folder-tip">
                         <div class="info-header">
                             <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
                             <button class="help-btn" onclick="toggleHelp('uploadHelp1')">?</button>
@@ -188,21 +187,21 @@
                     <span class="step">2</span>
                     <h2>NEW PRODUCTS</h2>
                     <div class="mode-toggle" id="newModeToggle">
-                        <button class="mode-option active" onclick="setMode('new', 'simple')">SIMPLE</button>
-                        <button class="mode-option" onclick="setMode('new', 'advanced')">ADVANCED</button>
+                        <button class="mode-option active" onclick="setMode('new', 'visual')" data-tooltip="Images only - Visual AI matching">VISUAL</button>
+                        <button class="mode-option" onclick="setMode('new', 'metadata')" data-tooltip="CSV only - Metadata matching (no images needed)">METADATA</button>
+                        <button class="mode-option" onclick="setMode('new', 'hybrid')" data-tooltip="Images + CSV - Combined matching">HYBRID</button>
                     </div>
                     <button class="help-btn" onclick="toggleHelp('modeHelp2')">?</button>
                 </div>
                 <div class="help-text" id="modeHelp2" style="display: none; margin-bottom: 20px;">
-                    <p><strong>SIMPLE MODE vs ADVANCED MODE:</strong></p>
-                    <p><strong>Simple Mode:</strong> Upload images → Visual similarity matching. Fast and easy for quick comparisons.</p>
-                    <p><strong>Advanced Mode:</strong> Upload CSV with metadata (required) + optionally images:</p>
-                    <p>&nbsp;&nbsp;• <strong>CSV only:</strong> Metadata analysis (SKU matching, price trends, performance reports)</p>
-                    <p>&nbsp;&nbsp;• <strong>CSV + Images:</strong> Visual matching + Metadata analysis (full business intelligence)</p>
-                    <p><strong>Recommendation:</strong> Start with Simple Mode to test. Use Advanced Mode for production workflows with analytics and reporting.</p>
+                    <p><strong>MATCHING MODES:</strong></p>
+                    <p><strong> VISUAL MODE:</strong> Upload images only → AI visual similarity matching (color, shape, texture). Fast and simple.</p>
+                    <p><strong> METADATA MODE:</strong> Upload CSV only (no images needed) → Match by SKU, name, category, price, performance history. Perfect for data-only workflows.</p>
+                    <p><strong> HYBRID MODE:</strong> Upload both images + CSV → Combined visual + metadata matching with adjustable weights. Most comprehensive analysis.</p>
+                    <p><strong> Tip:</strong> Use Metadata Mode for testing your CSV files without needing product images!</p>
                 </div>
                 
-                <div class="catalog-info-box">
+                <div class="catalog-info-box" id="newCatalogOptions">
                     <div style="margin-bottom: 10px;">
                         <strong>EXISTING NEW PRODUCTS:</strong> <span id="existingNewCatalogStats">Loading...</span>
                     </div>
@@ -223,7 +222,7 @@
                 </div>
                 
                 <div class="upload-box">
-                    <div class="info">
+                    <div class="info folder-tip"></div>
                         <div class="info-header">
                             <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
                             <button class="help-btn" onclick="toggleHelp('uploadHelp2')">?</button>

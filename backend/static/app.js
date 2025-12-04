@@ -1,3 +1,4 @@
+
 // State
 let historicalFiles = [];
 let newFiles = [];
@@ -10,6 +11,8 @@ let matchResults = [];
 // Mode state
 let historicalAdvancedMode = false;
 let newAdvancedMode = false;
+let historicalMode = 'visual'; // 'visual', 'metadata', or 'hybrid'
+let newMode = 'visual'; // 'visual', 'metadata', or 'hybrid'
 
 // Advanced features state
 // Note: CLIP mode doesn't need color/shape/texture weights - handled by AI
@@ -256,6 +259,11 @@ function initHistoricalUpload() {
         if (e.target.files.length) {
             historicalCsv = e.target.files[0];
             showToast('CSV loaded for historical products', 'success');
+            
+            // Enable process button in advanced mode when CSV is uploaded
+            if (historicalAdvancedMode) {
+                processBtn.disabled = false;
+            }
         }
     }, 'historical');
 
@@ -352,7 +360,12 @@ async function processHistoricalCatalog() {
         }
     }
 
-    statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + historicalFiles.length + ' processed</p><div class="spinner-inline"></div>';
+    // In Mode 2 (CSV only), process CSV rows instead of image files
+    const csvOnlyMode = historicalAdvancedMode && historicalFiles.length === 0 && Object.keys(categoryMap).length > 0;
+    const itemsToProcess = csvOnlyMode ? Object.keys(categoryMap) : historicalFiles;
+    const totalItems = csvOnlyMode ? Object.keys(categoryMap).length : historicalFiles.length;
+    
+    statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + totalItems + ' processed</p><div class="spinner-inline"></div>';
 
     // Load existing products from DB if using "add_to_existing" option
     const loadOption = getCatalogLoadOption();
@@ -386,39 +399,104 @@ async function processHistoricalCatalog() {
     }
     const progressFill = document.getElementById('historicalProgress');
     const progressText = document.getElementById('historicalProgressText');
+    
+    let successCount = 0;
+    let failedCount = 0;
+    const failedItems = [];
 
-    for (let i = 0; i < historicalFiles.length; i++) {
-        const { file, category } = historicalFiles[i];
-        const metadata = categoryMap[file.name] || {};
+    for (let i = 0; i < itemsToProcess.length; i++) {
+        let file, category, metadata, fileName;
+        
+        if (csvOnlyMode) {
+            // Mode 2: CSV only, no images
+            fileName = itemsToProcess[i];
+            metadata = categoryMap[fileName];
+            category = metadata.category;
+        } else {
+            // Mode 1/3: Images with optional CSV
+            const fileObj = historicalFiles[i];
+            file = fileObj.file;
+            category = fileObj.category;
+            metadata = categoryMap[file.name] || {};
+            fileName = file.name;
+        }
+
+        // Validate required fields in CSV-only mode before sending to backend
+        if (csvOnlyMode) {
+            const hasValidSku = metadata.sku && metadata.sku.trim() !== '';
+            const hasValidName = metadata.name && metadata.name.trim() !== '';
+            
+            if (!hasValidSku || !hasValidName) {
+                console.warn(`Skipping row ${i + 1} (${fileName}): Missing required fields (SKU or Name)`);
+                failedCount++;
+                failedItems.push({ row: i + 1, fileName, reason: 'Missing SKU or Name' });
+                
+                // Update progress and continue to next item
+                const progress = ((i + 1) / totalItems) * 100;
+                progressFill.style.width = `${progress}%`;
+                progressText.textContent = `${i + 1} of ${totalItems} processed (${failedCount} skipped)`;
+                continue;
+            }
+        }
 
         try {
             const formData = new FormData();
-            formData.append('image', file);
+            
+            if (!csvOnlyMode) {
+                // Only append image if we have one
+                formData.append('image', file);
+            }
+            
             // Use folder-based category, or CSV override if provided
             const finalCategory = metadata.category || category;
             if (finalCategory) formData.append('category', finalCategory);
             if (metadata.sku) formData.append('sku', metadata.sku);
             if (metadata.name) formData.append('product_name', metadata.name);
-            else formData.append('product_name', file.name); // Fallback to filename
+            else formData.append('product_name', fileName); // Fallback to filename/SKU
             formData.append('is_historical', 'true');
+            
+            // Add performance history for Mode 3 (simple format)
+            if (metadata.performanceHistory) {
+                formData.append('performance_history', JSON.stringify(metadata.performanceHistory));
+            }
 
-            const response = await fetchWithRetry('/api/products/upload', {
-                method: 'POST',
-                body: formData
-            });
+            let response, data;
+            
+            if (csvOnlyMode) {
+                // Mode 2: Use metadata-only endpoint
+                response = await fetchWithRetry('/api/products/metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sku: metadata.sku,
+                        product_name: metadata.name || fileName,
+                        category: finalCategory,
+                        price: metadata.price,
+                        performance_history: metadata.performanceHistory,
+                        is_historical: true
+                    })
+                });
+            } else {
+                // Mode 1/3: Use image upload endpoint
+                response = await fetchWithRetry('/api/products/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+            }
 
-            const data = await response.json();
+            data = await response.json();
 
             if (response.ok) {
                 const productId = data.product_id;
+                successCount++;
                 
                 historicalProducts.push({
                     id: productId,
-                    filename: file.name,
+                    filename: csvOnlyMode ? fileName : file.name,
                     category: finalCategory,
                     sku: metadata.sku,
                     name: metadata.name,
-                    hasFeatures: data.feature_extraction_status === 'success',
+                    hasFeatures: csvOnlyMode ? false : (data.feature_extraction_status === 'success'),
                     hasPriceHistory: false
                 });
                 
@@ -453,88 +531,83 @@ async function processHistoricalCatalog() {
                     }
                 }
                 
-                // Upload performance history if present
-                if (metadata.performanceHistory && metadata.performanceHistory.length > 0) {
-                    try {
-                        const perfResponse = await fetchWithRetry(`/api/products/${productId}/performance-history`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ performance: metadata.performanceHistory })
-                        });
-                        
-                        if (perfResponse.ok) {
-                            const perfData = await perfResponse.json();
-                            // Update product to indicate it has performance history
-                            const product = historicalProducts.find(p => p.id === productId);
-                            if (product) {
-                                product.hasPerformanceHistory = true;
-                            }
-                            
-                            // Show validation warnings if any
-                            if (perfData.validation_errors && perfData.validation_errors.length > 0) {
-                                console.warn(`Performance validation warnings for ${file.name}:`, perfData.validation_errors);
-                            }
-                        } else {
-                            // Non-critical error - log but continue
-                            console.warn(`Failed to upload performance history for ${file.name}: ${perfResponse.status}`);
-                        }
-                    } catch (error) {
-                        // Non-critical error - log but continue
-                        console.warn(`Failed to upload performance history for ${file.name}:`, error);
-                    }
-                }
+                // Note: Performance history is sent to metadata endpoint during product creation
+                // No need for separate upload - simple format is already handled
 
                 // Show warnings if any
                 if (data.warning) {
-                    showToast(`${file.name}: ${data.warning}`, 'warning');
+                    console.warn(`${fileName}: ${data.warning}`);
                 }
                 if (data.warning_sku) {
-                    showToast(`${file.name}: ${data.warning_sku}`, 'warning');
+                    console.warn(`${fileName}: ${data.warning_sku}`);
                 }
                 if (data.warning_category) {
-                    showToast(`${file.name}: ${data.warning_category}`, 'warning');
+                    console.warn(`${fileName}: ${data.warning_category}`);
                 }
             } else {
-                // Show error from backend
+                // Error from backend - track and continue
+                failedCount++;
                 const errorMsg = getUserFriendlyError(data.error_code || 'UNKNOWN_ERROR', data.error, data.suggestion);
-                showToast(`${file.name}: ${errorMsg}`, 'error');
-                console.error(`Failed to process ${file.name}:`, data);
+                failedItems.push({ row: i + 1, fileName, reason: data.error || errorMsg });
+                console.error(`Failed to process ${fileName}:`, data);
             }
         } catch (error) {
+            // Network or other error - track and continue
+            failedCount++;
             const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
-            showToast(`${file.name}: ${errorMsg}`, 'error');
-            console.error(`Failed to process ${file.name}:`, error);
+            failedItems.push({ row: i + 1, fileName, reason: error.message });
+            console.error(`Failed to process ${fileName}:`, error);
         }
 
-        const progress = ((i + 1) / historicalFiles.length) * 100;
+        const progress = ((i + 1) / totalItems) * 100;
         progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${i + 1} of ${historicalFiles.length} processed`;
+        progressText.textContent = `${i + 1} of ${totalItems} processed (${successCount} success, ${failedCount} failed)`;
     }
 
     const catalogOption = getCatalogLoadOption();
-    const existingCount = catalogOption === 'add_to_existing' ? historicalProducts.filter(p => p.id).length - historicalFiles.length : 0;
+    const existingCount = catalogOption === 'add_to_existing' ? historicalProducts.filter(p => p.id).length - totalItems : 0;
     const newlyUploaded = historicalProducts.length - existingCount;
-    const successful = historicalProducts.filter(p => p.hasFeatures).length;
-    const failed = historicalFiles.length - newlyUploaded;
     const withoutMetadata = historicalProducts.filter(p => !p.category && !p.sku).length;
     
     let statusMsg = `<h4>✓ Historical catalog processed</h4>`;
+    statusMsg += `<p><strong>${successCount} successful</strong>, ${failedCount} failed</p>`;
+    
     if (catalogOption === 'add_to_existing' && existingCount > 0) {
-        statusMsg += `<p>${successful} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)`;
+        statusMsg += `<p>${successCount} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)</p>`;
     } else {
-        statusMsg += `<p>${successful} products ready for matching`;
+        statusMsg += `<p>${successCount} products ready for matching</p>`;
     }
-    if (failed > 0) statusMsg += ` (${failed} failed)`;
-    if (withoutMetadata > 0) statusMsg += ` (${withoutMetadata} without CSV metadata)`;
-    statusMsg += `</p>`;
+    
+    // Show failed items summary if any
+    if (failedItems.length > 0 && failedItems.length <= 10) {
+        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>Failed items:</strong><ul style="margin: 5px 0; padding-left: 20px;">`;
+        failedItems.forEach(item => {
+            statusMsg += `<li>Row ${item.row} (${item.fileName}): ${item.reason}</li>`;
+        });
+        statusMsg += `</ul></div>`;
+    } else if (failedItems.length > 10) {
+        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>${failedItems.length} items failed</strong> - check console for details</div>`;
+        console.log('Failed items:', failedItems);
+    }
+    
     statusDiv.innerHTML = statusMsg;
 
-    showToast(`Historical catalog ready: ${successful} products`, 'success');
+    showToast(`Historical catalog ready: ${successCount} products`, 'success');
     showLoadingSpinner(processBtn, false);
 
-    // Show next step
-    document.getElementById('newSection').style.display = 'block';
-    document.getElementById('newSection').scrollIntoView({ behavior: 'smooth' });
+    // Show next step - force display
+    const newSection = document.getElementById('newSection');
+    console.log('[DEBUG] Attempting to show newSection:', newSection);
+    if (newSection) {
+        newSection.style.display = 'block';
+        newSection.style.visibility = 'visible';
+        console.log('[DEBUG] newSection display set to block, current style:', newSection.style.display);
+        setTimeout(() => {
+            newSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 200);
+    } else {
+        console.error('[ERROR] newSection element not found in DOM!');
+    }
 }
 
 // New Products Upload
@@ -583,10 +656,16 @@ function initNewUpload() {
         if (e.target.files.length) {
             newCsv = e.target.files[0];
             showToast('CSV loaded for new products', 'success');
+            
+            // Enable process button in advanced mode when CSV is uploaded
+            if (newAdvancedMode) {
+                processBtn.disabled = false;
+            }
         }
     }, 'new');
 
-    addTrackedListener(processBtn, 'click', processNewProducts, 'new');
+    // NOTE: processBtn click handler is set up later in processNewCatalogWithOptions (line ~4349)
+    // Don't add duplicate handler here!
 }
 
 function handleNewFiles(files) {
@@ -678,7 +757,12 @@ async function processNewProducts() {
         }
     }
 
-    statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + newFiles.length + ' processed</p><div class="spinner-inline"></div>';
+    // In Mode 2 (CSV only), process CSV rows instead of image files
+    const csvOnlyMode = newAdvancedMode && newFiles.length === 0 && Object.keys(categoryMap).length > 0;
+    const itemsToProcess = csvOnlyMode ? Object.keys(categoryMap) : newFiles;
+    const totalItems = csvOnlyMode ? Object.keys(categoryMap).length : newFiles.length;
+    
+    statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + totalItems + ' processed</p><div class="spinner-inline"></div>';
 
     // Load existing products from DB if using "add_to_existing" option
     const newLoadOption = getNewCatalogLoadOption();
@@ -712,39 +796,104 @@ async function processNewProducts() {
     }
     const progressFill = document.getElementById('newProgress');
     const progressText = document.getElementById('newProgressText');
+    
+    let successCount = 0;
+    let failedCount = 0;
+    const failedItems = [];
 
-    for (let i = 0; i < newFiles.length; i++) {
-        const { file, category } = newFiles[i];
-        const metadata = categoryMap[file.name] || {};
+    for (let i = 0; i < itemsToProcess.length; i++) {
+        let file, category, metadata, fileName;
+        
+        if (csvOnlyMode) {
+            // Mode 2: CSV only, no images
+            fileName = itemsToProcess[i];
+            metadata = categoryMap[fileName];
+            category = metadata.category;
+        } else {
+            // Mode 1/3: Images with optional CSV
+            const fileObj = newFiles[i];
+            file = fileObj.file;
+            category = fileObj.category;
+            metadata = categoryMap[file.name] || {};
+            fileName = file.name;
+        }
+
+        // Validate required fields in CSV-only mode before sending to backend
+        if (csvOnlyMode) {
+            const hasValidSku = metadata.sku && metadata.sku.trim() !== '';
+            const hasValidName = metadata.name && metadata.name.trim() !== '';
+            
+            if (!hasValidSku || !hasValidName) {
+                console.warn(`Skipping row ${i + 1} (${fileName}): Missing required fields (SKU or Name)`);
+                failedCount++;
+                failedItems.push({ row: i + 1, fileName, reason: 'Missing SKU or Name' });
+                
+                // Update progress and continue to next item
+                const progress = ((i + 1) / totalItems) * 100;
+                progressFill.style.width = `${progress}%`;
+                progressText.textContent = `${i + 1} of ${totalItems} processed (${failedCount} skipped)`;
+                continue;
+            }
+        }
 
         try {
             const formData = new FormData();
-            formData.append('image', file);
+            
+            if (!csvOnlyMode) {
+                // Only append image if we have one
+                formData.append('image', file);
+            }
+            
             // Use folder-based category, or CSV override if provided
             const finalCategory = metadata.category || category;
             if (finalCategory) formData.append('category', finalCategory);
             if (metadata.sku) formData.append('sku', metadata.sku);
             if (metadata.name) formData.append('product_name', metadata.name);
-            else formData.append('product_name', file.name); // Fallback to filename
+            else formData.append('product_name', fileName); // Fallback to filename/SKU
             formData.append('is_historical', 'false');
+            
+            // Add performance history for Mode 3 (simple format)
+            if (metadata.performanceHistory) {
+                formData.append('performance_history', JSON.stringify(metadata.performanceHistory));
+            }
 
-            const response = await fetchWithRetry('/api/products/upload', {
-                method: 'POST',
-                body: formData
-            });
+            let response, data;
+            
+            if (csvOnlyMode) {
+                // Mode 2: Use metadata-only endpoint
+                response = await fetchWithRetry('/api/products/metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sku: metadata.sku,
+                        product_name: metadata.name || fileName,
+                        category: finalCategory,
+                        price: metadata.price,
+                        performance_history: metadata.performanceHistory,
+                        is_historical: false
+                    })
+                });
+            } else {
+                // Mode 1/3: Use image upload endpoint
+                response = await fetchWithRetry('/api/products/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+            }
 
-            const data = await response.json();
+            data = await response.json();
 
             if (response.ok) {
                 const productId = data.product_id;
+                successCount++;
                 
                 newProducts.push({
                     id: productId,
-                    filename: file.name,
+                    filename: csvOnlyMode ? fileName : file.name,
                     category: finalCategory,
                     sku: metadata.sku,
                     name: metadata.name,
-                    hasFeatures: data.feature_extraction_status === 'success',
+                    hasFeatures: csvOnlyMode ? false : (data.feature_extraction_status === 'success'),
                     hasPriceHistory: false
                 });
                 
@@ -779,88 +928,89 @@ async function processNewProducts() {
                     }
                 }
                 
-                // Upload performance history if present
-                if (metadata.performanceHistory && metadata.performanceHistory.length > 0) {
-                    try {
-                        const perfResponse = await fetchWithRetry(`/api/products/${productId}/performance-history`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ performance: metadata.performanceHistory })
-                        });
-                        
-                        if (perfResponse.ok) {
-                            const perfData = await perfResponse.json();
-                            // Update product to indicate it has performance history
-                            const product = newProducts.find(p => p.id === productId);
-                            if (product) {
-                                product.hasPerformanceHistory = true;
-                            }
-                            
-                            // Show validation warnings if any
-                            if (perfData.validation_errors && perfData.validation_errors.length > 0) {
-                                console.warn(`Performance validation warnings for ${file.name}:`, perfData.validation_errors);
-                            }
-                        } else {
-                            // Non-critical error - log but continue
-                            console.warn(`Failed to upload performance history for ${file.name}: ${perfResponse.status}`);
-                        }
-                    } catch (error) {
-                        // Non-critical error - log but continue
-                        console.warn(`Failed to upload performance history for ${file.name}:`, error);
-                    }
-                }
+                // Note: Performance history is sent to metadata endpoint during product creation
+                // No need for separate upload - simple format is already handled
 
                 // Show warnings if any
                 if (data.warning) {
-                    showToast(`${file.name}: ${data.warning}`, 'warning');
+                    console.warn(`${fileName}: ${data.warning}`);
                 }
                 if (data.warning_sku) {
-                    showToast(`${file.name}: ${data.warning_sku}`, 'warning');
+                    console.warn(`${fileName}: ${data.warning_sku}`);
                 }
                 if (data.warning_category) {
-                    showToast(`${file.name}: ${data.warning_category}`, 'warning');
+                    console.warn(`${fileName}: ${data.warning_category}`);
                 }
             } else {
-                // Show error from backend
+                // Error from backend - track and continue
+                failedCount++;
                 const errorMsg = getUserFriendlyError(data.error_code || 'UNKNOWN_ERROR', data.error, data.suggestion);
-                showToast(`${file.name}: ${errorMsg}`, 'error');
-                console.error(`Failed to process ${file.name}:`, data);
+                failedItems.push({ row: i + 1, fileName, reason: data.error || errorMsg });
+                console.error(`Failed to process ${fileName}:`, data);
             }
         } catch (error) {
+            // Network or other error - track and continue
+            failedCount++;
             const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
-            showToast(`${file.name}: ${errorMsg}`, 'error');
-            console.error(`Failed to process ${file.name}:`, error);
+            failedItems.push({ row: i + 1, fileName, reason: error.message });
+            console.error(`Failed to process ${fileName}:`, error);
         }
 
-        const progress = ((i + 1) / newFiles.length) * 100;
+        const progress = ((i + 1) / totalItems) * 100;
         progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${i + 1} of ${newFiles.length} processed`;
+        progressText.textContent = `${i + 1} of ${totalItems} processed (${successCount} success, ${failedCount} failed)`;
     }
 
+    console.log('[DEBUG] Processing complete, preparing status message...');
+    console.log('[DEBUG] successCount:', successCount, 'failedCount:', failedCount);
+    
     const newCatalogOption = getNewCatalogLoadOption();
-    const existingCount = newCatalogOption === 'add_to_existing' ? newProducts.filter(p => p.id).length - newFiles.length : 0;
+    const existingCount = newCatalogOption === 'add_to_existing' ? newProducts.filter(p => p.id).length - totalItems : 0;
     const newlyUploaded = newProducts.length - existingCount;
-    const successful = newProducts.filter(p => p.hasFeatures).length;
-    const failed = newFiles.length - newlyUploaded;
     const withoutMetadata = newProducts.filter(p => !p.category && !p.sku).length;
     
     let statusMsg = `<h4>✓ New products processed</h4>`;
-    if (newCatalogOption === 'add_to_existing' && existingCount > 0) {
-        statusMsg += `<p>${successful} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)`;
-    } else {
-        statusMsg += `<p>${successful} products ready for matching`;
+    statusMsg += `<p><strong>${successCount} successful</strong>, ${failedCount} failed</p>`;
+    
+    // Show failed items summary if any
+    if (failedItems.length > 0 && failedItems.length <= 10) {
+        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>Failed items:</strong><ul style="margin: 5px 0; padding-left: 20px;">`;
+        failedItems.forEach(item => {
+            statusMsg += `<li>Row ${item.row} (${item.fileName}): ${item.reason}</li>`;
+        });
+        statusMsg += `</ul></div>`;
+    } else if (failedItems.length > 10) {
+        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>${failedItems.length} items failed</strong> - check console for details</div>`;
+        console.log('Failed items:', failedItems);
     }
-    if (failed > 0) statusMsg += ` (${failed} failed)`;
+    
+    let oldStatusMsg = `<h4>✓ New products processed</h4>`;
+    if (newCatalogOption === 'add_to_existing' && existingCount > 0) {
+        statusMsg += `<p>${successCount} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)`;
+    } else {
+        statusMsg += `<p>${successCount} products ready for matching`;
+    }
+    if (failedCount > 0) statusMsg += ` (${failedCount} failed)`;
     if (withoutMetadata > 0) statusMsg += ` (${withoutMetadata} without CSV metadata)`;
     statusMsg += `</p>`;
     statusDiv.innerHTML = statusMsg;
 
-    showToast(`New products ready: ${successful} products`, 'success');
+    showToast(`New products ready: ${successCount} products`, 'success');
     showLoadingSpinner(processBtn, false);
 
-    // Show matching section
-    document.getElementById('matchSection').style.display = 'block';
-    document.getElementById('matchSection').scrollIntoView({ behavior: 'smooth' });
+    // Show matching section - force display
+    const matchSection = document.getElementById('matchSection');
+    console.log('[DEBUG] Attempting to show matchSection:', matchSection);
+    if (matchSection) {
+        matchSection.style.display = 'block';
+        matchSection.style.visibility = 'visible';
+        console.log('[DEBUG] matchSection display set to block, current style:', matchSection.style.display);
+        setTimeout(() => {
+            matchSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 200);
+    } else {
+        console.error('[ERROR] matchSection element not found in DOM!');
+    }
 }
 
 // Matching
@@ -895,20 +1045,24 @@ async function startMatching() {
     if (!newProducts || newProducts.length === 0) {
         console.log('[MATCHING] newProducts array empty, loading from database...');
         try {
+            // CRITICAL FIX: Only load NEW products (is_historical=false), not historical ones
             const response = await fetch('/api/catalog/products?type=new&limit=10000');
             if (!response.ok) throw new Error('Failed to load new products');
             
             const data = await response.json();
-            newProducts = data.products.map(p => ({
-                id: p.id,
-                filename: p.filename,
-                category: p.category,
-                sku: p.sku,
-                name: p.product_name,
-                hasFeatures: true,  // Assume features exist if product is in DB
-                is_historical: false
-            }));
-            console.log(`[MATCHING] Loaded ${newProducts.length} new products from database`);
+            // Filter to ensure we only get new products (is_historical=false)
+            newProducts = data.products
+                .filter(p => !p.is_historical)  // CRITICAL: Filter out historical products
+                .map(p => ({
+                    id: p.id,
+                    filename: p.filename,
+                    category: p.category,
+                    sku: p.sku,
+                    name: p.product_name,
+                    hasFeatures: p.has_features || false,
+                    is_historical: false
+                }));
+            console.log(`[MATCHING] Loaded ${newProducts.length} new products from database (filtered out historical)`);
         } catch (error) {
             console.error('[MATCHING] Failed to load new products:', error);
             showToast('Failed to load new products from database', 'error');
@@ -934,26 +1088,39 @@ async function startMatching() {
     for (let i = 0; i < newProducts.length; i++) {
         const product = newProducts[i];
 
-        if (!product.hasFeatures) {
-            matchResults.push({
-                product: product,
-                matches: [],
-                error: 'No features extracted'
-            });
-            continue;
-        }
-
+        // In Mode 2 (metadata only), products don't have features but can still match on metadata
+        // So we don't skip products without features anymore
+        
         try {
             console.log(`[MATCHING] Matching product ${product.id} (${product.filename})`);
+            
+            // Determine matching mode based on global mode tracker
+            const matchPayload = {
+                product_id: product.id,
+                threshold: threshold,
+                limit: limit,
+                match_against_all: false  // PERFORMANCE: Use category filtering (much faster with DB index)
+            };
+            
+            // Set weights based on mode
+            if (newMode === 'visual') {
+                // Mode 1: Pure visual matching (CLIP embeddings only)
+                matchPayload.metadata_weight = 0;
+                matchPayload.visual_weight = 1.0;
+            } else if (newMode === 'metadata') {
+                // Mode 2: Pure metadata matching (no visual features)
+                matchPayload.metadata_weight = 1.0;
+                matchPayload.visual_weight = 0;
+            } else if (newMode === 'hybrid') {
+                // Mode 3: Hybrid matching (50% visual + 50% metadata)
+                matchPayload.metadata_weight = 0.5;
+                matchPayload.visual_weight = 0.5;
+            }
+            
             const response = await fetchWithRetry('/api/products/match', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    product_id: product.id,
-                    threshold: threshold,
-                    limit: limit,
-                    match_against_all: true  // Match against all categories by default
-                })
+                body: JSON.stringify(matchPayload)
             });
 
             const data = await response.json();
@@ -977,13 +1144,34 @@ async function startMatching() {
                     match.priceStatistics = null;
                 }
                 
-                // Fetch performance history
+                // Fetch performance history (simple format)
                 try {
                     const perfResponse = await fetchWithRetry(`/api/products/${match.product_id}/performance-history`);
                     if (perfResponse.ok) {
                         const perfData = await perfResponse.json();
-                        match.performanceHistory = perfData.performance_history || [];
-                        match.performanceStatistics = perfData.statistics;
+                        // Extract just sales numbers for simple display
+                        const perfHistory = perfData.performance_history || [];
+                        // CRITICAL: Filter out invalid values (null, undefined, NaN) to prevent sparkline errors
+                        match.performanceHistory = perfHistory
+                            .map(p => p.sales)
+                            .filter(s => typeof s === 'number' && !isNaN(s) && isFinite(s));
+                        
+                        // Calculate simple statistics
+                        if (match.performanceHistory.length > 0) {
+                            const total = match.performanceHistory.reduce((sum, val) => sum + val, 0);
+                            const avg = total / match.performanceHistory.length;
+                            const latest = match.performanceHistory[0]; // Most recent
+                            const oldest = match.performanceHistory[match.performanceHistory.length - 1];
+                            const trend = latest > oldest ? 'up' : latest < oldest ? 'down' : 'stable';
+                            
+                            match.performanceStatistics = {
+                                total_sales: total,
+                                average_sales: Math.round(avg),
+                                sales_trend: trend
+                            };
+                        } else {
+                            match.performanceStatistics = null;
+                        }
                     }
                 } catch (error) {
                     console.warn(`Failed to fetch performance history for match ${match.product_id}:`, error);
@@ -1128,6 +1316,9 @@ function displayResults(resetPage = true) {
         return;
     }
 
+    // Detect if we're in Mode 2 (metadata-only) using global mode tracker
+    const isMetadataMode = newMode === 'metadata';
+    
     listDiv.innerHTML = paginatedResults.map((result, index) => {
         const product = result.product;
         const matches = result.matches;
@@ -1135,10 +1326,10 @@ function displayResults(resetPage = true) {
         return `
             <div class="result-item">
                 <div class="result-header">
-                    <img data-src="/api/products/${product.id}/image" class="result-image lazy-load" 
+                    ${!isMetadataMode ? `<img data-src="/api/products/${product.id}/image" class="result-image lazy-load" 
                          src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><rect fill='%23e2e8f0' width='120' height='120'/></svg>"
                          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22120%22 height=%22120%22/></svg>'"
-                         alt="${product.filename}">
+                         alt="${product.filename}">` : ''}
                     <div class="result-info">
                         <h3>${escapeHtml(product.filename)}</h3>
                         <div class="result-meta">
@@ -1151,10 +1342,10 @@ function displayResults(resetPage = true) {
                     <div class="matches-grid">
                         ${matches.map(match => `
                             <div class="match-card" onclick="showDetailedComparison(${product.id}, ${match.product_id})">
-                                <img data-src="/api/products/${match.product_id}/image" class="match-image lazy-load"
+                                ${!isMetadataMode ? `<img data-src="/api/products/${match.product_id}/image" class="match-image lazy-load"
                                      src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='120'><rect fill='%23e2e8f0' width='180' height='120'/></svg>"
                                      onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22180%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22180%22 height=%22120%22/></svg>'"
-                                     alt="Match">
+                                     alt="Match">` : ''}
                                 <div class="match-score ${getScoreClass(match.similarity_score)}">
                                     ${match.similarity_score.toFixed(1)}%
                                 </div>
@@ -1267,33 +1458,38 @@ async function showDetailedComparison(newProductId, matchedProductId) {
         const matchResult = matchResults.find(r => r.product.id === newProductId);
         const matchDetails = matchResult?.matches.find(m => m.product_id === matchedProductId);
 
+        // Detect if we're in Mode 2 (metadata-only)
+        const isMetadataMode = newMode === 'metadata';
+        
         modalBody.innerHTML = `
             <h2>Detailed Comparison</h2>
             <div class="comparison-view">
                 <div class="comparison-item">
                     <h3>New Product</h3>
-                    <img data-src="/api/products/${newProductId}/image" class="lazy-load"
+                    ${!isMetadataMode ? `<img data-src="/api/products/${newProductId}/image" class="lazy-load"
                          src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect fill='%23e2e8f0' width='300' height='300'/></svg>"
-                         alt="New Product">
+                         alt="New Product">` : ''}
                     <div class="comparison-details">
-                        <p><strong>Filename:</strong> ${escapeHtml(newData.product.product_name || 'Unknown')}</p>
+                        <p><strong>Product:</strong> ${escapeHtml(newData.product.product_name || 'Unknown')}</p>
+                        <p><strong>SKU:</strong> ${escapeHtml(newData.product.sku || 'N/A')}</p>
                         <p><strong>Category:</strong> ${escapeHtml(newData.product.category || 'Uncategorized')}</p>
                     </div>
                 </div>
                 <div class="comparison-item">
                     <h3>Matched Product</h3>
-                    <img data-src="/api/products/${matchedProductId}/image" class="lazy-load"
+                    ${!isMetadataMode ? `<img data-src="/api/products/${matchedProductId}/image" class="lazy-load"
                          src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect fill='%23e2e8f0' width='300' height='300'/></svg>"
-                         alt="Matched Product">
+                         alt="Matched Product">` : ''}
                     <div class="comparison-details">
-                        <p><strong>Filename:</strong> ${escapeHtml(matchData.product.product_name || 'Unknown')}</p>
+                        <p><strong>Product:</strong> ${escapeHtml(matchData.product.product_name || 'Unknown')}</p>
+                        <p><strong>SKU:</strong> ${escapeHtml(matchData.product.sku || 'N/A')}</p>
                         <p><strong>Category:</strong> ${escapeHtml(matchData.product.category || 'Uncategorized')}</p>
                     </div>
                 </div>
             </div>
             ${matchDetails ? `
                 <div class="score-breakdown">
-                    <h4>Similarity Breakdown</h4>
+                    <h4>Similarity Score</h4>
                     <div class="score-bar">
                         <div class="score-bar-label">
                             <span>Overall Similarity</span>
@@ -1301,33 +1497,6 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                         </div>
                         <div class="score-bar-fill">
                             <div style="width: ${matchDetails.similarity_score}%"></div>
-                        </div>
-                    </div>
-                    <div class="score-bar">
-                        <div class="score-bar-label">
-                            <span>Color Similarity</span>
-                            <span>${matchDetails.color_score?.toFixed(1) || 'N/A'}%</span>
-                        </div>
-                        <div class="score-bar-fill">
-                            <div style="width: ${matchDetails.color_score || 0}%"></div>
-                        </div>
-                    </div>
-                    <div class="score-bar">
-                        <div class="score-bar-label">
-                            <span>Shape Similarity</span>
-                            <span>${matchDetails.shape_score?.toFixed(1) || 'N/A'}%</span>
-                        </div>
-                        <div class="score-bar-fill">
-                            <div style="width: ${matchDetails.shape_score || 0}%</div>
-                        </div>
-                    </div>
-                    <div class="score-bar">
-                        <div class="score-bar-label">
-                            <span>Texture Similarity</span>
-                            <span>${matchDetails.texture_score?.toFixed(1) || 'N/A'}%</span>
-                        </div>
-                        <div class="score-bar-fill">
-                            <div style="width: ${matchDetails.texture_score || 0}%"></div>
                         </div>
                     </div>
                 </div>
@@ -1373,19 +1542,11 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                             <span class="performance-stat-value">${matchDetails.performanceStatistics.total_sales}</span>
                         </div>
                         <div class="performance-stat">
-                            <span class="performance-stat-label">Total Views</span>
-                            <span class="performance-stat-value">${matchDetails.performanceStatistics.total_views.toLocaleString()}</span>
+                            <span class="performance-stat-label">Average</span>
+                            <span class="performance-stat-value">${matchDetails.performanceStatistics.average_sales}</span>
                         </div>
                         <div class="performance-stat">
-                            <span class="performance-stat-label">Avg Conversion</span>
-                            <span class="performance-stat-value">${matchDetails.performanceStatistics.avg_conversion}%</span>
-                        </div>
-                        <div class="performance-stat">
-                            <span class="performance-stat-label">Total Revenue</span>
-                            <span class="performance-stat-value">$${matchDetails.performanceStatistics.total_revenue.toLocaleString()}</span>
-                        </div>
-                        <div class="performance-stat">
-                            <span class="performance-stat-label">Sales Trend</span>
+                            <span class="performance-stat-label">Trend</span>
                             <span class="performance-stat-value performance-trend-${matchDetails.performanceStatistics.sales_trend}">
                                 ${getTrendIcon(matchDetails.performanceStatistics.sales_trend)} ${matchDetails.performanceStatistics.sales_trend}
                             </span>
@@ -1412,7 +1573,7 @@ function closeModal() {
 }
 
 function exportResults() {
-    let csv = 'New Product,Category,Match Count,Top Match,Top Score,Price Current,Price Avg,Price Min,Price Max,Price Trend,Total Sales,Total Revenue,Avg Conversion,Sales Trend\n';
+    let csv = 'New Product,Category,Match Count,Top Match,Top Score,Price Current,Price Avg,Price Min,Price Max,Price Trend,Total Sales,Avg Sales,Sales Trend\n';
 
     matchResults.forEach(result => {
         const product = result.product;
@@ -1434,17 +1595,16 @@ function exportResults() {
                 csv += ',,,,,';
             }
             
-            // Add performance history data if available
+            // Add performance history data if available (SIMPLE FORMAT: just sales)
             if (topMatch.performanceStatistics) {
                 csv += `,${topMatch.performanceStatistics.total_sales}`;
-                csv += `,${topMatch.performanceStatistics.total_revenue}`;
-                csv += `,${topMatch.performanceStatistics.avg_conversion}`;
+                csv += `,${topMatch.performanceStatistics.average_sales}`;
                 csv += `,"${topMatch.performanceStatistics.sales_trend}"`;
             } else {
-                csv += ',,,,';
+                csv += ',,,';
             }
         } else {
-            csv += ',"No matches",0,,,,,,,,,';
+            csv += ',"No matches",0,,,,,,,,';
         }
 
         csv += '\n';
@@ -1458,7 +1618,7 @@ function exportResults() {
     a.click();
     URL.revokeObjectURL(url);
 
-    showToast('Results exported to CSV with price & performance history', 'success');
+    showToast('Results exported to CSV', 'success');
 }
 
 function resetApp() {
@@ -1474,6 +1634,40 @@ function resetApp() {
 }
 
 // Utilities
+// Helper function to parse a CSV line properly handling quoted fields
+function parseCSVLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const nextChar = line[i + 1];
+        
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                // Escaped quote
+                current += '"';
+                i++; // Skip next quote
+            } else {
+                // Toggle quote state
+                inQuotes = !inQuotes;
+            }
+        } else if (char === ',' && !inQuotes) {
+            // Field separator
+            result.push(current.trim());
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+    
+    // Add last field
+    result.push(current.trim());
+    
+    return result;
+}
+
 async function parseCsv(file) {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -1494,8 +1688,8 @@ async function parseCsv(file) {
 
             dataLines.forEach((line, index) => {
                 try {
-                    // Handle both comma and tab separated values
-                    const parts = line.split(/[,\t]/).map(s => s.trim().replace(/^"|"$/g, '')); // Remove quotes
+                    // Parse CSV line properly handling quoted fields
+                    const parts = parseCSVLine(line);
 
                     if (parts.length >= 1) {
                         const filename = parts[0];
@@ -1536,16 +1730,28 @@ async function parseCsv(file) {
                         }
                         
                         // Parse performance history - can be in column 5 or 6
-                        // Format: "2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160"
+                        // Format 1 (simple): "110,112,115,118,120" - comma-separated numbers
+                        // Format 2 (complex): "2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160"
                         // (date:sales:views:conversion:revenue)
                         let performanceHistory = null;
                         const performanceHistoryStr = parts[5] || parts[6] || null;
                         
-                        if (performanceHistoryStr && performanceHistoryStr.includes(':')) {
+                        if (performanceHistoryStr) {
                             try {
-                                const parsed = parsePerformanceHistory(performanceHistoryStr);
-                                if (parsed && parsed.length > 0) {
-                                    performanceHistory = parsed;
+                                if (performanceHistoryStr.includes(':')) {
+                                    // Complex format with colons
+                                    const parsed = parsePerformanceHistory(performanceHistoryStr);
+                                    if (parsed && parsed.length > 0) {
+                                        performanceHistory = parsed;
+                                    }
+                                } else {
+                                    // Simple format - comma-separated numbers
+                                    const numbers = performanceHistoryStr.split(',')
+                                        .map(s => parseFloat(s.trim()))
+                                        .filter(n => !isNaN(n) && n >= 0);
+                                    if (numbers.length > 0) {
+                                        performanceHistory = numbers;
+                                    }
                                 }
                             } catch (error) {
                                 errors.push(`Row ${index + 2}: Failed to parse performance history for ${filename}`);
@@ -1787,9 +1993,9 @@ function escapeHtml(text) {
 function extractCategoryFromPath(path) {
     // Extract category from folder structure
     // Examples:
-    // "historical_products/placemats/image1.jpg" -> "placemats"
-    // "placemats/image1.jpg" -> "placemats"
-    // "image1.jpg" -> null (no subfolder)
+    // "MainFolder/Placemats/image1.jpg" -> "Placemats" (subfolder = category)
+    // "MainFolder/image1.jpg" -> null (no subfolder = no category)
+    // "image1.jpg" -> null (no folder)
     
     if (!path) return null;
     
@@ -1797,6 +2003,10 @@ function extractCategoryFromPath(path) {
     
     // If only filename (no folders), return null
     if (parts.length === 1) return null;
+    
+    // If only one folder level (MainFolder/image.jpg), return null (no category)
+    // Categories should only come from subfolders INSIDE the main upload folder
+    if (parts.length === 2) return null;
     
     // Get the immediate parent folder (last folder before filename)
     const category = parts[parts.length - 2];
@@ -2135,7 +2345,15 @@ function generatePerformanceSparkline(performanceHistory) {
         return '';
     }
     
-    const sales = performanceHistory.map(p => p.sales).reverse(); // Oldest to newest
+    // performanceHistory is already an array of numbers (simple format)
+    // Filter out invalid values (NaN, null, undefined)
+    const validSales = performanceHistory.filter(s => typeof s === 'number' && !isNaN(s) && isFinite(s));
+    
+    if (validSales.length === 0) {
+        return ''; // No valid data to display
+    }
+    
+    const sales = [...validSales].reverse(); // Oldest to newest
     const max = Math.max(...sales);
     const min = Math.min(...sales);
     const range = max - min || 1;
@@ -2143,9 +2361,10 @@ function generatePerformanceSparkline(performanceHistory) {
     const width = 60;
     const height = 20;
     const points = sales.map((sale, i) => {
-        const x = (i / (sales.length - 1)) * width;
+        const x = sales.length > 1 ? (i / (sales.length - 1)) * width : width / 2;
         const y = height - ((sale - min) / range) * height;
-        return `${x},${y}`;
+        // Ensure no NaN values in output
+        return `${isFinite(x) ? x : 0},${isFinite(y) ? y : height / 2}`;
     }).join(' ');
     
     return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
@@ -2171,8 +2390,17 @@ function generatePerformanceChart(performanceHistory, containerId) {
         return '<p>No performance history available</p>';
     }
     
-    const sales = performanceHistory.map(p => p.sales).reverse(); // Oldest to newest
-    const dates = performanceHistory.map(p => p.date).reverse();
+    // CRITICAL: Filter out invalid values to prevent NaN errors
+    const validSales = performanceHistory.filter(s => typeof s === 'number' && !isNaN(s) && isFinite(s));
+    
+    if (validSales.length === 0) {
+        return '<p>No valid performance data available</p>';
+    }
+    
+    // performanceHistory is already an array of numbers (simple format)
+    const sales = [...validSales].reverse(); // Oldest to newest
+    // Generate simple month labels
+    const dates = sales.map((_, i) => `Month ${i + 1}`);
     const max = Math.max(...sales);
     const min = Math.min(...sales);
     const range = max - min || 1;
@@ -2185,9 +2413,15 @@ function generatePerformanceChart(performanceHistory, containerId) {
     
     // Generate points for the line
     const points = sales.map((sale, i) => {
-        const x = padding + (i / (sales.length - 1)) * chartWidth;
+        const x = sales.length > 1 ? padding + (i / (sales.length - 1)) * chartWidth : padding + chartWidth / 2;
         const y = padding + chartHeight - ((sale - min) / range) * chartHeight;
-        return { x, y, sale, date: dates[i] };
+        // Ensure no NaN values
+        return { 
+            x: isFinite(x) ? x : padding, 
+            y: isFinite(y) ? y : padding + chartHeight / 2, 
+            sale, 
+            date: dates[i] 
+        };
     });
     
     const linePoints = points.map(p => `${p.x},${p.y}`).join(' ');
@@ -2765,7 +2999,7 @@ function exportDuplicateReport() {
         }
     });
     
-    let csv = 'New Product,New Category,Matched Product,Matched Category,Similarity Score,Price Current,Price Trend,Total Sales,Total Revenue,Recommendation\n';
+    let csv = 'New Product,New Category,Matched Product,Matched Category,Similarity Score,Price Current,Price Trend,Total Sales,Avg Sales,Sales Trend,Recommendation\n';
     
     duplicates.forEach(dup => {
         csv += `"${dup.new_product}","${dup.new_category}","${dup.matched_product}","${dup.matched_category}",${dup.similarity_score},"${dup.price_current}","${dup.price_trend}","${dup.total_sales}","${dup.total_revenue}","${dup.recommendation}"\n`;
@@ -3143,84 +3377,164 @@ function updateFileLabel(input, labelId) {
 
 // Mode Toggle Functions
 function setMode(section, mode) {
-    const isAdvanced = mode === 'advanced';
+    console.log(`setMode called: section=${section}, mode=${mode}`);
+    
+    // Mode can be: 'visual', 'metadata', or 'hybrid'
+    const isMetadataMode = mode === 'metadata';
+    const isHybridMode = mode === 'hybrid';
+    const isVisualMode = mode === 'visual';
     
     if (section === 'historical') {
-        historicalAdvancedMode = isAdvanced;
+        // Update mode state (keep backward compatibility with 'advanced')
+        historicalAdvancedMode = isMetadataMode || isHybridMode;
+        historicalMode = mode; // Track current mode globally
+        
         const toggle = document.getElementById('historicalModeToggle');
         const csvBox = document.getElementById('historicalCsvBox');
+        const dropZone = document.getElementById('historicalDropZone');
         const processBtn = document.getElementById('processHistoricalBtn');
         
         // Update toggle buttons
         const buttons = toggle.querySelectorAll('.mode-option');
         buttons.forEach(btn => {
             btn.classList.remove('active');
-            if ((btn.textContent === 'SIMPLE' && !isAdvanced) || 
-                (btn.textContent === 'ADVANCED' && isAdvanced)) {
+            const btnText = btn.textContent.trim().toUpperCase();
+            if ((btnText === 'VISUAL' && isVisualMode) || 
+                (btnText === 'METADATA' && isMetadataMode) ||
+                (btnText === 'HYBRID' && isHybridMode)) {
                 btn.classList.add('active');
             }
         });
         
-        // Show/hide CSV box and reorder sections
-        csvBox.style.display = isAdvanced ? 'block' : 'none';
-        const uploadBox = document.querySelector('#historicalSection .upload-box');
-        if (isAdvanced) {
-            uploadBox.classList.add('advanced-mode-active');
-        } else {
-            uploadBox.classList.remove('advanced-mode-active');
-        }
+        // Show/hide UI elements based on mode
+        const catalogOptions = document.getElementById('catalogOptions');
+        const folderTip = document.querySelector('#historicalSection .folder-tip');
         
-        // Update process button
-        if (isAdvanced) {
-            // In advanced mode, require CSV (images optional)
+        if (isMetadataMode) {
+            // Metadata mode: CSV only, hide image upload and catalog management
+            csvBox.style.display = 'block';
+            dropZone.style.display = 'none';
+            if (catalogOptions) catalogOptions.style.display = 'none';
+            if (folderTip) folderTip.style.display = 'none';
+            // In metadata mode, default to "replace" since we're uploading new data
+            const replaceRadio = document.querySelector('input[name="catalogLoadOption"][value="replace"]');
+            if (replaceRadio) replaceRadio.checked = true;
             processBtn.disabled = !historicalCsv;
             if (!historicalCsv) {
-                showToast('Advanced mode requires CSV. Upload CSV or use CSV Builder.', 'info');
+                showToast('Metadata Mode: Upload CSV file (no images needed)', 'info');
+            }
+        } else if (isHybridMode) {
+            // Hybrid mode: Both CSV and images
+            csvBox.style.display = 'block';
+            dropZone.style.display = 'block';
+            if (catalogOptions) catalogOptions.style.display = 'block';
+            if (folderTip) folderTip.style.display = 'block';
+            processBtn.disabled = !historicalCsv;
+            if (!historicalCsv) {
+                showToast('Hybrid Mode: Upload CSV + images for combined matching', 'info');
             }
         } else {
-            // In simple mode, enable process if files are loaded
-            if (historicalFiles.length > 0) {
-                processBtn.disabled = false;
-            }
+            // Visual mode: Images only, hide CSV
+            csvBox.style.display = 'none';
+            dropZone.style.display = 'block';
+            if (catalogOptions) catalogOptions.style.display = 'block';
+            if (folderTip) folderTip.style.display = 'block';
+            processBtn.disabled = historicalFiles.length === 0;
         }
     } else if (section === 'new') {
-        newAdvancedMode = isAdvanced;
+        // Update mode state (keep backward compatibility with 'advanced')
+        newAdvancedMode = isMetadataMode || isHybridMode;
+        newMode = mode; // Track current mode globally
+        
         const toggle = document.getElementById('newModeToggle');
         const csvBox = document.getElementById('newCsvBox');
+        const dropZone = document.getElementById('newDropZone');
         const processBtn = document.getElementById('processNewBtn');
         
         // Update toggle buttons
         const buttons = toggle.querySelectorAll('.mode-option');
         buttons.forEach(btn => {
             btn.classList.remove('active');
-            if ((btn.textContent === 'SIMPLE' && !isAdvanced) || 
-                (btn.textContent === 'ADVANCED' && isAdvanced)) {
+            const btnText = btn.textContent.trim().toUpperCase();
+            if ((btnText === 'VISUAL' && isVisualMode) || 
+                (btnText === 'METADATA' && isMetadataMode) ||
+                (btnText === 'HYBRID' && isHybridMode)) {
                 btn.classList.add('active');
             }
         });
         
-        // Show/hide CSV box and reorder sections
-        csvBox.style.display = isAdvanced ? 'block' : 'none';
-        const uploadBox = document.querySelector('#newSection .upload-box');
-        if (isAdvanced) {
-            uploadBox.classList.add('advanced-mode-active');
-        } else {
-            uploadBox.classList.remove('advanced-mode-active');
-        }
+        // Show/hide UI elements based on mode
+        const newCatalogOptions = document.getElementById('newCatalogOptions');
+        const newFolderTip = document.querySelector('#newSection .folder-tip');
         
-        // Update process button
-        if (isAdvanced) {
-            // In advanced mode, require CSV (images optional)
+        if (isMetadataMode) {
+            // Metadata mode: CSV only, hide image upload and catalog management
+            csvBox.style.display = 'block';
+            dropZone.style.display = 'none';
+            if (newCatalogOptions) newCatalogOptions.style.display = 'none';
+            if (newFolderTip) newFolderTip.style.display = 'none';
+            // In metadata mode, default to "replace" since we're uploading new data
+            const replaceRadio = document.querySelector('input[name="newCatalogLoadOption"][value="replace"]');
+            if (replaceRadio) replaceRadio.checked = true;
             processBtn.disabled = !newCsv;
             if (!newCsv) {
-                showToast('Advanced mode requires CSV. Upload CSV or use CSV Builder.', 'info');
+                showToast('Metadata Mode: Upload CSV file (no images needed)', 'info');
+            }
+        } else if (isHybridMode) {
+            // Hybrid mode: Both CSV and images
+            csvBox.style.display = 'block';
+            dropZone.style.display = 'block';
+            if (newCatalogOptions) newCatalogOptions.style.display = 'block';
+            if (newFolderTip) newFolderTip.style.display = 'block';
+            processBtn.disabled = !newCsv;
+            if (!newCsv) {
+                showToast('Hybrid Mode: Upload CSV + images for combined matching', 'info');
             }
         } else {
-            // In simple mode, enable process if files are loaded
-            if (newFiles.length > 0) {
-                processBtn.disabled = false;
-            }
+            // Visual mode: Images only, hide CSV
+            csvBox.style.display = 'none';
+            dropZone.style.display = 'block';
+            if (newCatalogOptions) newCatalogOptions.style.display = 'block';
+            if (newFolderTip) newFolderTip.style.display = 'block';
+            processBtn.disabled = newFiles.length === 0;
         }
+    }
+    
+    // Sync mode to the other section (historical <-> new)
+    if (section === 'historical') {
+        // Also update new section to match
+        const newToggle = document.getElementById('newModeToggle');
+        if (newToggle) {
+            const newButtons = newToggle.querySelectorAll('.mode-option');
+            newButtons.forEach(btn => {
+                btn.classList.remove('active');
+                const btnText = btn.textContent.trim().toUpperCase();
+                if ((btnText === 'VISUAL' && isVisualMode) || 
+                    (btnText === 'METADATA' && isMetadataMode) ||
+                    (btnText === 'HYBRID' && isHybridMode)) {
+                    btn.classList.add('active');
+                }
+            });
+        }
+        // Update new section mode state
+        newAdvancedMode = isMetadataMode || isHybridMode;
+    } else if (section === 'new') {
+        // Also update historical section to match
+        const histToggle = document.getElementById('historicalModeToggle');
+        if (histToggle) {
+            const histButtons = histToggle.querySelectorAll('.mode-option');
+            histButtons.forEach(btn => {
+                btn.classList.remove('active');
+                const btnText = btn.textContent.trim().toUpperCase();
+                if ((btnText === 'VISUAL' && isVisualMode) || 
+                    (btnText === 'METADATA' && isMetadataMode) ||
+                    (btnText === 'HYBRID' && isHybridMode)) {
+                    btn.classList.add('active');
+                }
+            });
+        }
+        // Update historical section mode state
+        historicalAdvancedMode = isMetadataMode || isHybridMode;
     }
     
     // Save state to localStorage
@@ -3703,13 +4017,13 @@ function handleCatalogOptionChange(e) {
         }
         dropZone.style.opacity = '1';
         dropZone.style.pointerEvents = 'auto';
-        processBtn.disabled = historicalFiles.length === 0;
+        processBtn.disabled = historicalFiles.length === 0 && !historicalCsv;
         processBtn.textContent = 'REPLACE & PROCESS';
     } else {
         // Add to existing
         dropZone.style.opacity = '1';
         dropZone.style.pointerEvents = 'auto';
-        processBtn.disabled = historicalFiles.length === 0;
+        processBtn.disabled = historicalFiles.length === 0 && !historicalCsv;
         processBtn.textContent = 'ADD & PROCESS';
     }
 }
@@ -3892,7 +4206,7 @@ function handleNewCatalogOptionChange() {
         // Replacing - enable upload, show warning
         dropZone.style.opacity = '1';
         dropZone.style.pointerEvents = 'auto';
-        processBtn.disabled = newFiles.length === 0;
+        processBtn.disabled = newFiles.length === 0 && !newCsv;
         processBtn.textContent = 'PROCESS NEW PRODUCTS';
         
         // Show warning
@@ -3913,7 +4227,7 @@ function handleNewCatalogOptionChange() {
         // add_to_existing - enable upload
         dropZone.style.opacity = '1';
         dropZone.style.pointerEvents = 'auto';
-        processBtn.disabled = newFiles.length === 0;
+        processBtn.disabled = newFiles.length === 0 && !newCsv;
         processBtn.textContent = 'PROCESS NEW PRODUCTS';
     }
 }
