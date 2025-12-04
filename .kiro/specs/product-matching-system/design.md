@@ -598,6 +598,84 @@ interface ErrorResponse {
    - Automatic migration on application startup
    - Backup database before migrations
 
+## Auto-Update System
+
+### Update Check Architecture
+
+The application implements an auto-update mechanism that checks for new versions on launch and allows users to download and install updates seamlessly.
+
+**Components:**
+
+1. **Version Manager**
+   - Stores current application version
+   - Checks version manifest on GitHub releases or custom server
+   - Compares versions using semantic versioning
+   - Handles update notifications
+
+2. **Update Downloader**
+   - Downloads new executable from release URL
+   - Verifies download integrity using SHA256 checksums
+   - Manages download progress and error handling
+   - Implements retry logic for failed downloads
+
+3. **Update Installer**
+   - Backs up current executable before replacement
+   - Replaces old executable with new version
+   - Handles platform-specific installation (Windows .exe, macOS .app)
+   - Restarts application with new version
+
+**Update Flow:**
+
+```
+App Launch → Check Version Manifest → Compare Versions
+                                            ↓
+                                    New Version Available?
+                                            ↓
+                                    Show Update Dialog
+                                            ↓
+                            User Accepts → Download Update
+                                            ↓
+                                    Verify Checksum
+                                            ↓
+                                    Backup Old Version
+                                            ↓
+                                    Install New Version
+                                            ↓
+                                    Restart Application
+```
+
+**Version Manifest Format:**
+
+```json
+{
+  "version": "1.2.0",
+  "release_date": "2024-01-15",
+  "release_notes": "Bug fixes and performance improvements",
+  "downloads": {
+    "windows": {
+      "url": "https://github.com/user/repo/releases/download/v1.2.0/ProductMatcher-Windows.exe",
+      "checksum": "sha256:abc123..."
+    },
+    "macos_arm64": {
+      "url": "https://github.com/user/repo/releases/download/v1.2.0/ProductMatcher-macOS-ARM.zip",
+      "checksum": "sha256:def456..."
+    },
+    "macos_x86": {
+      "url": "https://github.com/user/repo/releases/download/v1.2.0/ProductMatcher-macOS-Intel.zip",
+      "checksum": "sha256:ghi789..."
+    }
+  }
+}
+```
+
+**Security Considerations:**
+
+- Use HTTPS for all update checks and downloads
+- Verify checksums before installation to prevent tampering
+- Backup old version for rollback capability
+- Request appropriate permissions for file replacement
+- Fail gracefully if update server is unreachable
+
 ## Future Enhancements
 
 1. **Performance Prediction Integration**
@@ -619,3 +697,9 @@ interface ErrorResponse {
    - Match accuracy tracking over time
    - Category-specific performance metrics
    - Export detailed reports
+
+5. **Auto-Update Enhancements**
+   - Background update downloads
+   - Delta updates (only changed files)
+   - Beta channel for early adopters
+   - Update history and changelog viewer

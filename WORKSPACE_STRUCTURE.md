@@ -13,17 +13,19 @@ image-match/
 │   │   ├── test_clip.py              # CLIP/GPU tests (33 tests)
 │   │   ├── test_gpu_support.py       # GPU platform tests (3 tests)
 │   │   ├── test_amd_gpu.py           # AMD-specific tests (7 tests)
-│   │   ├── test_clip_realworld.py    # Real-world scenario tests (12 tests)
 │   │   └── ...                       # Other feature tests
 │   ├── static/                # Frontend files (HTML/CSS/JS)
+│   ├── docs/                  # Backend technical documentation
 │   ├── uploads/               # Uploaded images
+│   ├── catalogs/              # Catalog database files
+│   ├── config/                # Configuration files
 │   ├── app.py                 # Flask application
 │   ├── database.py            # Database layer
 │   ├── image_processing.py    # Legacy feature extraction
 │   ├── image_processing_clip.py  # CLIP embeddings (GPU-accelerated)
 │   ├── product_matching.py    # Matching logic
 │   ├── similarity.py          # Similarity computation
-│   └── requirements.txt       # Backend dependencies
+│   └── validation_utils.py    # Input validation
 │
 ├── gpu/                        # GPU acceleration setup & tools
 │   ├── setup_gpu.py           # Automated GPU setup script
@@ -31,23 +33,33 @@ image-match/
 │   ├── benchmark_gpu.py       # Performance benchmark
 │   ├── verify_setup.py        # Complete verification suite
 │   ├── GPU_SETUP_GUIDE.md     # Comprehensive setup guide
-│   ├── GPU_STATUS.md          # Current GPU support status
-│   ├── requirements_gpu.txt   # GPU-specific dependencies
+│   ├── INTEL_GPU_SETUP.md     # Intel GPU specific guide
 │   └── README.md              # GPU folder overview
 │
 ├── docs/                       # GitHub Pages website
+│   ├── guides/                # User guides
+│   │   ├── SETUP_SIMPLE.md           # Simple setup guide
+│   │   └── START_SERVER.md           # Server startup guide
 │   ├── index.html             # Landing page
 │   ├── download.html          # Download page
 │   ├── pricing.html           # Pricing page
 │   ├── docs.html              # Documentation
 │   └── ...                    # Other website files
 │
-├── sample-data/               # Sample images for testing
+├── scripts/                    # Utility scripts
+│   ├── verify_dependencies.py # Dependency verification
+│   ├── download_clip_model.py # Pre-download CLIP model
+│   ├── reset_db.py            # Database reset utility
+│   └── README.md              # Scripts documentation
+│
+├── sample-data/               # Sample CSV files for testing
 │
 ├── main.py                    # Desktop application launcher
 ├── requirements.txt           # Main dependencies
 ├── pytest.ini                 # Pytest configuration
 ├── README.md                  # Main project README
+├── INSTALLATION.md            # Installation guide
+├── WORKSPACE_STRUCTURE.md     # This file
 └── ...                        # Other config files
 ```
 

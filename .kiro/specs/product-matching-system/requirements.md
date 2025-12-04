@@ -129,3 +129,16 @@ The Product Matching System enables businesses to compare new products against a
 2. WHEN displaying match results, THE Product Matching System SHALL use visual elements (thumbnail images, color-coded similarity scores) to make results easy to scan
 3. THE Product Matching System SHALL provide clear error messages in plain language when operations fail or invalid data is provided
 4. THE Product Matching System SHALL include tooltips and help text on key interface elements to guide users through common tasks
+
+### Requirement 11
+
+**User Story:** As a business owner, I want the application to automatically check for updates and notify me when new versions are available, so that I can keep the software up-to-date with bug fixes and new features
+
+#### Acceptance Criteria
+
+1. WHEN the Desktop Application launches, THE Product Matching System SHALL check for available updates without blocking the application startup
+2. WHEN a newer version is available, THE Product Matching System SHALL display a notification dialog with the version number and release notes
+3. THE Product Matching System SHALL allow users to download and install updates directly from the notification dialog
+4. THE Product Matching System SHALL verify the integrity of downloaded updates using cryptographic checksums before installation
+5. IF the update check fails or the update server is unreachable, THEN THE Product Matching System SHALL continue normal operation without displaying error messages
+6. THE Product Matching System SHALL allow users to skip a specific version or postpone the update to a later time

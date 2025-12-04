@@ -484,25 +484,20 @@
 
 
 
-- [ ] 25. Cross-platform GPU acceleration for CLIP (COMPLETED)
 
-  - **Status:** ✅ CLIP GPU acceleration fully implemented and working
-  - **Implemented Features:**
-    - **PyTorch GPU Auto-Detection:** Works across CUDA (NVIDIA), ROCm (AMD), and MPS (Apple Silicon)
-    - **AMD ROCm Support:** Detects AMD GPUs via `torch.cuda.is_available()` and distinguishes from NVIDIA
-    - **Device Detection:** `detect_device()` function with priority: CUDA/ROCm > MPS > CPU
-    - **Batch Processing:** Configurable batch size (default 32) for maximum GPU efficiency
-    - **Automatic Mixed Precision (AMP):** Faster GPU inference with `torch.amp.autocast()`
-    - **GPU Memory Management:** VRAM monitoring, periodic cache clearing, OOM prevention
-    - **Graceful CPU Fallback:** Automatic fallback if GPU unavailable or fails
-    - **Performance:** 10-50x speedup on GPU vs CPU (0.01-0.05s vs 0.5-1.0s per image)
-  - **Implementation Details:**
-    - File: `backend/image_processing_clip.py`
-    - Functions: `detect_device()`, `get_device_info()`, `extract_clip_embedding()`, `batch_extract_clip_embeddings()`
-    - GPU status displayed in UI: "⚡ AMD GPU Active (ROCm)" / "⚡ NVIDIA GPU Active (CUDA)" / "⚡ Apple Silicon Active (MPS)" / "💻 CPU Mode"
-    - Model caching: `~/.cache/clip-models/` (~350MB one-time download)
-    - Config file: `~/.cache/clip-models/config.json`
-  - _Note: This implementation is production-ready and works across all platforms_
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -565,18 +560,6 @@
   - SEO optimization for website
   - Social media presence (Twitter, LinkedIn)
 
-
-- [ ] 16. Write end-to-end tests (backend/tests/test_e2e.py)
-  - Create test fixtures: 5 historical images, 3 new images, valid/invalid CSVs
-  - Test complete workflow: upload historical → upload new → match → verify results
-  - Test CSV metadata handling: valid fields, missing fields, duplicates, invalid format
-  - Test category filtering: products match within same category, NULL category handling
-  - Test threshold/limit: verify filtering and result limiting work correctly
-  - Test error handling: corrupted images, missing features, invalid inputs, empty catalog
-  - Test API validation: invalid product_id, threshold, limit return proper 400 errors
-  - Test response formats: verify all endpoints return expected fields
-  - Run with `pytest backend/tests/test_e2e.py -v` - all tests must pass before packaging
-  - _Requirements: 1.1, 4.1, 6.1, 8.4, 10.3_
 
 
   - [ ] 16.5. Create application icons for cross-platform packaging
@@ -676,166 +659,284 @@
     - Document any manual steps required (should be none for macOS - everything auto-installs)
   - _Requirements: 9.2_
 
+- [ ] 40. Implement auto-update mechanism for packaged application
+  - **Goal:** Enable the app to check for updates on launch and automatically download/install new versions
+  - **Architecture:** Python + pywebview desktop app (no Electron)
+  
+  - **Update Check on Launch:**
+    - On app startup, check version manifest file on server/GitHub
+    - Compare current version (stored in app) with latest version
+    - If newer version available, prompt user to update
+    - Non-blocking: App continues to work if update check fails
+  
+  - **Version Manifest:**
+    - Host JSON file on GitHub releases or your server
+    - Format: `{"version": "1.2.0", "download_url": "https://...", "release_notes": "Bug fixes..."}`
+    - Include separate URLs for Windows/macOS/ARM/Intel builds
+  
+  - **Update Flow:**
+    - Show update dialog: "New version 1.2.0 available. Update now?"
+    - Download new executable in background
+    - Verify download integrity (checksum/hash)
+    - Replace old executable with new one
+    - Restart app with new version
+  
+  - **Implementation Options:**
+    - **Option 1: GitHub Releases** (Recommended)
+      - Upload executables to GitHub releases
+      - Use GitHub API to check latest release
+      - Download from GitHub release assets
+      - Free hosting, automatic versioning
+    - **Option 2: Custom Server**
+      - Host version.json and executables on your server
+      - More control but requires server maintenance
+  
+  - **Update Process:**
+    ```python
+    # Check for updates
+    def check_for_updates():
+        current_version = "1.0.0"  # From app config
+        response = requests.get("https://api.github.com/repos/user/repo/releases/latest")
+        latest_version = response.json()["tag_name"]
+        if latest_version > current_version:
+            return response.json()  # Download URL, release notes
+        return None
+    
+    # Download and install update
+    def download_update(download_url):
+        # Download new executable
+        # Verify checksum
+        # Replace current executable
+        # Restart app
+    ```
+  
+  - **UI Components:**
+    - Update notification dialog on launch
+    - Progress bar during download
+    - Release notes display
+    - "Skip this version" option
+    - "Remind me later" option
+    - Settings: Enable/disable auto-update checks
+  
+  - **Safety Features:**
+    - Backup old executable before replacing
+    - Verify download integrity (SHA256 checksum)
+    - Rollback if update fails
+    - Don't interrupt active matching operations
+    - Graceful fallback if update server unreachable
+  
+  - **Platform-Specific Considerations:**
+    - **Windows:** Replace .exe file, may require admin permissions
+    - **macOS:** Replace .app bundle, handle code signing
+    - **Permissions:** May need to request write permissions to app directory
+  
+  - **Testing:**
+    - Test update check with mock server
+    - Test download and install process
+    - Test rollback on failed update
+    - Test with different network conditions (slow, offline)
+    - Test version comparison logic (1.0.0 < 1.1.0 < 2.0.0)
+  
+  - **Future Enhancements:**
+    - Auto-download updates in background
+    - Delta updates (only download changed files)
+    - Beta channel for early adopters
+    - Update history and changelog viewer
+  
+  - _Requirements: New feature - improves Requirements 9.2, 9.4 - keeps app up-to-date with bug fixes and new features_
 
 
 
-- [ ] 31. Implement mobile photo upload with QR code pairing
 
-  - **Goal:** Enable users to upload product photos from their phone to the desktop app via QR code pairing
-  - **Use Case:** Client takes photos in warehouse/store, scans QR code on desktop, uploads directly to catalog
+- [ ] 31. Implement mobile photo upload with WiFi-based pairing
+
+  - **Goal:** Enable users to upload product photos from their phone to the desktop app via WiFi connection
+  - **Use Case:** Client takes photos in warehouse/store, connects to desktop via WiFi, uploads directly to catalog with same options as desktop upload (add to existing, replace catalog, use existing)
   
   - **Architecture:**
-    - Desktop app generates unique session token and displays QR code
-    - QR code contains URL: `http://{local_ip}:5000/mobile?session={token}`
-    - User scans QR with phone camera → Opens mobile upload page in browser
+    - Desktop app starts local server and displays connection URL
+    - User types URL into phone browser (e.g., `http://192.168.1.100:5000/mobile`)
     - Mobile page uploads photos to desktop app via REST API
-    - Desktop app receives photos and adds to selected snapshot
+    - Desktop app receives photos and processes them with same catalog options as desktop upload
     - No mobile app installation needed - works in any browser
-  
-  - **Backend Changes (app.py):**
-    - **New API Endpoints:**
-      - `POST /api/mobile/session/create` - Generate new mobile session
-        - Returns: session_token, qr_code_url, expires_at (30 min)
-        - Store active sessions in memory: `{token: {created_at, expires_at, is_used}}`
-      - `GET /api/mobile/session/{token}/validate` - Check if session is valid
-        - Returns: {valid: true/false, expired: true/false}
-      - `POST /api/mobile/upload` - Upload photos from mobile
-        - Requires: session_token, images (multiple files), snapshot_name, is_historical, category (optional)
-        - Validates session token before accepting upload
-        - Creates snapshot if doesn't exist or adds to existing
-        - Returns: {success: true, products_added: 5, snapshot_name: "..."}
-      - `POST /api/mobile/session/{token}/close` - Invalidate session token
-      - `GET /api/mobile/session/active` - Get active session info for desktop UI
-    - **Session Management:**
-      - Sessions expire after 30 minutes
-      - One-time use option: Session invalidated after first upload
-      - Reusable option: Session stays active until manually closed or expired
-      - Cleanup expired sessions every 5 minutes (background task)
-  
-  - **QR Code Generation:**
-    - Use Python library: `qrcode` (add to requirements.txt)
-    - Generate QR code as base64 image for display in UI
-    - QR code contains: `http://{local_ip}:5000/mobile?session={token}`
-    - Auto-detect local IP address (prefer 192.168.x.x or 10.x.x.x)
-    - Handle multiple network interfaces (show all available IPs)
-  
-  - **Desktop UI Changes (index.html or new mobile-pairing.html):**
-    - **Mobile Upload Button:**
-      - Add button in main app: "Upload from Phone"
-      - Opens modal with QR code and instructions
-    -and 
-      
-    - **Upload Notifications:**
-      - Show toast when photos uploaded from mobile
-      - "5 photos added to 'Summer 2024 Plates' from mobile"
-      - Update catalog stats in real-time
-  
-  - **Mobile Upload Page (new file: static/mobile-upload.html):**
-    - **Mobile-Optimized UI:**
-      - brutalist design simliar to our app
+    - No QR code scanning - simple URL entry
 
-
-    - **Features:**
-      - Multiple photo selection from gallery
-      - Take photo with camera (use `<input type="file" accept="image/*" capture="camera">`)
-      - Preview selected photos before upload
-      - Remove photos from selection
-      - Progress bar during upload
-      - Success/error messages
-      - Auto-generated snapshot name: "Mobile Upload - {date} {time}"
-      - Option to select existing snapshot from dropdown
-      - Category dropdown (loads from desktop app)
-    - **Session Validation:**
-      - On page load, validate session token
-      - If invalid/expired: Show error "Session expired. Please scan QR code again."
-      - If valid: Show "Connected to Desktop ✓"
-      - Poll session status every 30 seconds
-  
-  - **Network Discovery:**
-    - **Auto-detect local IP:**
-      ```python
-      import socket
-      def get_local_ip():
-          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          s.connect(("8.8.8.8", 80))
-          ip = s.getsockname()[0]
-          s.close()
-          return ip
-      ```
-    - **Handle multiple IPs:**
-      - If multiple network interfaces, show all in modal
-      - User can select which IP to use for QR code
-      - Prefer 192.168.x.x (home WiFi) over 10.x.x.x (VPN)
-    - **Firewall Warning:**
-      - If connection fails, show troubleshooting tips
-      - "Make sure phone and computer are on same WiFi network"
-      - "Check firewall settings if connection fails"
-  
+- [ ] 31.1. Backend API for mobile session management
+  - **New API Endpoints:**
+    - `POST /api/mobile/session/create` - Generate new mobile session
+      - Returns: session_token, connection_url, local_ip, expires_at (30 min)
+      - Store active sessions in memory: `{token: {created_at, expires_at, catalog_mode, catalog_name}}`
+    - `GET /api/mobile/session/{token}/validate` - Check if session is valid
+      - Returns: {valid: true/false, expired: true/false, catalog_mode, catalog_name}
+    - `POST /api/mobile/session/{token}/close` - Invalidate session token
+    - `GET /api/mobile/session/active` - Get active session info for desktop UI
+  - **Session Management:**
+    - Sessions expire after 30 minutes
+    - Reusable: Session stays active until manually closed or expired
+    - Cleanup expired sessions every 5 minutes (background task)
+    - Store catalog mode with session (add_to_existing, replace_catalog, use_existing)
   - **Security:**
-    - **Session Tokens:**
-      - Generate cryptographically secure random tokens (32 characters)
-      - Use `secrets.token_urlsafe(32)` in Python
-      - Store tokens in memory only (not in database)
-      - Expire after 30 minutes
-    - **CORS:**
-      - Allow mobile uploads from any origin (already enabled with CORS)
-      - Validate session token on every request
-    - **Rate Limiting:**
-      - Limit uploads per session (e.g., max 100 photos per session)
-      - Prevent abuse with rate limiting (max 10 uploads per minute)
-    - **HTTPS (Optional):**
-      - For production, consider self-signed certificate for HTTPS
-      - Prevents man-in-the-middle attacks on local network
-      - Not critical for local network use
-  
-  - **Snapshot Integration:**
-    - Mobile uploads automatically create snapshots
-    - Default name: "Mobile Upload - {date} {time}"
-    - User can rename later in Catalog Manager
-    - Snapshot type (historical/new) selected on mobile page
-    - Snapshot appears in Catalog Manager immediately after upload
-    - Auto-selected in active catalogs by default
-  
+    - Generate cryptographically secure random tokens (32 characters)
+    - Use `secrets.token_urlsafe(32)` in Python
+    - Store tokens in memory only (not in database)
+    - Validate session token on every request
+  - _Requirements: New feature - improves Requirements 1.1, 6.1_
+
+- [ ] 31.2. Backend API for mobile photo upload with catalog handling
+  - **New API Endpoint:**
+    - `POST /api/mobile/upload` - Upload photos from mobile
+      - Requires: session_token, images (multiple files), category (optional), csv_data (optional)
+      - Validates session token before accepting upload
+      - Uses catalog mode from session (add_to_existing, replace_catalog, use_existing)
+      - Processes photos same as desktop upload flow
+      - Returns: {success: true, products_added: 5, catalog_mode: "add_to_existing"}
+  - **Catalog Mode Handling:**
+    - **use_existing:** Reject upload with error "Cannot upload in 'use existing' mode"
+    - **add_to_existing:** Add photos to existing catalog (same as desktop)
+    - **replace_catalog:** Clear catalog first, then add photos (same as desktop)
   - **Multiple Photo Support:**
     - Accept multiple files in single upload request
     - Process photos in batch (extract features for all)
     - Show progress: "Processing 3/5 photos..."
     - If some photos fail (corrupted, wrong format), show partial success
     - "3 photos uploaded successfully, 2 failed (invalid format)"
-  
-  - **Metadata Support:**
-    - Category: Dropdown of existing categories (loaded from desktop)
-    - SKU: Optional text field (not recommended on mobile - tedious)
-    - Product name: Optional text field (not recommended on mobile)
-    - Keep mobile UI simple - add detailed metadata later on desktop
-  
+  - **CSV Support:**
+    - Accept optional CSV data with photo metadata
+    - Parse CSV same as desktop upload
+    - Match photos to CSV rows by filename
   - **Error Handling:**
-    - Invalid session token: "Session expired. Please scan QR code again."
-    - Network error: "Connection lost. Check WiFi and try again."
-    - Upload failed: "Upload failed. Check file format and try again."
-    - File too large: "Photo too large (max 10 MB per photo)"
-    - Invalid format: "Invalid format. Use JPEG, PNG, or WebP."
-    - Show clear error messages with retry button
-  
-  - **Testing:**
-    - Test QR code generation and scanning
+    - Invalid session token: Return 401 with clear message
+    - Network error: Return 500 with retry suggestion
+    - Upload failed: Return 400 with specific error
+    - File too large: Return 413 "Photo too large (max 10 MB per photo)"
+    - Invalid format: Return 400 "Invalid format. Use JPEG, PNG, or WebP."
+  - **Rate Limiting:**
+    - Limit uploads per session (max 100 photos per session)
+    - Prevent abuse with rate limiting (max 10 uploads per minute)
+  - _Requirements: New feature - improves Requirements 1.1, 6.1, 9.1_
+
+- [ ] 31.3. Desktop UI for mobile connection setup
+  - **Mobile Upload Button:**
+    - Add button in main app: "Upload from Phone" (in Step 1 or Step 2)
+    - Opens modal with connection instructions
+  - **Connection Modal:**
+    - Display connection URL prominently: `http://192.168.1.100:5000/mobile`
+    - Show local IP address (auto-detected)
+    - Instructions: "1. Connect phone to same WiFi network | 2. Open browser on phone | 3. Type URL: http://192.168.1.100:5000/mobile"
+    - Copy URL button (copies to clipboard)
+    - Show active session status: "Session active - expires in 25 minutes"
+    - Close session button
+  - **Catalog Mode Selection:**
+    - Radio buttons in modal (same as desktop upload):
+      - ○ Use existing catalog (X products) - Disable mobile upload in this mode
+      - ○ Add to existing catalog - Upload adds to current catalog
+      - ○ Replace catalog - Upload clears catalog first
+    - Default to "Add to existing" if catalog exists
+    - Show warning before replacing: "Mobile uploads will replace X products. Continue?"
+  - **Upload Notifications:**
+    - Show toast when photos uploaded from mobile
+    - "5 photos added to catalog from mobile"
+    - Update catalog stats in real-time
+    - Show progress during upload: "Uploading 3/5 photos..."
+  - **Network Discovery:**
+    - Auto-detect local IP address (prefer 192.168.x.x or 10.x.x.x)
+    - Handle multiple network interfaces (show all available IPs)
+    - Firewall warning: "Make sure phone and computer are on same WiFi network"
+  - _Requirements: New feature - improves Requirements 9.1, 9.4_
+
+- [ ] 31.4. Mobile upload page UI
+  - **New File:** `static/mobile-upload.html`
+  - **Mobile-Optimized UI:**
+    - Brutalist design similar to main app
+    - Large touch-friendly buttons
+    - Responsive layout for all phone sizes
+    - Works in portrait and landscape
+  - **Connection Flow:**
+    - On page load, extract session token from URL
+    - Validate session token via API
+    - If invalid/expired: Show error "Session expired. Get new URL from desktop."
+    - If valid: Show "Connected to Desktop ✓" with catalog mode
+  - **Upload Interface:**
+    - Multiple photo selection from gallery
+    - Take photo with camera (use `<input type="file" accept="image/*" capture="camera" multiple>`)
+    - Preview selected photos before upload (thumbnails)
+    - Remove photos from selection (X button on each thumbnail)
+    - Category dropdown (loads from desktop app)
+    - Optional CSV upload for metadata
+  - **Upload Process:**
+    - Progress bar during upload
+    - Show count: "Uploading 3/5 photos..."
+    - Success message: "5 photos uploaded successfully"
+    - Partial success: "3 photos uploaded, 2 failed (invalid format)"
+    - Clear error messages with retry button
+  - **Catalog Mode Display:**
+    - Show current mode at top: "Mode: Add to existing catalog (1,247 products)"
+    - Or: "Mode: Replace catalog (will clear 1,247 products)"
+    - Disable upload if mode is "use_existing"
+  - **Session Status:**
+    - Poll session status every 30 seconds
+    - Show expiration countdown: "Session expires in 15 minutes"
+    - Auto-refresh if session expires (show error)
+  - _Requirements: New feature - improves Requirements 1.1, 9.1, 9.3_
+
+- [ ] 31.5. Network discovery and connection helpers
+  - **Auto-detect Local IP:**
+    ```python
+    import socket
+    def get_local_ip():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    ```
+  - **Handle Multiple IPs:**
+    - If multiple network interfaces, show all in modal
+    - User can select which IP to use
+    - Prefer 192.168.x.x (home WiFi) over 10.x.x.x (VPN)
+  - **Connection Troubleshooting:**
+    - If connection fails, show troubleshooting tips
+    - "Make sure phone and computer are on same WiFi network"
+    - "Check firewall settings if connection fails"
+    - "Try disabling VPN if connected"
+  - **CORS Configuration:**
+    - Ensure CORS allows mobile uploads from any origin
+    - Already enabled in app.py, verify it works
+  - _Requirements: New feature - improves Requirements 9.4_
+
+- [ ] 31.6. Testing and validation
+  - **Session Management:**
     - Test session creation and expiration
+    - Test session validation (valid, expired, invalid token)
+    - Test session cleanup (expired sessions removed)
+  - **Mobile Upload:**
     - Test mobile upload with single photo
     - Test mobile upload with multiple photos (5, 10, 20)
-    - Test session validation (valid, expired, invalid token)
-    - Test network discovery (multiple IPs, WiFi vs Ethernet)
-    - Test on different phones (iOS Safari, Android Chrome)
     - Test with different image formats (JPEG, PNG, HEIC)
     - Test with large images (10+ MB)
-    - Test snapshot creation from mobile uploads
-    - Test category dropdown loading
     - Test connection loss during upload (retry logic)
-  
-  - **Dependencies:**
-    - Add to requirements.txt:
-      - `qrcode[pil]` - QR code generation
-      - `pillow` - Image processing (already included)
-  
+  - **Catalog Mode Integration:**
+    - Test "add_to_existing" mode: Photos added to existing catalog
+    - Test "replace_catalog" mode: Catalog cleared, then photos added
+    - Test "use_existing" mode: Upload disabled on mobile
+    - Verify catalog stats update in real-time on desktop
+  - **Network Testing:**
+    - Test network discovery (multiple IPs, WiFi vs Ethernet)
+    - Test on different phones (iOS Safari, Android Chrome)
+    - Test on different WiFi networks
+    - Test with firewall enabled/disabled
+  - **CSV Support:**
+    - Test CSV upload from mobile
+    - Test CSV parsing and metadata linking
+    - Test with missing/corrupted CSV data
+  - **Error Handling:**
+    - Test invalid session token
+    - Test expired session
+    - Test network errors
+    - Test file format errors
+    - Test file size errors
+  - _Requirements: New feature - improves Requirements 10.3, 10.4_
+
   - **Future Enhancements (Optional):**
     - Push notifications to desktop when photos uploaded
     - Live preview of uploaded photos on desktop
