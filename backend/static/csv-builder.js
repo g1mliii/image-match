@@ -18,6 +18,9 @@ const state = {
 let catalogPollingInterval = null;
 let catalogChannel = null;
 
+// Track event listeners for cleanup
+const eventListeners = [];
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initializeStep1();
@@ -40,15 +43,35 @@ function initCatalogChangeListener() {
     }
     
     // Also check on visibility change (when user switches back to this tab)
-    document.addEventListener('visibilitychange', () => {
+    const visibilityChangeHandler = () => {
         if (!document.hidden) {
+            // Page is visible again
             checkCatalogChanges();
+            
+            // Restart polling if it was stopped
+            if (!catalogChannel && !catalogPollingInterval) {
+                catalogPollingInterval = setInterval(checkCatalogChanges, 2000);
+            }
+        } else {
+            // Page is hidden, pause polling to save resources
+            if (catalogPollingInterval && !catalogChannel) {
+                clearInterval(catalogPollingInterval);
+                catalogPollingInterval = null;
+            }
         }
-    });
+    };
+    
+    document.addEventListener('visibilitychange', visibilityChangeHandler);
+    eventListeners.push({ element: document, event: 'visibilitychange', handler: visibilityChangeHandler });
 }
 
 // Cleanup on window unload (Fix #11, #12)
 window.addEventListener('beforeunload', () => {
+    cleanupResources();
+});
+
+// Centralized cleanup function
+function cleanupResources() {
     // Clear polling interval
     if (catalogPollingInterval) {
         clearInterval(catalogPollingInterval);
@@ -64,7 +87,32 @@ window.addEventListener('beforeunload', () => {
             console.warn('Failed to close BroadcastChannel:', e);
         }
     }
-});
+    
+    // Clear auto-save timer
+    if (state.autoSaveTimer) {
+        clearTimeout(state.autoSaveTimer);
+        state.autoSaveTimer = null;
+    }
+    
+    // Remove event listeners
+    eventListeners.forEach(({ element, event, handler }) => {
+        if (element && element.removeEventListener) {
+            element.removeEventListener(event, handler);
+        }
+    });
+    eventListeners.length = 0;
+    
+    // Clean up global window properties
+    if (window.savedWorkData) {
+        window.savedWorkData = null;
+    }
+    
+    // Remove any lingering modals
+    const modal = document.getElementById('loadSavedWorkModal');
+    if (modal) {
+        modal.remove();
+    }
+}
 
 // Check for catalog changes via sessionStorage
 function checkCatalogChanges() {
@@ -116,46 +164,61 @@ function initializeStep1() {
     const browseBtn = document.getElementById('imageBrowseBtn');
     const nextBtn = document.getElementById('nextToLink');
 
-    browseBtn.addEventListener('click', (e) => {
+    // Helper to track event listeners
+    const addTrackedListener = (element, event, handler) => {
+        if (element) {
+            element.addEventListener(event, handler);
+            eventListeners.push({ element, event, handler });
+        }
+    };
+
+    const browseBtnHandler = (e) => {
         e.stopPropagation();
         input.click();
-    });
+    };
+    addTrackedListener(browseBtn, 'click', browseBtnHandler);
 
-    dropZone.addEventListener('click', () => input.click());
+    const dropZoneClickHandler = () => input.click();
+    addTrackedListener(dropZone, 'click', dropZoneClickHandler);
 
-    dropZone.addEventListener('dragover', (e) => {
+    const dragoverHandler = (e) => {
         e.preventDefault();
         dropZone.classList.add('drag-over');
-    });
+    };
+    addTrackedListener(dropZone, 'dragover', dragoverHandler);
 
-    dropZone.addEventListener('dragleave', () => {
+    const dragleaveHandler = () => {
         dropZone.classList.remove('drag-over');
-    });
+    };
+    addTrackedListener(dropZone, 'dragleave', dragleaveHandler);
 
-    dropZone.addEventListener('drop', (e) => {
+    const dropHandler = (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
         handleImageFiles(Array.from(e.dataTransfer.files));
-    });
+    };
+    addTrackedListener(dropZone, 'drop', dropHandler);
 
-    input.addEventListener('change', (e) => {
+    const inputChangeHandler = (e) => {
         handleImageFiles(Array.from(e.target.files));
-    });
+    };
+    addTrackedListener(input, 'change', inputChangeHandler);
 
-    nextBtn.addEventListener('click', () => {
+    const nextBtnHandler = () => {
         goToStep(2);
-    });
+    };
+    addTrackedListener(nextBtn, 'click', nextBtnHandler);
     
     // Initialize import file input
     const importInput = document.getElementById('importFileInput');
     if (importInput) {
-        importInput.addEventListener('change', handleImportFile);
+        addTrackedListener(importInput, 'change', handleImportFile);
     }
     
     // Initialize import completed input
     const importCompletedInput = document.getElementById('importCompletedInput');
     if (importCompletedInput) {
-        importCompletedInput.addEventListener('change', handleImportCompletedFile);
+        addTrackedListener(importCompletedInput, 'change', handleImportCompletedFile);
     }
 }
 
@@ -529,13 +592,20 @@ function exportTemplate() {
     // Download
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `product-template_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
     
-    showToast('Template exported! Fill it in Excel and re-import.', 'success');
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `product-template_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        showToast('Template exported! Fill it in Excel and re-import.', 'success');
+    } catch (error) {
+        console.error('Export failed:', error);
+        showToast('Export failed', 'error');
+    } finally {
+        // Always revoke the URL to prevent memory leak
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
 }
 
 function importCompletedTemplate() {
@@ -1187,16 +1257,27 @@ function parsePriceHistory(historyStr) {
 
 function parsePerformanceHistory(historyStr) {
     if (!historyStr) return [];
-    return historyStr.split(';').map(entry => {
-        const [date, sales, views, conversion_rate, revenue] = entry.split(':');
-        return {
-            date,
-            sales: parseInt(sales) || 0,
-            views: parseInt(views) || 0,
-            conversion_rate: parseFloat(conversion_rate) || 0,
-            revenue: parseFloat(revenue) || 0
-        };
-    }).filter(e => e.date);
+    
+    // Parse simplified format (JSON array of sales numbers)
+    try {
+        const parsed = JSON.parse(historyStr);
+        if (Array.isArray(parsed)) {
+            // Convert simple numbers to internal format with auto-generated dates
+            const today = new Date();
+            return parsed.map((sales, i) => {
+                const date = new Date(today);
+                date.setMonth(date.getMonth() - (parsed.length - 1 - i));
+                return {
+                    date: date.toISOString().split('T')[0],
+                    sales: parseInt(sales) || 0
+                };
+            });
+        }
+    } catch (e) {
+        console.error('Failed to parse performance_history:', e);
+    }
+    
+    return [];
 }
 
 function backToLinkingStrategy() {
@@ -1483,7 +1564,7 @@ function importPriceFromClipboard() {
 }
 
 
-// Performance History Functions
+// Performance History Functions (Simplified - Sales Only)
 function renderPerformanceHistory() {
     const product = state.products[state.selectedProductIndex];
     const container = document.getElementById('performanceEntries');
@@ -1497,24 +1578,8 @@ function renderPerformanceHistory() {
         <div class="history-entry">
             <div class="history-entry-fields">
                 <div class="field-group">
-                    <label>Date</label>
-                    <input type="date" value="${entry.date}" onchange="updatePerformanceEntry(${i}, 'date', this.value)">
-                </div>
-                <div class="field-group">
-                    <label>Sales</label>
-                    <input type="number" value="${entry.sales}" onchange="updatePerformanceEntry(${i}, 'sales', this.value)" min="0">
-                </div>
-                <div class="field-group">
-                    <label>Views</label>
-                    <input type="number" value="${entry.views}" onchange="updatePerformanceEntry(${i}, 'views', this.value)" min="0">
-                </div>
-                <div class="field-group">
-                    <label>Conversion %</label>
-                    <input type="number" value="${entry.conversion_rate}" onchange="updatePerformanceEntry(${i}, 'conversion_rate', this.value)" step="0.1" min="0" max="100">
-                </div>
-                <div class="field-group">
-                    <label>Revenue</label>
-                    <input type="number" value="${entry.revenue}" onchange="updatePerformanceEntry(${i}, 'revenue', this.value)" step="0.01" min="0">
+                    <label>Month ${i + 1} (${entry.date})</label>
+                    <input type="number" value="${entry.sales}" onchange="updatePerformanceEntry(${i}, 'sales', this.value)" min="0" placeholder="Sales count">
                 </div>
             </div>
             <div class="history-entry-actions">
@@ -1526,18 +1591,18 @@ function renderPerformanceHistory() {
 
 function addPerformanceEntry() {
     const product = state.products[state.selectedProductIndex];
-    const today = new Date().toISOString().split('T')[0];
     
     if (!product.performanceHistory) {
         product.performanceHistory = [];
     }
 
+    // Auto-generate date going backwards monthly
+    const today = new Date();
+    today.setMonth(today.getMonth() - product.performanceHistory.length);
+    
     product.performanceHistory.push({
-        date: today,
-        sales: 0,
-        views: 0,
-        conversion_rate: 0,
-        revenue: 0
+        date: today.toISOString().split('T')[0],
+        sales: 0
     });
 
     renderPerformanceHistory();
@@ -1547,17 +1612,7 @@ function addPerformanceEntry() {
 
 function updatePerformanceEntry(index, field, value) {
     const product = state.products[state.selectedProductIndex];
-    product.performanceHistory[index][field] = parseFloat(value) || 0;
-    
-    // Auto-calculate conversion rate if sales and views are provided
-    if (field === 'sales' || field === 'views') {
-        const entry = product.performanceHistory[index];
-        if (entry.views > 0) {
-            entry.conversion_rate = ((entry.sales / entry.views) * 100).toFixed(2);
-        }
-    }
-    
-    renderPerformanceHistory();
+    product.performanceHistory[index].sales = parseInt(value) || 0;
     saveState();
 }
 
@@ -1586,28 +1641,20 @@ function importPerformanceFromClipboard() {
         
         product.performanceHistory = [];
         
-        lines.forEach(line => {
+        lines.forEach((line, index) => {
             const parts = line.split(/[\t,;]/).map(s => s.trim());
             
-            if (parts.length >= 5) {
-                // Format: date, sales, views, conversion, revenue
-                product.performanceHistory.push({
-                    date: parts[0],
-                    sales: parseInt(parts[1]) || 0,
-                    views: parseInt(parts[2]) || 0,
-                    conversion_rate: parseFloat(parts[3]) || 0,
-                    revenue: parseFloat(parts[4]) || 0
-                });
-            } else if (parts.length >= 4) {
-                // Format without date: sales, views, conversion, revenue
+            // Parse just sales numbers (simplified format)
+            const sales = parseInt(parts[0]) || 0;
+            
+            if (sales > 0 || parts[0] === '0') {
+                // Auto-generate monthly dates going backwards
                 const today = new Date();
-                today.setMonth(today.getMonth() - product.performanceHistory.length);
+                today.setMonth(today.getMonth() - index);
+                
                 product.performanceHistory.push({
                     date: today.toISOString().split('T')[0],
-                    sales: parseInt(parts[0]) || 0,
-                    views: parseInt(parts[1]) || 0,
-                    conversion_rate: parseFloat(parts[2]) || 0,
-                    revenue: parseFloat(parts[3]) || 0
+                    sales: sales
                 });
             }
         });
@@ -1700,22 +1747,30 @@ function formatPriceHistory(priceHistory) {
 function formatPerformanceHistory(performanceHistory) {
     if (!performanceHistory || performanceHistory.length === 0) return '';
     
-    return performanceHistory
-        .map(entry => `${entry.date}:${entry.sales}:${entry.views}:${entry.conversion_rate}:${entry.revenue}`)
-        .join(';');
+    // Simplified format: JSON array of sales numbers only
+    // Backend auto-generates dates (monthly intervals) and sets views/conversion/revenue to 0
+    const salesNumbers = performanceHistory.map(entry => entry.sales || 0);
+    return JSON.stringify(salesNumbers);
 }
 
 function downloadCSV() {
     const csv = generateCSV();
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `products_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
     
-    showToast('CSV downloaded successfully!', 'success');
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `products_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        showToast('CSV downloaded successfully!', 'success');
+    } catch (error) {
+        console.error('Download failed:', error);
+        showToast('Download failed', 'error');
+    } finally {
+        // Always revoke the URL to prevent memory leak
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
 }
 
 function copyToClipboard() {
@@ -1782,12 +1837,24 @@ function goToStep(step) {
 
 // Undo/Redo functionality
 function saveStateForUndo() {
-    state.undoStack.push(JSON.stringify(state.products));
-    state.redoStack = []; // Clear redo stack on new action
-    
-    // Limit undo stack size
-    if (state.undoStack.length > 50) {
-        state.undoStack.shift();
+    try {
+        const stateString = JSON.stringify(state.products);
+        
+        // Check size before adding to undo stack
+        if (stateString.length > 1024 * 1024) { // 1MB limit per undo state
+            console.warn('State too large for undo, skipping');
+            return;
+        }
+        
+        state.undoStack.push(stateString);
+        state.redoStack = []; // Clear redo stack on new action
+        
+        // Limit undo stack size to prevent memory bloat
+        if (state.undoStack.length > 20) {
+            state.undoStack.shift();
+        }
+    } catch (e) {
+        console.error('Failed to save undo state:', e);
     }
 }
 
@@ -1851,13 +1918,50 @@ function loadDraft() {
     }
 }
 
-// Auto-save to localStorage
+// Auto-save to localStorage with size limit
 function saveState() {
-    localStorage.setItem('csvBuilderState', JSON.stringify({
-        products: state.products,
-        currentStep: state.currentStep,
-        timestamp: new Date().toISOString()
-    }));
+    try {
+        const stateData = {
+            products: state.products,
+            currentStep: state.currentStep,
+            timestamp: new Date().toISOString()
+        };
+        
+        const stateString = JSON.stringify(stateData);
+        
+        // Check size (5MB limit to prevent localStorage overflow)
+        if (stateString.length > 5 * 1024 * 1024) {
+            console.warn('State too large to save, truncating history data');
+            // Save without history data if too large
+            const truncatedState = {
+                products: state.products.map(p => ({
+                    filename: p.filename,
+                    category: p.category,
+                    sku: p.sku,
+                    name: p.name,
+                    price: p.price,
+                    priceHistory: [],
+                    performanceHistory: []
+                })),
+                currentStep: state.currentStep,
+                timestamp: new Date().toISOString()
+            };
+            localStorage.setItem('csvBuilderState', JSON.stringify(truncatedState));
+        } else {
+            localStorage.setItem('csvBuilderState', stateString);
+        }
+    } catch (e) {
+        console.error('Failed to save state:', e);
+        // If localStorage is full, try to clear old data
+        if (e.name === 'QuotaExceededError') {
+            try {
+                localStorage.removeItem('csvBuilderState');
+                console.warn('Cleared old state due to quota exceeded');
+            } catch (clearError) {
+                console.error('Failed to clear state:', clearError);
+            }
+        }
+    }
 }
 
 function loadFromLocalStorage() {
@@ -1881,11 +1985,13 @@ function loadFromLocalStorage() {
 function scheduleAutoSave() {
     if (state.autoSaveTimer) {
         clearTimeout(state.autoSaveTimer);
+        state.autoSaveTimer = null;
     }
     
     state.autoSaveTimer = setTimeout(() => {
         saveState();
         showAutoSaveIndicator();
+        state.autoSaveTimer = null;
     }, 2000);
 }
 
@@ -1915,7 +2021,7 @@ function escapeHtml(text) {
 }
 
 // Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
+const keyboardShortcutHandler = (e) => {
     // Ctrl/Cmd + Z for undo
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -1933,13 +2039,18 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         saveDraft();
     }
-});
+};
 
-// Handle page unload
+document.addEventListener('keydown', keyboardShortcutHandler);
+eventListeners.push({ element: document, event: 'keydown', handler: keyboardShortcutHandler });
+
+// Handle page unload - save state and cleanup
 window.addEventListener('beforeunload', (e) => {
     if (state.products.length > 0) {
         saveState();
     }
+    
+    // Note: cleanupResources() is already called by the other beforeunload listener above
 });
 
 
@@ -2139,20 +2250,34 @@ function loadSavedWork() {
         }
     }
     
-    // Close modal
+    // Close modal and clean up
     const modal = document.getElementById('loadSavedWorkModal');
-    if (modal) modal.remove();
-    window.savedWorkData = null;
+    if (modal) {
+        modal.remove();
+    }
+    
+    // Clean up global reference
+    if (window.savedWorkData) {
+        window.savedWorkData = null;
+        delete window.savedWorkData;
+    }
 }
 
 function dismissSavedWork() {
     // Clear saved state
     localStorage.removeItem('csvBuilderState');
     
-    // Close modal
+    // Close modal and clean up
     const modal = document.getElementById('loadSavedWorkModal');
-    if (modal) modal.remove();
-    window.savedWorkData = null;
+    if (modal) {
+        modal.remove();
+    }
+    
+    // Clean up global reference
+    if (window.savedWorkData) {
+        window.savedWorkData = null;
+        delete window.savedWorkData;
+    }
     
     showToast('Starting fresh', 'success');
 }

@@ -213,6 +213,11 @@ document.addEventListener('DOMContentLoaded', () => {
     initCatalogOptions();
 });
 
+// Cleanup on page unload - CRITICAL FIX
+window.addEventListener('beforeunload', () => {
+    cleanupMemory();
+});
+
 // Historical Catalog Upload
 function initHistoricalUpload() {
     const dropZone = document.getElementById('historicalDropZone');
@@ -1362,7 +1367,7 @@ function displayResults(resetPage = true) {
                                     ${match.performanceStatistics ? `
                                         <div class="performance-sparkline" title="Sales trend: ${match.performanceStatistics.sales_trend}">
                                             ${generatePerformanceSparkline(match.performanceHistory)}
-                                            <span class="performance-sales">📊 ${match.performanceStatistics.total_sales} sales</span>
+                                            <span class="performance-sales" style="font-weight: bold;">${match.performanceStatistics.total_sales} SALES</span>
                                             <span class="performance-trend performance-trend-${match.performanceStatistics.sales_trend}">${getTrendIcon(match.performanceStatistics.sales_trend)}</span>
                                         </div>
                                     ` : ''}
@@ -1503,7 +1508,7 @@ async function showDetailedComparison(newProductId, matchedProductId) {
             ` : ''}
             ${matchDetails?.priceStatistics ? `
                 <div class="price-history-section">
-                    <h4>💰 Price History</h4>
+                    <h4>PRICE HISTORY</h4>
                     <div class="price-statistics">
                         <div class="price-stat">
                             <span class="price-stat-label">Current</span>
@@ -1535,7 +1540,7 @@ async function showDetailedComparison(newProductId, matchedProductId) {
             ` : ''}
             ${matchDetails?.performanceStatistics ? `
                 <div class="performance-history-section">
-                    <h4>📊 Performance History</h4>
+                    <h4>PERFORMANCE HISTORY</h4>
                     <div class="performance-statistics">
                         <div class="performance-stat">
                             <span class="performance-stat-label">Total Sales</span>
@@ -1612,13 +1617,19 @@ function exportResults() {
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `match_results_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    showToast('Results exported to CSV', 'success');
+    
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `match_results_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        showToast('Results exported to CSV', 'success');
+    } catch (error) {
+        console.error('Export failed:', error);
+        showToast('Export failed', 'error');
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
 }
 
 function resetApp() {
@@ -1683,6 +1694,35 @@ async function parseCsv(file) {
             const hasHeader = firstLine.toLowerCase().includes('filename') ||
                 firstLine.toLowerCase().includes('category') ||
                 firstLine.toLowerCase().includes('sku');
+
+            // Validate header order if present
+            if (hasHeader) {
+                const headerParts = parseCSVLine(firstLine.toLowerCase());
+                const expectedOrder = ['filename', 'category', 'sku', 'name', 'price', 'price_history', 'performance_history'];
+                
+                // Check if headers match expected order (at least first 4 columns)
+                let headerWarning = null;
+                if (headerParts.length >= 4) {
+                    const actualOrder = headerParts.slice(0, 4).map(h => h.trim());
+                    const expectedFirst4 = expectedOrder.slice(0, 4);
+                    
+                    // Check if order matches
+                    const orderMatches = actualOrder.every((header, i) => {
+                        return header === expectedFirst4[i] || 
+                               header.replace(/_/g, '') === expectedFirst4[i].replace(/_/g, '');
+                    });
+                    
+                    if (!orderMatches) {
+                        headerWarning = ` CSV headers in wrong order! Expected: ${expectedOrder.slice(0, 4).join(', ')}. Found: ${headerParts.slice(0, 4).join(', ')}. Data may be mapped incorrectly.`;
+                        
+                        // Show warning toast
+                        showToast(headerWarning, 'warning');
+                        
+                        // Add to errors array so it shows in results
+                        errors.push(`Header order mismatch - Expected: ${expectedOrder.slice(0, 4).join(', ')}`);
+                    }
+                }
+            }
 
             const dataLines = hasHeader ? lines.slice(1) : lines;
 
@@ -2261,13 +2301,19 @@ product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,2024-01-15:22.50;2024-02-15:23
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'sample_product_data.csv';
-    a.click();
-    URL.revokeObjectURL(url);
     
-    showToast('Sample CSV downloaded! Open it in Excel or any text editor.', 'success');
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'sample_product_data.csv';
+        a.click();
+        showToast('Sample CSV downloaded! Open it in Excel or any text editor.', 'success');
+    } catch (error) {
+        console.error('Download failed:', error);
+        showToast('Download failed', 'error');
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
 }
 
 // Enhanced Toast with Action Button
@@ -2436,23 +2482,23 @@ function generatePerformanceChart(performanceHistory, containerId) {
     const maxLabel = `<text x="${padding}" y="${padding - 10}" font-size="12" fill="#666">${max}</text>`;
     
     return `
-        <svg class="performance-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
+        <svg class="performance-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background: #fff; border: 3px solid #000;" oncontextmenu="showColorPicker(event); return false;">
             <!-- Grid lines -->
-            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
-            <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
+            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#000" stroke-width="2"/>
+            <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#000" stroke-width="2"/>
             
             <!-- Sales line -->
-            <polyline points="${linePoints}" fill="none" stroke="${getChartColor()}" stroke-width="3"/>
+            <polyline points="${linePoints}" fill="none" stroke="#000" stroke-width="3"/>
             
             <!-- Data points -->
-            ${circles}
+            ${circles.replace(/fill="[^"]*"/g, 'fill="#000"')}
             
             <!-- Labels -->
-            ${minLabel}
-            ${maxLabel}
+            ${minLabel.replace(/fill="#666"/g, 'fill="#000" font-weight="bold"')}
+            ${maxLabel.replace(/fill="#666"/g, 'fill="#000" font-weight="bold"')}
         </svg>
-        <div class="performance-chart-legend">
-            <span>Showing ${sales.length} data point${sales.length !== 1 ? 's' : ''}</span>
+        <div class="performance-chart-legend" style="color: #000; font-weight: bold; text-transform: uppercase; font-size: 11px; margin-top: 8px;">
+            <span>${sales.length} DATA POINT${sales.length !== 1 ? 'S' : ''}</span>
         </div>
     `;
 }
@@ -2477,7 +2523,10 @@ function generatePriceChart(priceHistory, containerId) {
     
     // Generate points for the line
     const points = prices.map((price, i) => {
-        const x = padding + (i / (prices.length - 1)) * chartWidth;
+        // Handle single point case - center it horizontally
+        const x = prices.length === 1 
+            ? padding + chartWidth / 2 
+            : padding + (i / (prices.length - 1)) * chartWidth;
         const y = padding + chartHeight - ((price - min) / range) * chartHeight;
         return { x, y, price, date: dates[i] };
     });
@@ -2494,23 +2543,23 @@ function generatePriceChart(priceHistory, containerId) {
     const maxLabel = `<text x="${padding}" y="${padding - 10}" font-size="12" fill="#666">$${max.toFixed(2)}</text>`;
     
     return `
-        <svg class="price-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" oncontextmenu="showColorPicker(event); return false;">
+        <svg class="price-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background: #fff; border: 3px solid #000;" oncontextmenu="showColorPicker(event); return false;">
             <!-- Grid lines -->
-            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
-            <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#e2e8f0" stroke-width="1"/>
+            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${padding + chartHeight}" stroke="#000" stroke-width="2"/>
+            <line x1="${padding}" y1="${padding + chartHeight}" x2="${padding + chartWidth}" y2="${padding + chartHeight}" stroke="#000" stroke-width="2"/>
             
             <!-- Price line -->
-            <polyline points="${linePoints}" fill="none" stroke="${getChartColor()}" stroke-width="3"/>
+            <polyline points="${linePoints}" fill="none" stroke="#000" stroke-width="3"/>
             
             <!-- Data points -->
-            ${circles}
+            ${circles.replace(/fill="[^"]*"/g, 'fill="#000"')}
             
             <!-- Labels -->
-            ${minLabel}
-            ${maxLabel}
+            ${minLabel.replace(/fill="#666"/g, 'fill="#000" font-weight="bold"')}
+            ${maxLabel.replace(/fill="#666"/g, 'fill="#000" font-weight="bold"')}
         </svg>
-        <div class="price-chart-legend">
-            <span>Showing ${prices.length} price point${prices.length !== 1 ? 's' : ''}</span>
+        <div class="price-chart-legend" style="color: #000; font-weight: bold; text-transform: uppercase; font-size: 11px; margin-top: 8px;">
+            <span>${prices.length} PRICE POINT${prices.length !== 1 ? 'S' : ''}</span>
         </div>
     `;
 }
@@ -2857,13 +2906,19 @@ async function exportWithImages() {
         // Export JSON with instructions
         const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `match_results_full_${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
         
-        showToast('Export complete! JSON file includes all match data. Images can be downloaded separately via API.', 'success');
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `match_results_full_${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            showToast('Export complete! JSON file includes all match data. Images can be downloaded separately via API.', 'success');
+        } catch (error) {
+            console.error('Export failed:', error);
+            showToast('Export failed', 'error');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     } catch (error) {
         showToast('Failed to export with images: ' + error.message, 'error');
     }
@@ -3007,13 +3062,19 @@ function exportDuplicateReport() {
     
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `duplicate_report_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
     
-    showToast('Duplicate report exported to CSV', 'success');
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `duplicate_report_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        showToast('Duplicate report exported to CSV', 'success');
+    } catch (error) {
+        console.error('Export failed:', error);
+        showToast('Export failed', 'error');
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
 }
 
 // Save Session
@@ -3036,13 +3097,19 @@ function saveSession() {
     
     const blob = new Blob([JSON.stringify(sessionData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `matching_session_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
     
-    showToast('Session saved successfully', 'success');
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `matching_session_${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        showToast('Session saved successfully', 'success');
+    } catch (error) {
+        console.error('Save failed:', error);
+        showToast('Save failed', 'error');
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
 }
 
 // Load Session
@@ -3353,13 +3420,15 @@ function showColorPicker(event) {
     });
     
     // Close on click outside
+    const closePickerOutside = (e) => {
+        if (!picker.contains(e.target)) {
+            picker.remove();
+            document.removeEventListener('click', closePickerOutside);
+        }
+    };
+    
     setTimeout(() => {
-        document.addEventListener('click', function closePickerOutside(e) {
-            if (!picker.contains(e.target)) {
-                picker.remove();
-                document.removeEventListener('click', closePickerOutside);
-            }
-        });
+        addTrackedListener(document, 'click', closePickerOutside, 'results');
     }, 100);
 }
 
@@ -3601,7 +3670,7 @@ function openIntegratedCsvBuilder(section) {
     const builderWindow = window.open('/csv-builder', '_blank');
     
     // Listen for CSV data from builder
-    window.addEventListener('message', function csvBuilderListener(event) {
+    const csvBuilderListener = (event) => {
         if (event.data && event.data.type === 'CSV_BUILDER_COMPLETE') {
             const csvContent = event.data.csvContent;
             const targetSection = event.data.section;
@@ -3628,7 +3697,9 @@ function openIntegratedCsvBuilder(section) {
             // Remove listener after receiving data
             window.removeEventListener('message', csvBuilderListener);
         }
-    });
+    };
+    
+    addTrackedListener(window, 'message', csvBuilderListener, 'general');
     
     showToast('CSV Builder opened. Complete the form and click "SEND TO APP".', 'info');
 }
@@ -4669,11 +4740,24 @@ function initCatalogChangeListener() {
     }
     
     // Also check on visibility change (when user switches back to this tab)
-    document.addEventListener('visibilitychange', () => {
+    const catalogVisibilityHandler = () => {
         if (!document.hidden) {
             checkCatalogChangesInMainApp();
+            
+            // Restart polling if it was stopped and BroadcastChannel not available
+            if (!catalogChannel && !catalogPollingInterval) {
+                catalogPollingInterval = setInterval(checkCatalogChangesInMainApp, 2000);
+            }
+        } else {
+            // Page is hidden, pause polling to save resources
+            if (catalogPollingInterval && !catalogChannel) {
+                clearInterval(catalogPollingInterval);
+                catalogPollingInterval = null;
+            }
         }
-    });
+    };
+    
+    addTrackedListener(document, 'visibilitychange', catalogVisibilityHandler, 'general');
 }
 
 // Check for catalog changes via sessionStorage

@@ -73,6 +73,21 @@ try:
 except Exception as e:
     logger.warning(f"Could not pre-load CLIP model: {e}. Will use legacy feature extraction.")
 
+# Build FAISS indexes on startup for fast similarity search
+logger.info("Building FAISS indexes for fast similarity search...")
+try:
+    from database import rebuild_all_faiss_indexes
+    stats = rebuild_all_faiss_indexes()
+    if 'error' in stats:
+        logger.warning(f"FAISS indexes not built: {stats.get('error')} - {stats.get('suggestion', '')}")
+        logger.info("Similarity search will use brute force (slower for large catalogs)")
+    else:
+        logger.info(f"FAISS indexes built: {stats['categories_processed']} categories, {stats['total_products_indexed']} products")
+        if stats['failed_categories']:
+            logger.warning(f"Failed to build indexes for: {stats['failed_categories']}")
+except Exception as e:
+    logger.warning(f"Could not build FAISS indexes: {e}. Similarity search will use brute force.")
+
 
 # Memory leak fix: Add cleanup handlers for app shutdown
 # DISABLED: This was running after EVERY request, killing performance
@@ -615,6 +630,15 @@ def upload_product():
                 embedding_version=embedding_version
             )
             logger.info(f"Features extracted and stored for product {product_id} (type: {embedding_type}, version: {embedding_version})")
+            
+            # Rebuild FAISS index for this category (new product added)
+            if embedding_type == 'clip' and is_historical:
+                try:
+                    from database import rebuild_faiss_index_for_category
+                    rebuild_faiss_index_for_category(category)
+                    logger.debug(f"Rebuilt FAISS index for category '{category}' after adding product {product_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to rebuild FAISS index: {e}")
             
         except (InvalidImageFormatError, CorruptedImageError, ImageTooSmallError, ImageProcessingFailedError) as e:
             logger.error(f"Feature extraction failed for product {product_id}: {e.message}")
@@ -2033,11 +2057,20 @@ def delete_catalog_product(product_id):
                 status_code=404
             )
         
-        # Get image path before deletion
+        # Get image path and category before deletion
         image_path = product['image_path']
+        category = product['category']
         
         # Delete product
         success = delete_product(product_id)
+        
+        # Invalidate FAISS index for this category
+        try:
+            from database import invalidate_faiss_index
+            invalidate_faiss_index(category)
+            logger.debug(f"Invalidated FAISS index for category '{category}'")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate FAISS index: {e}")
         
         # Delete image file
         if image_path and os.path.exists(image_path):
@@ -2106,6 +2139,16 @@ def reextract_product_features(product_id):
             embedding_version=embedding_version
         )
         
+        # Invalidate FAISS index for this category (features changed)
+        if embedding_type == 'clip' and product['is_historical']:
+            try:
+                from database import invalidate_faiss_index
+                category = product['category']
+                invalidate_faiss_index(category)
+                logger.debug(f"Invalidated FAISS index for category '{category}' after re-extracting features for product {product_id}")
+            except Exception as e:
+                logger.warning(f"Failed to invalidate FAISS index: {e}")
+        
         return jsonify({
             'status': 'success',
             'message': f'Features re-extracted successfully (type: {embedding_type})'
@@ -2150,6 +2193,14 @@ def bulk_delete_catalog_products():
             return create_error_response('INVALID_IDS', error, status_code=400)
         
         deleted_count = bulk_delete_products(product_ids)
+        
+        # Invalidate all FAISS indexes (bulk delete may affect multiple categories)
+        try:
+            from database import invalidate_faiss_index
+            invalidate_faiss_index()  # Invalidate all categories
+            logger.debug(f"Invalidated all FAISS indexes after bulk delete")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate FAISS indexes: {e}")
         
         return jsonify({
             'status': 'success',
@@ -3230,6 +3281,17 @@ def load_snapshot_to_main(snapshot_name):
                 result['error'],
                 status_code=500
             )
+        
+        # Rebuild FAISS indexes after loading snapshot
+        logger.info("Rebuilding FAISS indexes after snapshot load...")
+        try:
+            from database import rebuild_all_faiss_indexes
+            faiss_stats = rebuild_all_faiss_indexes()
+            if 'error' not in faiss_stats:
+                logger.info(f"FAISS indexes rebuilt: {faiss_stats['categories_processed']} categories")
+                result['faiss_indexes_rebuilt'] = faiss_stats['categories_processed']
+        except Exception as e:
+            logger.warning(f"Failed to rebuild FAISS indexes: {e}")
         
         return jsonify({
             'status': 'success',

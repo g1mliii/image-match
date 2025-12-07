@@ -176,6 +176,20 @@ def init_db():
             ON features(product_id)
         ''')
         
+        # Index for SKU lookups - speeds up metadata matching (Mode 2)
+        # Helps with SKU-based filtering and exact/prefix matching
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_products_sku
+            ON products(sku)
+        ''')
+        
+        # Index for product name lookups - speeds up metadata matching (Mode 2)
+        # Helps with name-based filtering and sorting
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_products_name
+            ON products(product_name)
+        ''')
+        
         # Create price_history table for tracking historical prices
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS price_history (
@@ -548,7 +562,8 @@ def delete_features(product_id: int) -> bool:
 
 def get_all_features_by_category(category: Optional[str] = None, is_historical: bool = True,
                                 include_uncategorized: bool = False, 
-                                embedding_type: Optional[str] = None) -> List[Tuple[int, Dict[str, Any]]]:
+                                embedding_type: Optional[str] = None,
+                                match_null_category: bool = False) -> List[Tuple[int, Dict[str, Any]]]:
     """Get all feature vectors for products in a category
     
     PERFORMANCE OPTIMIZED (Task 14):
@@ -558,10 +573,12 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
     - Critical for performance with large catalogs (1000+ products)
     
     Args:
-        category: Category to filter by (None returns all products)
+        category: Category to filter by
         is_historical: Filter for historical vs new products
         include_uncategorized: If True and category specified, also include NULL category products
         embedding_type: Filter by embedding type ('legacy', 'clip', or None for all)
+        match_null_category: If True and category is None, match ONLY NULL category products
+                            If False and category is None, match ALL products regardless of category
     
     Returns:
         List of tuples (product_id, features_dict)
@@ -575,7 +592,7 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
         embedding_filter = ""
         params = []
         
-        if category is None:
+        if category is None and not match_null_category:
             # Get all products regardless of category
             query = '''
                 SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
@@ -583,6 +600,16 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
                 FROM products p
                 JOIN features f ON p.id = f.product_id
                 WHERE p.is_historical = ?
+            '''
+            params.append(is_historical)
+        elif category is None and match_null_category:
+            # Get ONLY products with NULL category (uncategorized)
+            query = '''
+                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+                       f.embedding_type, f.embedding_version
+                FROM products p
+                JOIN features f ON p.id = f.product_id
+                WHERE p.category IS NULL AND p.is_historical = ?
             '''
             params.append(is_historical)
         elif include_uncategorized:
@@ -2327,3 +2354,165 @@ def export_catalog_csv() -> str:
             ])
         
         return output.getvalue()
+
+
+# ============================================================================
+# FAISS INDEX MANAGEMENT
+# ============================================================================
+
+def rebuild_all_faiss_indexes() -> Dict[str, any]:
+    """
+    Rebuild all FAISS indexes from database.
+    
+    This should be called:
+    - On server startup
+    - After bulk catalog imports
+    - After catalog snapshot changes
+    
+    Returns:
+        Dictionary with rebuild statistics
+    """
+    try:
+        from faiss_index import faiss_manager
+        import numpy as np
+        
+        logger.info("Rebuilding FAISS indexes from database...")
+        
+        # Get all categories
+        categories = get_all_categories()
+        categories.append(None)  # Include uncategorized products
+        
+        stats = {
+            'categories_processed': 0,
+            'total_products_indexed': 0,
+            'failed_categories': [],
+            'skipped_categories': []
+        }
+        
+        for category in categories:
+            try:
+                # Get all CLIP embeddings for category
+                features = get_all_features_by_category(
+                    category=category,
+                    is_historical=True,
+                    embedding_type='clip'
+                )
+                
+                if not features:
+                    logger.debug(f"No CLIP features found for category '{category}', skipping")
+                    stats['skipped_categories'].append(category)
+                    continue
+                
+                # Extract embeddings and product IDs
+                product_ids = [pid for pid, _ in features]
+                embeddings = np.array([f['color_features'] for _, f in features])
+                
+                # Build index
+                success = faiss_manager.build_index(category, embeddings, product_ids)
+                
+                if success:
+                    stats['categories_processed'] += 1
+                    stats['total_products_indexed'] += len(product_ids)
+                    logger.info(f"Built FAISS index for '{category}': {len(product_ids)} products")
+                else:
+                    stats['failed_categories'].append(category)
+                    logger.warning(f"Failed to build FAISS index for '{category}'")
+                    
+            except Exception as e:
+                logger.error(f"Failed to rebuild index for category '{category}': {e}")
+                stats['failed_categories'].append(category)
+        
+        logger.info(f"FAISS index rebuild complete: {stats['categories_processed']} categories, {stats['total_products_indexed']} products")
+        
+        return stats
+        
+    except ImportError:
+        logger.warning("FAISS not available - install faiss-cpu for fast similarity search")
+        return {'error': 'FAISS not installed', 'suggestion': 'pip install faiss-cpu'}
+    except Exception as e:
+        logger.error(f"Failed to rebuild FAISS indexes: {e}", exc_info=True)
+        return {'error': str(e)}
+
+
+def invalidate_faiss_index(category: Optional[str] = None) -> None:
+    """
+    Invalidate FAISS index cache for a category.
+    
+    Call this when:
+    - Products are added/deleted in a category
+    - Features are re-extracted
+    - Category is changed
+    
+    Args:
+        category: Category to invalidate (None for specific category, omit to invalidate all)
+    """
+    try:
+        from faiss_index import faiss_manager
+        faiss_manager.invalidate(category)
+        logger.info(f"Invalidated FAISS index for category '{category}'")
+    except ImportError:
+        pass  # FAISS not installed, nothing to invalidate
+    except Exception as e:
+        logger.error(f"Failed to invalidate FAISS index: {e}")
+
+
+def rebuild_faiss_index_for_category(category: Optional[str]) -> bool:
+    """
+    Rebuild FAISS index for a specific category.
+    
+    Call this after adding/deleting products to immediately rebuild the index
+    instead of waiting for lazy rebuild on next match.
+    
+    Args:
+        category: Category to rebuild (None for uncategorized products)
+    
+    Returns:
+        True if rebuild successful, False otherwise
+    """
+    try:
+        import numpy as np
+        from faiss_index import faiss_manager
+        
+        # Get all CLIP embeddings for this category
+        features = get_all_features_by_category(
+            category=category,
+            is_historical=True,
+            embedding_type='clip',
+            match_null_category=(category is None)
+        )
+        
+        if not features:
+            logger.debug(f"No CLIP features found for category '{category}', skipping FAISS rebuild")
+            return False
+        
+        # Extract embeddings and product IDs
+        product_ids = [pid for pid, _ in features]
+        embeddings = np.array([f['color_features'] for _, f in features])
+        
+        # Build index
+        success = faiss_manager.build_index(category, embeddings, product_ids)
+        
+        if success:
+            logger.info(f"Rebuilt FAISS index for category '{category}': {len(product_ids)} products")
+        else:
+            logger.warning(f"Failed to rebuild FAISS index for category '{category}'")
+        
+        return success
+        
+    except ImportError:
+        return False  # FAISS not installed
+    except Exception as e:
+        logger.error(f"Failed to rebuild FAISS index for category '{category}': {e}")
+        return False
+
+
+def get_faiss_stats() -> Dict[str, any]:
+    """Get statistics about FAISS indexes"""
+    try:
+        from faiss_index import faiss_manager
+        return faiss_manager.get_stats()
+    except ImportError:
+        return {'error': 'FAISS not installed'}
+    except Exception as e:
+        logger.error(f"Failed to get FAISS stats: {e}")
+        return {'error': str(e)}

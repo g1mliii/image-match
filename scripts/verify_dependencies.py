@@ -158,6 +158,9 @@ def check_all_dependencies():
         # CRITICAL: sentence-transformers must be < 3.0.0 for AMD ROCm
         ("sentence-transformers", "sentence-transformers", "2.7.0", "3.0.0", None),
         
+        # Fast Similarity Search (for large catalogs 1000+ products)
+        ("faiss-cpu", "FAISS (CPU)", "1.7.4", None, None),
+        
         # System Monitoring (for memory leak detection)
         ("psutil", "psutil", "5.9.0", None, None),
         

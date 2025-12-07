@@ -748,138 +748,120 @@
 
 
 
-- [ ] 31. Implement mobile photo upload with WiFi-based pairing
-
-  - **Goal:** Enable users to upload product photos from their phone to the desktop app via WiFi connection
-  - **Use Case:** Client takes photos in warehouse/store, connects to desktop via WiFi, uploads directly to catalog with same options as desktop upload (add to existing, replace catalog, use existing)
-  
-  - **Architecture:**
-    - Desktop app starts local server and displays connection URL
-    - User types URL into phone browser (e.g., `http://192.168.1.100:5000/mobile`)
-    - Mobile page uploads photos to desktop app via REST API
-    - Desktop app receives photos and processes them with same catalog options as desktop upload
-    - No mobile app installation needed - works in any browser
-    - No QR code scanning - simple URL entry
-
-- [ ] 31.1. Backend API for mobile session management
-  - **New API Endpoints:**
-    - `POST /api/mobile/session/create` - Generate new mobile session
-      - Returns: session_token, connection_url, local_ip, expires_at (30 min)
-      - Store active sessions in memory: `{token: {created_at, expires_at, catalog_mode, catalog_name}}`
-    - `GET /api/mobile/session/{token}/validate` - Check if session is valid
-      - Returns: {valid: true/false, expired: true/false, catalog_mode, catalog_name}
-    - `POST /api/mobile/session/{token}/close` - Invalidate session token
-    - `GET /api/mobile/session/active` - Get active session info for desktop UI
-  - **Session Management:**
-    - Sessions expire after 30 minutes
-    - Reusable: Session stays active until manually closed or expired
-    - Cleanup expired sessions every 5 minutes (background task)
-    - Store catalog mode with session (add_to_existing, replace_catalog, use_existing)
-  - **Security:**
-    - Generate cryptographically secure random tokens (32 characters)
-    - Use `secrets.token_urlsafe(32)` in Python
-    - Store tokens in memory only (not in database)
-    - Validate session token on every request
-  - _Requirements: New feature - improves Requirements 1.1, 6.1_
-
-- [ ] 31.2. Backend API for mobile photo upload with catalog handling
-  - **New API Endpoint:**
-    - `POST /api/mobile/upload` - Upload photos from mobile
-      - Requires: session_token, images (multiple files), category (optional), csv_data (optional)
-      - Validates session token before accepting upload
-      - Uses catalog mode from session (add_to_existing, replace_catalog, use_existing)
-      - Processes photos same as desktop upload flow
-      - Returns: {success: true, products_added: 5, catalog_mode: "add_to_existing"}
-  - **Catalog Mode Handling:**
-    - **use_existing:** Reject upload with error "Cannot upload in 'use existing' mode"
-    - **add_to_existing:** Add photos to existing catalog (same as desktop)
-    - **replace_catalog:** Clear catalog first, then add photos (same as desktop)
-  - **Multiple Photo Support:**
-    - Accept multiple files in single upload request
-    - Process photos in batch (extract features for all)
-    - Show progress: "Processing 3/5 photos..."
-    - If some photos fail (corrupted, wrong format), show partial success
-    - "3 photos uploaded successfully, 2 failed (invalid format)"
-  - **CSV Support:**
-    - Accept optional CSV data with photo metadata
-    - Parse CSV same as desktop upload
-    - Match photos to CSV rows by filename
-  - **Error Handling:**
-    - Invalid session token: Return 401 with clear message
-    - Network error: Return 500 with retry suggestion
-    - Upload failed: Return 400 with specific error
-    - File too large: Return 413 "Photo too large (max 10 MB per photo)"
-    - Invalid format: Return 400 "Invalid format. Use JPEG, PNG, or WebP."
-  - **Rate Limiting:**
-    - Limit uploads per session (max 100 photos per session)
-    - Prevent abuse with rate limiting (max 10 uploads per minute)
+- [ ] 31. Implement mobile photo upload with WiFi connection
+  - **Goal:** Upload photos from phone to desktop via WiFi, reusing existing upload/matching logic
+  - **Key Principles:** 
+    - Persistent password auth (no session timeout)
+    - Support Mode 1 (visual only) and Mode 3 (quick metadata entry)
+    - Auto-trigger matching after upload and display results
+    - Reuse existing `/api/products/upload` and `/api/products/match` endpoints
+  - **Architecture:** Desktop displays URL + password → Mobile saves password → Upload photos → Auto-match → Show results
   - _Requirements: New feature - improves Requirements 1.1, 6.1, 9.1_
 
-- [ ] 31.3. Desktop UI for mobile connection setup
-  - **Mobile Upload Button:**
-    - Add button in main app: "Upload from Phone" (in Step 1 or Step 2)
+- [ ] 31.1. Add password authentication for mobile access
+  - **Password Storage:**
+    - Store single password in config file (AppData/config.json)
+    - Default: random 6-digit PIN (e.g., 123456)
+    - Password never expires, persists until user changes it
+  - **New API Endpoints:**
+    - `POST /api/mobile/auth` - Validate password, return catalog config
+      - Request: `{password: "123456"}`
+      - Response: `{valid: true, catalog_mode: "add_to_existing", catalog_stats: {...}}`
+    - `GET /api/mobile/config` - Get config (requires password header)
+      - Returns: catalog_mode, available_categories, modes: ["mode1", "mode3"]
+    - `POST /api/mobile/set-catalog-mode` - Change catalog mode from mobile
+      - Request: `{password: "123456", mode: "add_to_existing"}`
+  - **Password Validation:**
+    - Check header `X-Mobile-Password: 123456` on all mobile requests
+    - Return 401 if missing/incorrect
+    - Log failed attempts for security
+  - _Requirements: New feature - improves Requirements 1.1, 6.1_
+
+- [ ] 31.2. Add mobile upload support to existing endpoints
+  - **Reuse Existing Upload Endpoint:**
+    - Mobile uses existing `POST /api/products/upload` (no new endpoint)
+    - Add password validation middleware for mobile user agent
+    - Mobile sends same data as desktop: images, category, metadata, catalog_mode
+  - **Auto-Trigger Matching:**
+    - After upload completes, automatically call `POST /api/products/match`
+    - Use uploaded product IDs to trigger matching
+    - Return match results in response for mobile to display
+  - **Mode Support:**
+    - Mode 1: Upload images only → extract CLIP features → match visually
+    - Mode 3: Upload images + metadata (category, SKU, name, price) → match
+    - No Mode 2 (CSV) on mobile - too complex
+  - **Catalog Mode Handling:**
+    - add_to_existing: Add photos to historical catalog
+    - replace_catalog: Clear catalog first, then add photos
+    - use_existing: Reject with error "Cannot upload in use existing mode"
+  - **Error Handling:**
+    - Invalid password: 401 "Invalid password"
+    - File too large: 413 "Photo too large (max 10 MB)"
+    - Invalid format: 400 "Invalid format. Use JPEG, PNG, or WebP"
+  - _Requirements: New feature - improves Requirements 1.1, 6.1, 9.1_
+
+- [ ] 31.3. Create desktop UI for mobile connection setup
+  - **Add Mobile Upload Button:**
+    - Add "Upload from Phone" button in main app toolbar/settings
     - Opens modal with connection instructions
-  - **Connection Modal:**
-    - Display connection URL prominently: `http://192.168.1.100:5000/mobile`
-    - Show local IP address (auto-detected)
-    - Instructions: "1. Connect phone to same WiFi network | 2. Open browser on phone | 3. Type URL: http://192.168.1.100:5000/mobile"
-    - Copy URL button (copies to clipboard)
-    - Show active session status: "Session active - expires in 25 minutes"
-    - Close session button
+  - **Connection Modal Content:**
+    - Display connection URL: `http://192.168.1.100:5000/mobile`
+    - Show current password: "Password: 123456"
+    - Copy URL and Copy Password buttons
+    - Instructions: "1. Connect phone to same WiFi | 2. Open browser on phone | 3. Enter URL and password"
+  - **Password Management:**
+    - "Change Password" button → dialog to set new 6-digit PIN
+    - Show password in plain text (local network only)
+    - Warn: "Use simple password for convenience, not high security"
   - **Catalog Mode Selection:**
-    - Radio buttons in modal (same as desktop upload):
-      - ○ Use existing catalog (X products) - Disable mobile upload in this mode
-      - ○ Add to existing catalog - Upload adds to current catalog
-      - ○ Replace catalog - Upload clears catalog first
+    - Radio buttons: Use existing / Add to existing / Replace catalog
     - Default to "Add to existing" if catalog exists
-    - Show warning before replacing: "Mobile uploads will replace X products. Continue?"
+    - Show warning before replace: "Mobile uploads will replace X products"
+    - Mobile can change mode remotely via API
   - **Upload Notifications:**
-    - Show toast when photos uploaded from mobile
-    - "5 photos added to catalog from mobile"
-    - Update catalog stats in real-time
-    - Show progress during upload: "Uploading 3/5 photos..."
+    - Toast when photos uploaded: "5 photos added from mobile"
+    - Real-time catalog stats update
   - **Network Discovery:**
-    - Auto-detect local IP address (prefer 192.168.x.x or 10.x.x.x)
-    - Handle multiple network interfaces (show all available IPs)
-    - Firewall warning: "Make sure phone and computer are on same WiFi network"
+    - Auto-detect local IP (prefer 192.168.x.x over 10.x.x.x)
+    - Show all IPs if multiple network interfaces
+    - Firewall warning: "Ensure phone and computer on same WiFi"
   - _Requirements: New feature - improves Requirements 9.1, 9.4_
 
-- [ ] 31.4. Mobile upload page UI
-  - **New File:** `static/mobile-upload.html`
-  - **Mobile-Optimized UI:**
-    - Brutalist design similar to main app
+- [ ] 31.4. Create mobile upload page (static/mobile-upload.html)
+  - **Mobile-Optimized Design:**
+    - Brutalist design matching main app
     - Large touch-friendly buttons
-    - Responsive layout for all phone sizes
-    - Works in portrait and landscape
-  - **Connection Flow:**
-    - On page load, extract session token from URL
-    - Validate session token via API
-    - If invalid/expired: Show error "Session expired. Get new URL from desktop."
-    - If valid: Show "Connected to Desktop ✓" with catalog mode
-  - **Upload Interface:**
-    - Multiple photo selection from gallery
-    - Take photo with camera (use `<input type="file" accept="image/*" capture="camera" multiple>`)
-    - Preview selected photos before upload (thumbnails)
-    - Remove photos from selection (X button on each thumbnail)
-    - Category dropdown (loads from desktop app)
-    - Optional CSV upload for metadata
-  - **Upload Process:**
-    - Progress bar during upload
-    - Show count: "Uploading 3/5 photos..."
-    - Success message: "5 photos uploaded successfully"
-    - Partial success: "3 photos uploaded, 2 failed (invalid format)"
-    - Clear error messages with retry button
+    - Responsive (portrait/landscape, all phone sizes)
+  - **Authentication:**
+    - First visit: password input "Enter password from desktop"
+    - Save password in localStorage (persistent)
+    - Subsequent visits: auto-authenticate
+    - "Forget Password" button to clear
+  - **Mode Selection:**
+    - Two large buttons: "Mode 1: Quick Upload" | "Mode 3: Add Details"
+  - **Mode 1 Interface:**
+    - Multi-photo selection from gallery
+    - Camera capture: `<input type="file" accept="image/*" capture="camera" multiple>`
+    - Thumbnail previews with X button to remove
+    - "Upload & Match" button
+    - Progress: "Uploading 3/5..." → "Matching 3/5..." → Results
+  - **Mode 3 Interface:**
+    - Upload 1-2 photos (keep simple)
+    - Metadata fields beside each image: Category dropdown, SKU, Name, Price
+    - "Upload & Match" button
+    - Same progress flow as Mode 1
+  - **Results Display:**
+    - Show top 5 matches (simplified for mobile)
+    - Thumbnail + similarity score
+    - Tap for detailed side-by-side comparison
+    - "Upload More" button to return
   - **Catalog Mode Display:**
-    - Show current mode at top: "Mode: Add to existing catalog (1,247 products)"
-    - Or: "Mode: Replace catalog (will clear 1,247 products)"
-    - Disable upload if mode is "use_existing"
-  - **Session Status:**
-    - Poll session status every 30 seconds
-    - Show expiration countdown: "Session expires in 15 minutes"
-    - Auto-refresh if session expires (show error)
+    - Show at top: "Mode: Add to existing (1,247 products)"
+    - Button to change mode (calls API)
+    - Disable upload if use_existing mode
   - _Requirements: New feature - improves Requirements 1.1, 9.1, 9.3_
 
-- [ ] 31.5. Network discovery and connection helpers
+- [ ] 31.5. Add network discovery helpers
   - **Auto-detect Local IP:**
     ```python
     import socket
@@ -890,61 +872,39 @@
         s.close()
         return ip
     ```
-  - **Handle Multiple IPs:**
-    - If multiple network interfaces, show all in modal
-    - User can select which IP to use
-    - Prefer 192.168.x.x (home WiFi) over 10.x.x.x (VPN)
+  - **Multiple IP Handling:**
+    - Show all IPs if multiple interfaces
+    - Let user select which to use
   - **Connection Troubleshooting:**
-    - If connection fails, show troubleshooting tips
-    - "Make sure phone and computer are on same WiFi network"
-    - "Check firewall settings if connection fails"
-    - "Try disabling VPN if connected"
+    - Show tips if connection fails
+    - "Ensure same WiFi network"
+    - "Check firewall settings"
   - **CORS Configuration:**
-    - Ensure CORS allows mobile uploads from any origin
-    - Already enabled in app.py, verify it works
+    - Verify CORS allows mobile uploads (already in app.py)
   - _Requirements: New feature - improves Requirements 9.4_
 
-- [ ] 31.6. Testing and validation
-  - **Session Management:**
-    - Test session creation and expiration
-    - Test session validation (valid, expired, invalid token)
-    - Test session cleanup (expired sessions removed)
-  - **Mobile Upload:**
-    - Test mobile upload with single photo
-    - Test mobile upload with multiple photos (5, 10, 20)
-    - Test with different image formats (JPEG, PNG, HEIC)
-    - Test with large images (10+ MB)
-    - Test connection loss during upload (retry logic)
-  - **Catalog Mode Integration:**
-    - Test "add_to_existing" mode: Photos added to existing catalog
-    - Test "replace_catalog" mode: Catalog cleared, then photos added
-    - Test "use_existing" mode: Upload disabled on mobile
-    - Verify catalog stats update in real-time on desktop
-  - **Network Testing:**
-    - Test network discovery (multiple IPs, WiFi vs Ethernet)
-    - Test on different phones (iOS Safari, Android Chrome)
-    - Test on different WiFi networks
-    - Test with firewall enabled/disabled
-  - **CSV Support:**
-    - Test CSV upload from mobile
-    - Test CSV parsing and metadata linking
-    - Test with missing/corrupted CSV data
-  - **Error Handling:**
-    - Test invalid session token
-    - Test expired session
-    - Test network errors
-    - Test file format errors
-    - Test file size errors
+- [ ] 31.6. Test mobile upload functionality
+  - **Authentication Tests:**
+    - Password validation, localStorage persistence
+    - Password change from desktop
+    - Invalid password handling
+  - **Upload Tests:**
+    - Mode 1: single photo, multiple photos (5, 10, 20)
+    - Mode 3: with metadata entry
+    - Auto-trigger matching, results display
+  - **Catalog Mode Tests:**
+    - add_to_existing: photos added to catalog
+    - replace_catalog: catalog cleared then photos added
+    - use_existing: upload disabled with error
+    - Real-time stats update on desktop
+  - **Cross-Platform Tests:**
+    - iOS Safari, Android Chrome
+    - Different WiFi networks
+    - Firewall enabled/disabled
+  - **Code Reuse Validation:**
+    - Verify same endpoints as desktop
+    - No duplicate code
   - _Requirements: New feature - improves Requirements 10.3, 10.4_
-
-  - **Future Enhancements (Optional):**
-    - Push notifications to desktop when photos uploaded
-    - Live preview of uploaded photos on desktop
-    - Batch metadata editing on desktop after mobile upload
-    - Support for video uploads (for product demos)
-    - OCR to extract SKU from product labels in photos
-  
-  - _Requirements: New feature - improves Requirements 1.1, 6.1, 9.1 - mobile convenience and flexibility_
 
 
 

@@ -60,6 +60,12 @@ sentence-transformers>=2.7.0,<3.0.0
 # Installation: pip install intel-extension-for-pytorch
 # Note: Automatically detected and used if installed, gracefully falls back to CPU if not
 
+# Fast Similarity Search (for large catalogs 1000+ products)
+# FAISS provides 50-100x speedup for similarity search on CLIP embeddings
+# CPU-only version works on all platforms: AMD, Intel, NVIDIA, Apple Silicon
+# No GPU configuration needed - uses CPU for fast tree-based search
+faiss-cpu>=1.7.4
+
 # System Monitoring (for memory leak detection and stats)
 psutil>=5.9.0
 

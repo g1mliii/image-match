@@ -883,15 +883,18 @@ async function exportBackup() {
         
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `catalog-backup-${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
         
-        showToast('Backup downloaded', 'success');
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `catalog-backup-${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast('Backup downloaded', 'success');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
         
     } catch (error) {
         console.error('Error exporting backup:', error);
@@ -1236,15 +1239,18 @@ async function exportSnapshot(snapshotFile) {
         
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = snapshotFile.replace('.db', '-export.zip');
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
         
-        showToast('Snapshot exported', 'success');
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = snapshotFile.replace('.db', '-export.zip');
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast('Snapshot exported', 'success');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
         
     } catch (error) {
         console.error('Error exporting snapshot:', error);

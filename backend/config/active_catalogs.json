@@ -2,5 +2,7 @@
   "active_historical": [
     "default-catalog.db"
   ],
-  "active_new": []
+  "active_new": [],
+  "loaded_snapshot": "auto-backup-before-replace-historical-2025-12-04T19-31-29.db",
+  "loaded_at": "2025-12-06T20:15:06.014908"
 }

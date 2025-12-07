@@ -453,192 +453,285 @@ def find_matches(
     
     logger.info(f"Found {len(candidate_features)} candidate products")
     
-    # Step 6: Compute similarities with comprehensive error handling
+    # Step 6: Compute similarities with FAISS acceleration (if available)
     matches = []
     successful_count = 0
     failed_count = 0
     
-    for candidate_id, candidate_feature_dict in candidate_features:
-        # Skip matching against self
-        if candidate_id == product_id:
-            continue
-        
+    # Try FAISS fast path for CLIP embeddings
+    faiss_used = False
+    if use_clip:
         try:
-            # Validate candidate features exist
-            if not candidate_feature_dict:
-                logger.warning(f"Product {candidate_id} has no features, skipping")
-                warnings_list.append(f"Product {candidate_id} has no features")
-                failed_count += 1
-                data_quality_issues['missing_features'] += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': 'Missing features',
-                    'error_code': 'MISSING_FEATURES'
-                })
-                if not skip_invalid_products:
-                    raise MissingFeaturesError(candidate_id)
-                continue
+            from faiss_index import faiss_manager
             
-            # Validate candidate feature arrays
-            from matching_utils import validate_candidate_features_quick
+            # Check if FAISS index exists for this category
+            search_category = normalized_category if not match_against_all else None
             
-            if not validate_candidate_features_quick(candidate_feature_dict):
-                warnings_list.append(f"Product {candidate_id} has corrupted features")
-                failed_count += 1
-                data_quality_issues['corrupted_features'] += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': 'Corrupted or invalid features',
-                    'error_code': 'CORRUPTED_FEATURES'
-                })
-                if not skip_invalid_products:
-                    raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
-                continue
-            
-            # Compute similarity with error handling
-            try:
-                if use_clip:
-                    # CLIP mode: use cosine similarity on embeddings
-                    # CLIP embeddings are stored in color_features column with embedding_type='clip'
-                    if candidate_feature_dict.get('embedding_type') == 'clip':
-                        candidate_embedding = candidate_feature_dict['color_features']
-                    elif 'clip_embedding' in candidate_feature_dict:
-                        # Support explicit clip_embedding key (future enhancement)
-                        candidate_embedding = candidate_feature_dict['clip_embedding']
-                    else:
-                        logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
-                        warnings_list.append(f"Product {candidate_id} missing CLIP embedding")
-                        data_quality_issues['missing_features'] += 1
-                        failed_count += 1
-                        if not skip_invalid_products:
-                            raise MissingFeaturesError(candidate_id)
-                        continue
+            if faiss_manager.has_index(search_category):
+                logger.info(f"Using FAISS fast path for category '{search_category}'")
+                
+                # Search with FAISS (returns top candidates quickly)
+                # Request more candidates than limit to account for filtering
+                k = min(limit * 10 if limit > 0 else 1000, len(candidate_features))
+                distances, candidate_ids = faiss_manager.search(
+                    search_category,
+                    query_embedding,
+                    k=k,
+                    threshold=threshold / 100.0  # Convert 0-100 to 0-1 range
+                )
+                
+                if distances is not None and candidate_ids is not None:
+                    faiss_used = True
+                    logger.info(f"FAISS returned {len(candidate_ids)} candidates")
                     
-                    # Validate candidate embedding
-                    if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
-                        logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array)")
-                        warnings_list.append(f"Product {candidate_id} has invalid CLIP embedding")
-                        data_quality_issues['corrupted_features'] += 1
-                        failed_count += 1
-                        if not skip_invalid_products:
-                            raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
-                        continue
+                    # Process FAISS results
+                    for dist, candidate_id in zip(distances, candidate_ids):
+                        # Skip self
+                        if candidate_id == product_id:
+                            continue
+                        
+                        try:
+                            # Get candidate product details
+                            candidate_product = get_product_by_id(candidate_id)
+                            
+                            if not candidate_product:
+                                logger.warning(f"Product {candidate_id} not found in database, skipping")
+                                failed_count += 1
+                                continue
+                            
+                            # Convert FAISS distance (0-1 cosine similarity) to 0-100 scale
+                            similarity_score = float(dist) * 100.0
+                            
+                            # Create similarities dict compatible with legacy format
+                            similarities = {
+                                'combined_similarity': similarity_score,
+                                'color_similarity': similarity_score,
+                                'shape_similarity': similarity_score,
+                                'texture_similarity': similarity_score
+                            }
+                            
+                            # Handle missing metadata gracefully
+                            from matching_utils import track_missing_metadata, create_match_result
+                            
+                            missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
+                            
+                            if missing_fields:
+                                logger.debug(f"Product {candidate_id} missing metadata: {missing_fields}")
+                            
+                            # Create match result
+                            match_result = create_match_result(
+                                candidate_id,
+                                candidate_product,
+                                similarities,
+                                missing_fields
+                            )
+                            
+                            matches.append(match_result)
+                            successful_count += 1
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing FAISS result for product {candidate_id}: {e}")
+                            failed_count += 1
+                            data_quality_issues['computation_errors'] += 1
+                            if not skip_invalid_products:
+                                raise
                     
-                    # Compute CLIP similarity
-                    similarity_score = compute_clip_similarity(query_embedding, candidate_embedding)
-                    
-                    # Create similarities dict compatible with legacy format
-                    similarities = {
-                        'combined_similarity': similarity_score,
-                        'color_similarity': similarity_score,  # For database storage compatibility
-                        'shape_similarity': similarity_score,
-                        'texture_similarity': similarity_score
-                    }
+                    logger.info(f"FAISS fast path complete: {successful_count} matches, {failed_count} failed")
                 else:
-                    # Legacy mode: use traditional features
-                    similarities = compute_all_similarities(
-                        query_features,
-                        candidate_feature_dict,
-                        color_weight=color_weight,
-                        shape_weight=shape_weight,
-                        texture_weight=texture_weight
-                    )
-            except (InvalidFeatureError, FeatureDimensionError) as e:
-                logger.warning(f"Similarity computation failed for product {candidate_id}: {e.message}")
-                warnings_list.append(f"Product {candidate_id}: {e.message}")
-                failed_count += 1
-                data_quality_issues['computation_errors'] += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': e.message,
-                    'error_code': e.error_code,
-                    'suggestion': e.suggestion
-                })
+                    logger.warning("FAISS search returned None, falling back to brute force")
+            else:
+                logger.info(f"FAISS index not available for category '{search_category}', using brute force")
+                
+        except ImportError:
+            logger.warning("FAISS not available (install faiss-cpu), using brute force")
+        except Exception as e:
+            logger.error(f"FAISS search failed: {e}, falling back to brute force", exc_info=True)
+    
+    # Fallback to brute force if FAISS not used
+    if not faiss_used:
+        logger.info("Using brute force similarity computation")
+        
+        for candidate_id, candidate_feature_dict in candidate_features:
+            # Skip matching against self
+            if candidate_id == product_id:
+                continue
+            
+            try:
+                # Validate candidate features exist
+                if not candidate_feature_dict:
+                    logger.warning(f"Product {candidate_id} has no features, skipping")
+                    warnings_list.append(f"Product {candidate_id} has no features")
+                    failed_count += 1
+                    data_quality_issues['missing_features'] += 1
+                    errors_list.append({
+                        'product_id': candidate_id,
+                        'error': 'Missing features',
+                        'error_code': 'MISSING_FEATURES'
+                    })
+                    if not skip_invalid_products:
+                        raise MissingFeaturesError(candidate_id)
+                    continue
+                
+                # Validate candidate feature arrays
+                from matching_utils import validate_candidate_features_quick
+                
+                if not validate_candidate_features_quick(candidate_feature_dict):
+                    warnings_list.append(f"Product {candidate_id} has corrupted features")
+                    failed_count += 1
+                    data_quality_issues['corrupted_features'] += 1
+                    errors_list.append({
+                        'product_id': candidate_id,
+                        'error': 'Corrupted or invalid features',
+                        'error_code': 'CORRUPTED_FEATURES'
+                    })
+                    if not skip_invalid_products:
+                        raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
+                    continue
+                
+                # Compute similarity with error handling
+                try:
+                    if use_clip:
+                        # CLIP mode: use cosine similarity on embeddings
+                        # CLIP embeddings are stored in color_features column with embedding_type='clip'
+                        if candidate_feature_dict.get('embedding_type') == 'clip':
+                            candidate_embedding = candidate_feature_dict['color_features']
+                        elif 'clip_embedding' in candidate_feature_dict:
+                            # Support explicit clip_embedding key (future enhancement)
+                            candidate_embedding = candidate_feature_dict['clip_embedding']
+                        else:
+                            logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
+                            warnings_list.append(f"Product {candidate_id} missing CLIP embedding")
+                            data_quality_issues['missing_features'] += 1
+                            failed_count += 1
+                            if not skip_invalid_products:
+                                raise MissingFeaturesError(candidate_id)
+                            continue
+                        
+                        # Validate candidate embedding
+                        if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
+                            logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array)")
+                            warnings_list.append(f"Product {candidate_id} has invalid CLIP embedding")
+                            data_quality_issues['corrupted_features'] += 1
+                            failed_count += 1
+                            if not skip_invalid_products:
+                                raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
+                            continue
+                        
+                        # Compute CLIP similarity
+                        similarity_score = compute_clip_similarity(query_embedding, candidate_embedding)
+                        
+                        # Create similarities dict compatible with legacy format
+                        similarities = {
+                            'combined_similarity': similarity_score,
+                            'color_similarity': similarity_score,  # For database storage compatibility
+                            'shape_similarity': similarity_score,
+                            'texture_similarity': similarity_score
+                        }
+                    else:
+                        # Legacy mode: use traditional features
+                        similarities = compute_all_similarities(
+                            query_features,
+                            candidate_feature_dict,
+                            color_weight=color_weight,
+                            shape_weight=shape_weight,
+                            texture_weight=texture_weight
+                        )
+                except (InvalidFeatureError, FeatureDimensionError) as e:
+                    logger.warning(f"Similarity computation failed for product {candidate_id}: {e.message}")
+                    warnings_list.append(f"Product {candidate_id}: {e.message}")
+                    failed_count += 1
+                    data_quality_issues['computation_errors'] += 1
+                    errors_list.append({
+                        'product_id': candidate_id,
+                        'error': e.message,
+                        'error_code': e.error_code,
+                        'suggestion': e.suggestion
+                    })
+                    if not skip_invalid_products:
+                        raise
+                    continue
+                except Exception as e:
+                    # Handle CLIP-specific errors
+                    logger.warning(f"Similarity computation failed for product {candidate_id}: {e}")
+                    warnings_list.append(f"Product {candidate_id}: {str(e)}")
+                    failed_count += 1
+                    data_quality_issues['computation_errors'] += 1
+                    errors_list.append({
+                        'product_id': candidate_id,
+                        'error': str(e),
+                        'error_code': 'SIMILARITY_ERROR'
+                    })
+                    if not skip_invalid_products:
+                        raise
+                    continue
+                
+                # Get candidate product details with error handling
+                try:
+                    candidate_product = get_product_by_id(candidate_id)
+                except Exception as e:
+                    logger.error(f"Database error retrieving product {candidate_id}: {e}")
+                    warnings_list.append(f"Product {candidate_id}: Database error")
+                    failed_count += 1
+                    errors_list.append({
+                        'product_id': candidate_id,
+                        'error': f'Database error: {str(e)}',
+                        'error_code': 'DATABASE_ERROR'
+                    })
+                    if not skip_invalid_products:
+                        raise
+                    continue
+                
+                if not candidate_product:
+                    logger.warning(f"Product {candidate_id} not found in database, skipping")
+                    warnings_list.append(f"Product {candidate_id} not found in database")
+                    failed_count += 1
+                    errors_list.append({
+                        'product_id': candidate_id,
+                        'error': 'Product not found',
+                        'error_code': 'PRODUCT_NOT_FOUND'
+                    })
+                    if not skip_invalid_products:
+                        raise ProductNotFoundError(candidate_id)
+                    continue
+                
+                # Handle missing metadata gracefully
+                from matching_utils import track_missing_metadata, create_match_result
+                
+                missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
+                
+                if missing_fields:
+                    logger.debug(f"Product {candidate_id} missing metadata: {missing_fields}")
+                
+                # Create match result
+                match_result = create_match_result(
+                    candidate_id,
+                    candidate_product,
+                    similarities,
+                    missing_fields
+                )
+                
+                matches.append(match_result)
+                successful_count += 1
+                
+            except (InvalidFeatureError, FeatureDimensionError, ProductNotFoundError, MissingFeaturesError) as e:
+                # These are already logged above, just re-raise if not skipping
                 if not skip_invalid_products:
                     raise
-                continue
+                
             except Exception as e:
-                # Handle CLIP-specific errors
-                logger.warning(f"Similarity computation failed for product {candidate_id}: {e}")
-                warnings_list.append(f"Product {candidate_id}: {str(e)}")
+                # Handle unexpected errors
+                logger.error(f"Unexpected error processing product {candidate_id}: {e}", exc_info=True)
+                warnings_list.append(f"Product {candidate_id}: Unexpected error - {str(e)}")
                 failed_count += 1
                 data_quality_issues['computation_errors'] += 1
                 errors_list.append({
                     'product_id': candidate_id,
                     'error': str(e),
-                    'error_code': 'SIMILARITY_ERROR'
+                    'error_code': 'UNKNOWN_ERROR',
+                    'suggestion': 'Check product data integrity and try re-extracting features'
                 })
                 if not skip_invalid_products:
                     raise
-                continue
-            
-            # Get candidate product details with error handling
-            try:
-                candidate_product = get_product_by_id(candidate_id)
-            except Exception as e:
-                logger.error(f"Database error retrieving product {candidate_id}: {e}")
-                warnings_list.append(f"Product {candidate_id}: Database error")
-                failed_count += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': f'Database error: {str(e)}',
-                    'error_code': 'DATABASE_ERROR'
-                })
-                if not skip_invalid_products:
-                    raise
-                continue
-            
-            if not candidate_product:
-                logger.warning(f"Product {candidate_id} not found in database, skipping")
-                warnings_list.append(f"Product {candidate_id} not found in database")
-                failed_count += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': 'Product not found',
-                    'error_code': 'PRODUCT_NOT_FOUND'
-                })
-                if not skip_invalid_products:
-                    raise ProductNotFoundError(candidate_id)
-                continue
-            
-            # Handle missing metadata gracefully
-            from matching_utils import track_missing_metadata, create_match_result
-            
-            missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
-            
-            if missing_fields:
-                logger.info(f"Product {candidate_id} missing metadata: {missing_fields}")
-            
-            # Create match result
-            match_result = create_match_result(
-                candidate_id,
-                candidate_product,
-                similarities,
-                missing_fields
-            )
-            
-            matches.append(match_result)
-            successful_count += 1
-            
-        except (InvalidFeatureError, FeatureDimensionError, ProductNotFoundError, MissingFeaturesError) as e:
-            # These are already logged above, just re-raise if not skipping
-            if not skip_invalid_products:
-                raise
-            
-        except Exception as e:
-            # Handle unexpected errors
-            logger.error(f"Unexpected error processing product {candidate_id}: {e}", exc_info=True)
-            warnings_list.append(f"Product {candidate_id}: Unexpected error - {str(e)}")
-            failed_count += 1
-            data_quality_issues['computation_errors'] += 1
-            errors_list.append({
-                'product_id': candidate_id,
-                'error': str(e),
-                'error_code': 'UNKNOWN_ERROR',
-                'suggestion': 'Check product data integrity and try re-extracting features'
-            })
-            if not skip_invalid_products:
-                raise
     
     # Step 7: Check if we have any successful matches
     if successful_count == 0:
@@ -720,135 +813,13 @@ def find_matches(
     if data_quality_issues['corrupted_features'] > 0:
         logger.warning(f"Data quality: {data_quality_issues['corrupted_features']} products with corrupted features")
     if data_quality_issues['missing_metadata'] > 0:
-        logger.info(f"Data quality: {data_quality_issues['missing_metadata']} products missing metadata")
+        logger.debug(f"Data quality: {data_quality_issues['missing_metadata']} products missing metadata")
     
     return result
 
 
-def batch_find_matches(
-    product_ids: List[int],
-    threshold: float = 0.0,
-    limit: int = 10,
-    match_against_all: bool = False,
-    include_uncategorized: bool = True,
-    color_weight: float = 0.5,
-    shape_weight: float = 0.3,
-    texture_weight: float = 0.2,
-    store_matches: bool = True,
-    continue_on_error: bool = True,
-    skip_invalid_products: bool = True
-) -> Dict[str, Any]:
-    """
-    Find matches for multiple products in batch.
-    
-    This function processes multiple products and isolates errors so that
-    one failure doesn't stop the entire batch. Handles real-world data issues
-    gracefully across all products.
-    
-    Args:
-        product_ids: List of product IDs to match
-        threshold: Minimum similarity score (0-100)
-        limit: Maximum matches per product
-        match_against_all: Match against all categories
-        include_uncategorized: Include NULL category products
-        color_weight: Weight for color similarity
-        shape_weight: Weight for shape similarity
-        texture_weight: Weight for texture similarity
-        store_matches: Store results in database
-        continue_on_error: If True, continue processing on errors
-        skip_invalid_products: If True, skip products with data issues
-    
-    Returns:
-        Dictionary with:
-        - 'results': List of match results per product
-        - 'summary': Summary statistics including data quality metrics
-        - 'errors': List of products that failed
-    
-    Requirements: 6.1, 6.2, 6.3
-    """
-    logger.info(f"Batch matching {len(product_ids)} products")
-    
-    results = []
-    errors = []
-    successful = 0
-    failed = 0
-    
-    for product_id in product_ids:
-        try:
-            match_result = find_matches(
-                product_id=product_id,
-                threshold=threshold,
-                limit=limit,
-                match_against_all=match_against_all,
-                include_uncategorized=include_uncategorized,
-                color_weight=color_weight,
-                shape_weight=shape_weight,
-                texture_weight=texture_weight,
-                store_matches=store_matches,
-                skip_invalid_products=skip_invalid_products
-            )
-            
-            results.append({
-                'product_id': product_id,
-                'status': 'success',
-                'match_count': len(match_result['matches']),
-                'matches': match_result['matches'],
-                'warnings': match_result['warnings'],
-                'data_quality_issues': match_result.get('data_quality_issues', {}),
-                'data_quality_summary': match_result.get('data_quality_summary', {})
-            })
-            
-            successful += 1
-            
-        except (ProductNotFoundError, MissingFeaturesError, EmptyCatalogError, AllMatchesFailedError) as e:
-            logger.error(f"Failed to match product {product_id}: {e.message}")
-            
-            error_info = {
-                'product_id': product_id,
-                'status': 'failed',
-                'error': e.message,
-                'error_code': e.error_code,
-                'suggestion': e.suggestion
-            }
-            
-            errors.append(error_info)
-            results.append(error_info)
-            failed += 1
-            
-            if not continue_on_error:
-                break
-                
-        except Exception as e:
-            logger.error(f"Unexpected error matching product {product_id}: {e}")
-            
-            error_info = {
-                'product_id': product_id,
-                'status': 'failed',
-                'error': str(e),
-                'error_code': 'UNKNOWN_ERROR'
-            }
-            
-            errors.append(error_info)
-            results.append(error_info)
-            failed += 1
-            
-            if not continue_on_error:
-                break
-    
-    summary = {
-        'total_products': len(product_ids),
-        'successful': successful,
-        'failed': failed,
-        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0
-    }
-    
-    logger.info(f"Batch matching complete: {successful} successful, {failed} failed")
-    
-    return {
-        'results': results,
-        'summary': summary,
-        'errors': errors if errors else None
-    }
+# NOTE: batch_find_matches is defined later (line ~2016) with parallel processing
+# The parallel version is the one that's actually used
 
 
 def get_match_statistics(product_id: int) -> Dict[str, Any]:
@@ -921,6 +892,13 @@ def compute_sku_similarity(sku1: Optional[str], sku2: Optional[str]) -> float:
     if sku1 == sku2:
         return 100.0
     
+    # OPTIMIZATION: Quick reject based on length difference
+    # If SKUs differ by more than 5 characters, they're probably not similar
+    # This avoids expensive Levenshtein calculation
+    len_diff = abs(len(sku1) - len(sku2))
+    if len_diff > 5:
+        return 0.0
+    
     # Levenshtein distance
     distance = levenshtein_distance(sku1, sku2)
     max_len = max(len(sku1), len(sku2))
@@ -975,6 +953,13 @@ def compute_name_similarity(name1: Optional[str], name2: Optional[str]) -> float
     # Exact match after cleaning
     if name1_clean == name2_clean:
         return 100.0
+    
+    # OPTIMIZATION: Quick reject based on length difference
+    # If names differ by more than 15 characters, they're probably not similar
+    # This avoids expensive Levenshtein calculation
+    len_diff = abs(len(name1_clean) - len(name2_clean))
+    if len_diff > 15:
+        return 0.0
     
     # Levenshtein distance
     distance = levenshtein_distance(name1_clean, name2_clean)
@@ -1286,178 +1271,312 @@ def find_hybrid_matches(
     
     price_lookup, performance_lookup = batch_fetch_metadata(logger)
     
-    # Step 6: Compute hybrid similarities
+    # Step 6: Compute hybrid similarities with FAISS acceleration (if available)
     matches = []
     successful_count = 0
     failed_count = 0
     
-    for candidate_id, candidate_feature_dict in candidate_features:
-        # Skip self
-        if candidate_id == product_id:
-            continue
-        
+    # Try FAISS fast path for CLIP embeddings (same as Mode 1)
+    faiss_used = False
+    if use_clip:
         try:
-            # Validate candidate features
-            if not candidate_feature_dict:
-                data_quality_issues['missing_features'] += 1
-                failed_count += 1
-                if not skip_invalid_products:
-                    raise MissingFeaturesError(candidate_id)
-                continue
+            from faiss_index import faiss_manager
             
-            from matching_utils import validate_candidate_features_quick
+            # Check if FAISS index exists for this category
+            search_category = normalized_category if not match_against_all else None
             
-            if not validate_candidate_features_quick(candidate_feature_dict):
-                data_quality_issues['corrupted_features'] += 1
-                failed_count += 1
-                if not skip_invalid_products:
-                    raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
-                continue
-            
-            # Compute visual similarities
-            try:
-                if use_clip:
-                    # CLIP mode: use cosine similarity on embeddings
-                    # CLIP embeddings are stored in color_features column with embedding_type='clip'
-                    if candidate_feature_dict.get('embedding_type') == 'clip':
-                        candidate_embedding = candidate_feature_dict['color_features']
-                    elif 'clip_embedding' in candidate_feature_dict:
-                        # Support explicit clip_embedding key (future enhancement)
-                        candidate_embedding = candidate_feature_dict['clip_embedding']
-                    else:
-                        logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
-                        data_quality_issues['missing_features'] += 1
-                        failed_count += 1
-                        if not skip_invalid_products:
-                            raise MissingFeaturesError(candidate_id)
-                        continue
+            if faiss_manager.has_index(search_category):
+                logger.info(f"Hybrid mode: Using FAISS fast path for visual similarity in category '{search_category}'")
+                
+                # Search with FAISS (returns top visual candidates quickly)
+                k = min(limit * 10 if limit > 0 else 1000, len(candidate_features))
+                distances, candidate_ids = faiss_manager.search(
+                    search_category,
+                    query_embedding,
+                    k=k,
+                    threshold=0.0  # No threshold - we'll filter by combined score later
+                )
+                
+                if distances is not None and candidate_ids is not None:
+                    faiss_used = True
+                    logger.info(f"FAISS returned {len(candidate_ids)} visual candidates for hybrid matching")
                     
-                    # Validate candidate embedding
-                    if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
-                        logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array, got {type(candidate_embedding)} with shape {candidate_embedding.shape if isinstance(candidate_embedding, np.ndarray) else 'N/A'})")
-                        data_quality_issues['corrupted_features'] += 1
-                        failed_count += 1
-                        if not skip_invalid_products:
-                            raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
-                        continue
+                    # Process FAISS results and add metadata scoring
+                    for visual_score_raw, candidate_id in zip(distances, candidate_ids):
+                        # Skip self
+                        if candidate_id == product_id:
+                            continue
+                        
+                        try:
+                            # Get candidate product details
+                            candidate_product = get_product_by_id(candidate_id)
+                            
+                            if not candidate_product:
+                                logger.warning(f"Product {candidate_id} not found in database, skipping")
+                                failed_count += 1
+                                continue
+                            
+                            # Convert FAISS distance (0-1 cosine similarity) to 0-100 scale
+                            visual_score = float(visual_score_raw) * 100.0
+                            
+                            # Extract candidate metadata
+                            cand_sku = candidate_product['sku'] if candidate_product['sku'] else None
+                            cand_name = candidate_product['product_name'] if candidate_product['product_name'] else None
+                            cand_category = candidate_product['category'] if candidate_product['category'] else None
+                            
+                            # Get candidate price and performance from cache
+                            cand_price = price_lookup.get(candidate_id)
+                            cand_performance = performance_lookup.get(candidate_id)
+                            
+                            # Track missing metadata
+                            if not cand_sku:
+                                data_quality_issues['missing_sku'] += 1
+                            if not cand_name:
+                                data_quality_issues['missing_name'] += 1
+                            if not cand_category:
+                                data_quality_issues['missing_category'] += 1
+                            if not cand_price:
+                                data_quality_issues['missing_price'] += 1
+                            if not cand_performance:
+                                data_quality_issues['missing_performance'] += 1
+                            
+                            # Compute metadata similarities
+                            sku_sim = compute_sku_similarity(query_sku, cand_sku)
+                            name_sim = compute_name_similarity(query_name, cand_name)
+                            category_sim = compute_category_similarity(query_category, cand_category)
+                            price_sim = compute_price_similarity(query_price, cand_price)
+                            performance_sim = compute_performance_similarity(query_performance, cand_performance)
+                            
+                            # Compute combined metadata score
+                            metadata_score = (
+                                sku_sim * sku_weight +
+                                name_sim * name_weight +
+                                category_sim * category_weight +
+                                price_sim * price_weight +
+                                performance_sim * performance_weight
+                            )
+                            
+                            # Compute hybrid score (weighted combination)
+                            combined_score = (
+                                visual_weight * visual_score +
+                                metadata_weight * metadata_score
+                            )
+                            
+                            # Create match result
+                            match_result = {
+                                'product_id': candidate_id,
+                                'image_path': candidate_product['image_path'] if candidate_product['image_path'] else '',
+                                'category': cand_category,
+                                'product_name': cand_name,
+                                'sku': cand_sku,
+                                'similarity_score': combined_score,
+                                'visual_score': visual_score,
+                                'metadata_score': metadata_score,
+                                'sku_score': sku_sim,
+                                'name_score': name_sim,
+                                'category_score': category_sim,
+                                'price_score': price_sim,
+                                'performance_score': performance_sim,
+                                'color_score': visual_score,  # For database compatibility
+                                'shape_score': visual_score,
+                                'texture_score': visual_score,
+                                'is_potential_duplicate': combined_score > 90,
+                                'created_at': candidate_product['created_at'] if candidate_product['created_at'] else '',
+                                'has_missing_data': not all([cand_sku, cand_name, cand_category, cand_price, cand_performance])
+                            }
+                            
+                            matches.append(match_result)
+                            successful_count += 1
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing FAISS result for product {candidate_id}: {e}")
+                            failed_count += 1
+                            data_quality_issues['computation_errors'] += 1
+                            if not skip_invalid_products:
+                                raise
                     
-                    # Compute CLIP similarity
-                    visual_score = compute_clip_similarity(query_embedding, candidate_embedding)
-                    
-                    # No sub-scores for CLIP (unified visual similarity)
-                    color_score = None
-                    shape_score = None
-                    texture_score = None
+                    logger.info(f"Hybrid FAISS fast path complete: {successful_count} matches, {failed_count} failed")
                 else:
-                    # Legacy mode: use traditional features
-                    visual_similarities = compute_all_similarities(
-                        query_features,
-                        candidate_feature_dict,
-                        color_weight=0.5,  # Default weights for legacy mode
-                        shape_weight=0.3,
-                        texture_weight=0.2
-                    )
-                    visual_score = visual_similarities['combined_similarity']
-                    color_score = visual_similarities['color_similarity']
-                    shape_score = visual_similarities['shape_similarity']
-                    texture_score = visual_similarities['texture_similarity']
+                    logger.warning("FAISS search returned None, falling back to brute force")
+            else:
+                logger.info(f"FAISS index not available for category '{search_category}', using brute force")
+                
+        except ImportError:
+            logger.warning("FAISS not available (install faiss-cpu), using brute force")
+        except Exception as e:
+            logger.error(f"FAISS search failed: {e}, falling back to brute force", exc_info=True)
+    
+    # Fallback to brute force if FAISS not used
+    if not faiss_used:
+        logger.info("Hybrid mode: Using brute force similarity computation")
+        
+        for candidate_id, candidate_feature_dict in candidate_features:
+            # Skip self
+            if candidate_id == product_id:
+                continue
+            
+            try:
+                # Validate candidate features
+                if not candidate_feature_dict:
+                    data_quality_issues['missing_features'] += 1
+                    failed_count += 1
+                    if not skip_invalid_products:
+                        raise MissingFeaturesError(candidate_id)
+                    continue
+                
+                from matching_utils import validate_candidate_features_quick
+                
+                if not validate_candidate_features_quick(candidate_feature_dict):
+                    data_quality_issues['corrupted_features'] += 1
+                    failed_count += 1
+                    if not skip_invalid_products:
+                        raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
+                    continue
+                
+                # Compute visual similarities
+                try:
+                    if use_clip:
+                        # CLIP mode: use cosine similarity on embeddings
+                        # CLIP embeddings are stored in color_features column with embedding_type='clip'
+                        if candidate_feature_dict.get('embedding_type') == 'clip':
+                            candidate_embedding = candidate_feature_dict['color_features']
+                        elif 'clip_embedding' in candidate_feature_dict:
+                            # Support explicit clip_embedding key (future enhancement)
+                            candidate_embedding = candidate_feature_dict['clip_embedding']
+                        else:
+                            logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
+                            data_quality_issues['missing_features'] += 1
+                            failed_count += 1
+                            if not skip_invalid_products:
+                                raise MissingFeaturesError(candidate_id)
+                            continue
+                        
+                        # Validate candidate embedding
+                        if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
+                            logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array, got {type(candidate_embedding)} with shape {candidate_embedding.shape if isinstance(candidate_embedding, np.ndarray) else 'N/A'})")
+                            data_quality_issues['corrupted_features'] += 1
+                            failed_count += 1
+                            if not skip_invalid_products:
+                                raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
+                            continue
+                        
+                        # Compute CLIP similarity
+                        visual_score = compute_clip_similarity(query_embedding, candidate_embedding)
+                        
+                        # No sub-scores for CLIP (unified visual similarity)
+                        color_score = None
+                        shape_score = None
+                        texture_score = None
+                    else:
+                        # Legacy mode: use traditional features
+                        visual_similarities = compute_all_similarities(
+                            query_features,
+                            candidate_feature_dict,
+                            color_weight=0.5,  # Default weights for legacy mode
+                            shape_weight=0.3,
+                            texture_weight=0.2
+                        )
+                        visual_score = visual_similarities['combined_similarity']
+                        color_score = visual_similarities['color_similarity']
+                        shape_score = visual_similarities['shape_similarity']
+                        texture_score = visual_similarities['texture_similarity']
+                except Exception as e:
+                    logger.warning(f"Visual similarity failed for product {candidate_id}: {e}")
+                    data_quality_issues['corrupted_features'] += 1
+                    failed_count += 1
+                    if not skip_invalid_products:
+                        raise
+                    continue
+                
+                # Get candidate product details
+                candidate_product = get_product_by_id(candidate_id)
+                if not candidate_product:
+                    failed_count += 1
+                    if not skip_invalid_products:
+                        raise ProductNotFoundError(candidate_id)
+                    continue
+                
+                # Extract candidate metadata
+                cand_sku = candidate_product['sku'] if candidate_product['sku'] else None
+                cand_name = candidate_product['product_name'] if candidate_product['product_name'] else None
+                cand_category = candidate_product['category'] if candidate_product['category'] else None
+                
+                # Get candidate price and performance from cache
+                cand_price = price_lookup.get(candidate_id)
+                cand_performance = performance_lookup.get(candidate_id)
+                
+                # Track missing metadata
+                if not cand_sku:
+                    data_quality_issues['missing_sku'] += 1
+                if not cand_name:
+                    data_quality_issues['missing_name'] += 1
+                if not cand_category:
+                    data_quality_issues['missing_category'] += 1
+                if not cand_price:
+                    data_quality_issues['missing_price'] += 1
+                if not cand_performance:
+                    data_quality_issues['missing_performance'] += 1
+                
+                # Compute metadata similarities
+                sku_sim = compute_sku_similarity(query_sku, cand_sku)
+                name_sim = compute_name_similarity(query_name, cand_name)
+                category_sim = compute_category_similarity(query_category, cand_category)
+                price_sim = compute_price_similarity(query_price, cand_price)
+                performance_sim = compute_performance_similarity(query_performance, cand_performance)
+                
+                # Compute weighted metadata score
+                metadata_score = (
+                    sku_sim * sku_weight +
+                    name_sim * name_weight +
+                    category_sim * category_weight +
+                    price_sim * price_weight +
+                    performance_sim * performance_weight
+                )
+                
+                # Compute hybrid score
+                hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
+                
+                # Create match result
+                match_result = {
+                    'product_id': candidate_id,
+                    'image_path': candidate_product['image_path'] if candidate_product['image_path'] else '',
+                    'category': cand_category,
+                    'product_name': cand_name,
+                    'sku': cand_sku,
+                    'similarity_score': hybrid_score,
+                    'visual_score': visual_score,
+                    'metadata_score': metadata_score,
+                    'sku_score': sku_sim,
+                    'name_score': name_sim,
+                    'category_score': category_sim,
+                    'price_score': price_sim,
+                    'performance_score': performance_sim,
+                    'is_potential_duplicate': hybrid_score > 90,
+                    'created_at': candidate_product['created_at'] if candidate_product['created_at'] else '',
+                    'has_missing_data': not all([cand_sku, cand_name, cand_category, cand_price, cand_performance]),
+                    'visual_mode': 'clip' if use_clip else 'legacy'
+                }
+                
+                # Add legacy sub-scores only if in legacy mode
+                if not use_clip:
+                    match_result['color_score'] = color_score
+                    match_result['shape_score'] = shape_score
+                    match_result['texture_score'] = texture_score
+                
+                matches.append(match_result)
+                successful_count += 1
+                
             except Exception as e:
-                logger.warning(f"Visual similarity failed for product {candidate_id}: {e}")
-                data_quality_issues['corrupted_features'] += 1
+                logger.error(f"Error processing candidate {candidate_id}: {e}")
                 failed_count += 1
+                data_quality_issues['invalid_data'] += 1
+                errors_list.append({
+                    'product_id': candidate_id,
+                    'error': str(e),
+                    'error_code': 'PROCESSING_ERROR'
+                })
                 if not skip_invalid_products:
                     raise
-                continue
-            
-            # Get candidate product details
-            candidate_product = get_product_by_id(candidate_id)
-            if not candidate_product:
-                failed_count += 1
-                if not skip_invalid_products:
-                    raise ProductNotFoundError(candidate_id)
-                continue
-            
-            # Extract candidate metadata
-            cand_sku = candidate_product['sku'] if candidate_product['sku'] else None
-            cand_name = candidate_product['product_name'] if candidate_product['product_name'] else None
-            cand_category = candidate_product['category'] if candidate_product['category'] else None
-            
-            # Get candidate price and performance from cache
-            cand_price = price_lookup.get(candidate_id)
-            cand_performance = performance_lookup.get(candidate_id)
-            
-            # Track missing metadata
-            if not cand_sku:
-                data_quality_issues['missing_sku'] += 1
-            if not cand_name:
-                data_quality_issues['missing_name'] += 1
-            if not cand_category:
-                data_quality_issues['missing_category'] += 1
-            if not cand_price:
-                data_quality_issues['missing_price'] += 1
-            if not cand_performance:
-                data_quality_issues['missing_performance'] += 1
-            
-            # Compute metadata similarities
-            sku_sim = compute_sku_similarity(query_sku, cand_sku)
-            name_sim = compute_name_similarity(query_name, cand_name)
-            category_sim = compute_category_similarity(query_category, cand_category)
-            price_sim = compute_price_similarity(query_price, cand_price)
-            performance_sim = compute_performance_similarity(query_performance, cand_performance)
-            
-            # Compute weighted metadata score
-            metadata_score = (
-                sku_sim * sku_weight +
-                name_sim * name_weight +
-                category_sim * category_weight +
-                price_sim * price_weight +
-                performance_sim * performance_weight
-            )
-            
-            # Compute hybrid score
-            hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
-            
-            # Create match result
-            match_result = {
-                'product_id': candidate_id,
-                'image_path': candidate_product['image_path'] if candidate_product['image_path'] else '',
-                'category': cand_category,
-                'product_name': cand_name,
-                'sku': cand_sku,
-                'similarity_score': hybrid_score,
-                'visual_score': visual_score,
-                'metadata_score': metadata_score,
-                'sku_score': sku_sim,
-                'name_score': name_sim,
-                'category_score': category_sim,
-                'price_score': price_sim,
-                'performance_score': performance_sim,
-                'is_potential_duplicate': hybrid_score > 90,
-                'created_at': candidate_product['created_at'] if candidate_product['created_at'] else '',
-                'has_missing_data': not all([cand_sku, cand_name, cand_category, cand_price, cand_performance]),
-                'visual_mode': 'clip' if use_clip else 'legacy'
-            }
-            
-            # Add legacy sub-scores only if in legacy mode
-            if not use_clip:
-                match_result['color_score'] = color_score
-                match_result['shape_score'] = shape_score
-                match_result['texture_score'] = texture_score
-            
-            matches.append(match_result)
-            successful_count += 1
-            
-        except Exception as e:
-            logger.error(f"Error processing candidate {candidate_id}: {e}")
-            failed_count += 1
-            data_quality_issues['invalid_data'] += 1
-            errors_list.append({
-                'product_id': candidate_id,
-                'error': str(e),
-                'error_code': 'PROCESSING_ERROR'
-            })
-            if not skip_invalid_products:
-                raise
     
     # Step 7: Sort and filter
     matches.sort(key=lambda x: x['similarity_score'], reverse=True)
