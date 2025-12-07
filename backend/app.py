@@ -93,7 +93,6 @@ try:
 except Exception as e:
     logger.warning(f"Could not build FAISS indexes: {e}. Similarity search will use brute force.")
 
-
 # Memory leak fix: Add cleanup handlers for app shutdown
 # DISABLED: This was running after EVERY request, killing performance
 # The CLIP model should stay cached in memory for fast processing
@@ -1202,14 +1201,14 @@ def batch_upload_products():
                     logger.error(f"[BATCH-UPLOAD] Failed to batch insert remaining features: {e}")
         
         # Step 5: Rebuild FAISS indexes for affected categories
-        if is_historical:
-            logger.info("[BATCH-UPLOAD] Step 5: Rebuilding FAISS indexes")
-            try:
-                from database import rebuild_all_faiss_indexes
-                rebuild_all_faiss_indexes()
-                logger.info("[BATCH-UPLOAD] FAISS indexes rebuilt")
-            except Exception as e:
-                logger.warning(f"[BATCH-UPLOAD] Failed to rebuild FAISS indexes: {e}")
+        # Always rebuild FAISS indexes when new products are added (both historical and new)
+        logger.info("[BATCH-UPLOAD] Step 5: Rebuilding FAISS indexes")
+        try:
+            from database import rebuild_all_faiss_indexes
+            rebuild_all_faiss_indexes()
+            logger.info("[BATCH-UPLOAD] FAISS indexes rebuilt")
+        except Exception as e:
+            logger.warning(f"[BATCH-UPLOAD] Failed to rebuild FAISS indexes: {e}")
         
         # Prepare response
         results = []

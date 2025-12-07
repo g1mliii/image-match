@@ -620,6 +620,7 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
             
             # Try to move to device with GPU fallback to CPU
             try:
+                # Move model to device (this will fail if GPU is not working)
                 model = model.to(device)
                 
                 # Optimize for Intel GPU if available
@@ -635,12 +636,12 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
             except Exception as gpu_error:
                 # GPU failed, fallback to CPU
                 if device != 'cpu':
-                    logger.warning(f"Failed to load model on {device}: {gpu_error}")
-                    logger.info("Falling back to CPU...")
+                    logger.warning(f"[CLIP-LOAD] Failed to load model on {device}: {gpu_error}")
+                    logger.info("[CLIP-LOAD] Falling back to CPU...")
                     device = 'cpu'
                     try:
                         model = model.to(device)
-                        logger.info("CLIP model loaded successfully on CPU (GPU fallback)")
+                        logger.info("[CLIP-LOAD] ✓ Model loaded successfully on CPU (GPU fallback)")
                         if progress_callback:
                             progress_callback("GPU failed, using CPU...", 90)
                     except Exception as cpu_error:
@@ -912,6 +913,7 @@ def extract_clip_embedding(image_path: str, model_name: str = None,
         # Get CLIP model
         try:
             model, device = get_clip_model(model_name)
+
         except (CLIPModelError, CLIPModelDownloadError) as e:
             if fallback_to_legacy:
                 logger.warning(f"CLIP model failed to load, falling back to legacy features: {e.message}")
@@ -1252,8 +1254,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     
     # Get CLIP model
     model, device = get_clip_model(model_name)
-    logger.info(f"[CLIP-BATCH] Device: {device} (GPU batch processing enabled)" if device != 'cpu' else f"[CLIP-BATCH] Device: {device}")
-    
+
     # Determine if we should use multiprocessing
     # Only use multiprocessing for CPU mode with large batches
     # Threshold is higher (50+) due to model loading overhead in each worker
@@ -1385,6 +1386,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                 
                 logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ✓ Extracted {len(embeddings)} embeddings (512-dim each)")
                 
+
                 # Add successful results (optimized - pre-convert to float32)
                 embeddings = embeddings.astype(np.float32)
                 

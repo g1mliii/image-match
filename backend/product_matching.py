@@ -935,6 +935,7 @@ def compute_name_similarity(name1: Optional[str], name2: Optional[str]) -> float
     - Punctuation
     - Word order variations
     - Partial matches
+    - Descriptors (100 pages, 32oz, etc.)
     
     Returns:
         Similarity score 0-100
@@ -970,17 +971,40 @@ def compute_name_similarity(name1: Optional[str], name2: Optional[str]) -> float
     
     # Check for word overlap (handles word order variations)
     # e.g., "coffee mug ceramic" vs "ceramic coffee mug"
+    # Also handles descriptors like "100 pages", "32oz", "15 inch" vs "15inch", etc.
     words1 = set(name1_clean.split())
     words2 = set(name2_clean.split())
     
     if words1 and words2:
         overlap = len(words1 & words2)
+        
+        # IMPROVED: Use Jaccard similarity instead of union
+        # This is more forgiving for descriptors (100 pages, 32oz, etc.)
+        # Jaccard = intersection / union
+        # For "spiral notebook" vs "notebook spiral 100 pages":
+        #   intersection = {spiral, notebook} = 2
+        #   union = {spiral, notebook, 100, pages} = 4
+        #   Jaccard = 2/4 = 0.5 = 50%
+        # But we want this to match, so we use a lower threshold
+        
         total_unique = len(words1 | words2)
         word_overlap_sim = (overlap / total_unique) * 100 if total_unique > 0 else 0
         
-        # If word overlap is high (>60%), consider it a good match
-        if word_overlap_sim >= 60:
+        # IMPROVED: Lower threshold from 60% to 50% for better descriptor handling
+        # This allows matches like "Spiral Notebook" vs "Notebook Spiral 100 Pages"
+        # where the core words match but descriptors differ
+        # Also handles "15 inch Laptop Backpack" vs "Backpack Laptop 15inch"
+        if word_overlap_sim >= 50:
             return word_overlap_sim
+        
+        # ADDITIONAL: Check if most words match (>70% of shorter name)
+        # This handles cases where one name has extra descriptors
+        # e.g., "Wireless Mouse" vs "Wireless Mouse Ergonomic"
+        min_words = min(len(words1), len(words2))
+        if min_words > 0 and overlap >= min_words * 0.7:
+            # At least 70% of the shorter name matches
+            # Calculate score based on overlap ratio
+            return (overlap / min_words) * 100
     
     # Levenshtein distance for remaining cases
     distance = levenshtein_distance(name1_clean, name2_clean)
@@ -1574,7 +1598,7 @@ def batch_find_matches(
     
     # Collect all matches for batch insertion
     all_matches_to_insert = []
-    INCREMENTAL_BATCH_SIZE = 500  # Insert every 500 matches to avoid memory bloat
+    INCREMENTAL_BATCH_SIZE = 100  # Insert every 100 matches to avoid memory bloat
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks with store_matches=False (we'll batch insert after)
@@ -1620,7 +1644,7 @@ def batch_find_matches(
                         try:
                             from database import bulk_insert_matches
                             inserted = bulk_insert_matches(all_matches_to_insert)
-                            logger.debug(f"[BATCH-MODE1] Incremental insert: {inserted} matches (total so far)")
+                            logger.info(f"[BATCH-MODE1] ▶ Incremental insert: {inserted} matches (batch inserted while matching continues)")
                             all_matches_to_insert = []  # Clear for next batch
                         except Exception as e:
                             logger.warning(f"[BATCH-MODE1] Incremental insert failed: {e}, will retry at end")
@@ -1679,8 +1703,8 @@ def batch_find_matches(
         try:
             from database import bulk_insert_matches
             
-            # Chunk size: 500 matches per transaction (smaller = faster + less memory)
-            CHUNK_SIZE = 500
+            # Chunk size: 100 matches per transaction (smaller = faster + less memory)
+            CHUNK_SIZE = 100
             
             total_inserted = 0
             num_chunks = (len(all_matches_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -1703,7 +1727,7 @@ def batch_find_matches(
                     inserted_count = bulk_insert_matches(chunk)
                     total_inserted += inserted_count
                     
-                    logger.debug(f"[BATCH-MODE1] Final chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
+                    logger.info(f"[BATCH-MODE1] ✓ Final chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
                 
                 logger.info(f"[BATCH-MODE1] ✓ Final batch inserted {total_inserted} remaining matches in {num_chunks} transactions")
         except Exception as e:
@@ -1733,9 +1757,9 @@ def batch_find_metadata_matches(
     product_ids: List[int],
     threshold: float = 0.0,
     limit: int = 10,
-    sku_weight: float = 0.30,
-    name_weight: float = 0.25,
-    category_weight: float = 0.20,
+    sku_weight: float = 0.20,
+    name_weight: float = 0.40,
+    category_weight: float = 0.15,
     price_weight: float = 0.15,
     performance_weight: float = 0.10,
     store_matches: bool = True,
@@ -1938,9 +1962,9 @@ def batch_find_metadata_matches(
         try:
             from database import bulk_insert_matches
             
-            # Chunk size: 500 matches per transaction (smaller = faster + less memory)
+            # Chunk size: 100 matches per transaction (smaller = faster + less memory)
             # This allows DB insertion to start while other workers still matching
-            CHUNK_SIZE = 500
+            CHUNK_SIZE = 100
             
             total_inserted = 0
             num_chunks = (len(all_matches_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE

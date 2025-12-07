@@ -618,9 +618,9 @@ def batch_find_hybrid_matches(
         try:
             from database import bulk_insert_matches
             
-            # Chunk size: 500 matches per transaction (smaller = faster + less memory)
+            # Chunk size: 100 matches per transaction (smaller = faster + less memory)
             # This allows DB insertion to start while other workers still merging
-            CHUNK_SIZE = 500
+            CHUNK_SIZE = 100
             
             total_inserted = 0
             num_chunks = (len(all_matches_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE

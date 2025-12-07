@@ -4109,8 +4109,8 @@ function clearFolderUpload(section) {
 // Save state to localStorage
 function saveMainAppState() {
     const state = {
-        historicalAdvancedMode,
-        newAdvancedMode,
+        historicalMode,
+        newMode,
         timestamp: new Date().toISOString()
     };
     localStorage.setItem('mainAppState', JSON.stringify(state));
@@ -4123,12 +4123,12 @@ function loadMainAppState() {
         try {
             const state = JSON.parse(saved);
             
-            // Restore mode settings
-            if (state.historicalAdvancedMode) {
-                setMode('historical', 'advanced');
+            // Restore mode settings with actual mode values
+            if (state.historicalMode && ['visual', 'metadata', 'hybrid'].includes(state.historicalMode)) {
+                setMode('historical', state.historicalMode);
             }
-            if (state.newAdvancedMode) {
-                setMode('new', 'advanced');
+            if (state.newMode && ['visual', 'metadata', 'hybrid'].includes(state.newMode)) {
+                setMode('new', state.newMode);
             }
         } catch (e) {
             console.error('Failed to load main app state:', e);
