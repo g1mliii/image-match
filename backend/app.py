@@ -7,11 +7,11 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 
 from database import (
-    init_db, insert_product, get_product_by_id, get_features_by_product_id,
+    init_db, insert_product, bulk_insert_products, get_product_by_id, get_features_by_product_id,
     insert_features, validate_sku_format, normalize_sku, check_sku_exists,
     insert_price_history, bulk_insert_price_history, get_price_history,
     get_price_statistics, link_price_history, get_products_with_price_history,
-    insert_performance_history, bulk_insert_performance_history, get_performance_history,
+    insert_performance_history, bulk_insert_performance_history, bulk_insert_performance_history_batch, get_performance_history,
     get_performance_statistics, link_performance_history, get_products_with_performance_history,
     get_catalog_stats, get_products_paginated, get_all_categories, update_product,
     delete_product, bulk_delete_products, bulk_update_products, clear_products_by_type,
@@ -30,9 +30,14 @@ from feature_extraction_service import (
 from product_matching import (
     find_matches,
     find_metadata_matches,
-    find_hybrid_matches,
+    batch_find_matches,
+    batch_find_metadata_matches,
     MatchingError, ProductNotFoundError, MissingFeaturesError,
     EmptyCatalogError, AllMatchesFailedError
+)
+from hybrid_matching import (
+    find_hybrid_matches,
+    batch_find_hybrid_matches
 )
 from validation_utils import (
     validate_category, validate_product_name, validate_sku,
@@ -418,6 +423,194 @@ def create_metadata_product():
             status_code=500
         )
 
+
+@app.route('/api/products/metadata/batch', methods=['POST'])
+def create_metadata_products_batch():
+    """
+    Create multiple metadata-only products in one batch (Mode 2 CSV import).
+    
+    JSON body:
+    {
+        "products": [
+            {
+                "sku": "SKU001",
+                "product_name": "Product 1",
+                "category": "Electronics",
+                "is_historical": true,
+                "performance_history": [100, 150, 200]
+            },
+            ...
+        ]
+    }
+    
+    Returns:
+    - 200: Success with product_ids
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return create_error_response(
+                'MISSING_DATA',
+                'No JSON data provided',
+                'Please provide products array in JSON format',
+                status_code=400
+            )
+        
+        products = data.get('products', [])
+        
+        if not products or not isinstance(products, list):
+            return create_error_response(
+                'INVALID_PRODUCTS',
+                'products must be a non-empty array',
+                'Example: {"products": [{"sku": "SKU001", "product_name": "Product 1"}, ...]}',
+                status_code=400
+            )
+        
+        logger.info(f"[BATCH-METADATA] Starting batch creation for {len(products)} products")
+        
+        # Step 1: Validate all products (parallel validation)
+        logger.info("[BATCH-METADATA] Step 1: Validating products (parallel)")
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def validate_product(item):
+            i, product = item
+            sku = product.get('sku')
+            product_name = product.get('product_name')
+            
+            if not sku or not product_name:
+                return None, f'Product {i+1}: SKU and product_name are required'
+            
+            category = product.get('category', None)
+            is_historical = product.get('is_historical', False)
+            
+            # Normalize empty strings to None
+            if category and str(category).strip() == '':
+                category = None
+            
+            return {
+                'sku': sku,
+                'product_name': product_name,
+                'category': category,
+                'is_historical': is_historical,
+                'performance_history': product.get('performance_history', None)
+            }, None
+        
+        validated_products = []
+        validation_errors = []
+        
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = executor.map(validate_product, enumerate(products))
+            for validated, error in results:
+                if error:
+                    validation_errors.append(error)
+                else:
+                    validated_products.append(validated)
+        
+        if validation_errors:
+            return create_error_response(
+                'VALIDATION_ERROR',
+                validation_errors[0],
+                'Check all products have SKU and product_name',
+                status_code=400
+            )
+        
+        logger.info(f"[BATCH-METADATA] ✓ Validated {len(validated_products)} products")
+        
+        # Step 2: Batch insert products in chunks (incremental)
+        logger.info("[BATCH-METADATA] Step 2: Batch inserting products (chunked)")
+        from database import bulk_insert_products
+        
+        CHUNK_SIZE = 100
+        product_ids = []
+        
+        for chunk_idx in range(0, len(validated_products), CHUNK_SIZE):
+            chunk = validated_products[chunk_idx:chunk_idx + CHUNK_SIZE]
+            products_to_insert = [
+                ('[METADATA_ONLY]', p['category'], p['product_name'], p['sku'], p['is_historical'])
+                for p in chunk
+            ]
+            
+            chunk_ids = bulk_insert_products(products_to_insert)
+            product_ids.extend(chunk_ids)
+            logger.debug(f"[BATCH-METADATA] Chunk {chunk_idx // CHUNK_SIZE + 1}: Inserted {len(chunk_ids)} products")
+        
+        logger.info(f"[BATCH-METADATA] ✓ Inserted {len(product_ids)} products in {(len(validated_products) + CHUNK_SIZE - 1) // CHUNK_SIZE} chunks")
+        
+        # Step 3: Batch insert performance histories (chunked)
+        logger.info("[BATCH-METADATA] Step 3: Batch inserting performance histories (chunked)")
+        from datetime import timedelta
+        from database import bulk_insert_performance_history_batch
+        
+        all_perf_records = []
+        PERF_CHUNK_SIZE = 500  # Insert every 500 records
+        total_perf_inserted = 0
+        
+        for product_id, product in zip(product_ids, validated_products):
+            if product.get('performance_history') and isinstance(product['performance_history'], list):
+                try:
+                    today = datetime.now()
+                    perf_history = product['performance_history']
+                    
+                    for j, perf_value in enumerate(perf_history):
+                        if isinstance(perf_value, (int, float)) and perf_value >= 0:
+                            # Generate monthly dates going backwards
+                            date_obj = today - timedelta(days=30 * (len(perf_history) - 1 - j))
+                            date_str = date_obj.strftime('%Y-%m-%d')
+                            
+                            # Simple format: just sales numbers, rest are 0
+                            all_perf_records.append((
+                                product_id,
+                                date_str,
+                                int(perf_value),
+                                0,  # views
+                                0.0,  # conversion_rate
+                                0.0  # revenue
+                            ))
+                            
+                            # OPTIMIZATION: Insert incrementally to avoid memory bloat
+                            if len(all_perf_records) >= PERF_CHUNK_SIZE:
+                                try:
+                                    inserted = bulk_insert_performance_history_batch(all_perf_records)
+                                    total_perf_inserted += inserted
+                                    logger.debug(f"[BATCH-METADATA] Incremental perf insert: {inserted} records (total: {total_perf_inserted})")
+                                    all_perf_records = []
+                                except Exception as e:
+                                    logger.warning(f"[BATCH-METADATA] Incremental perf insert failed: {e}, will retry at end")
+                except Exception as e:
+                    logger.warning(f"Failed to process performance history for product {product_id}: {e}")
+        
+        # Insert remaining performance records
+        if all_perf_records:
+            try:
+                inserted = bulk_insert_performance_history_batch(all_perf_records)
+                total_perf_inserted += inserted
+                logger.info(f"[BATCH-METADATA] ✓ Final perf batch inserted {inserted} records (total: {total_perf_inserted})")
+            except Exception as e:
+                logger.warning(f"Failed to insert remaining performance histories: {e}")
+        
+        logger.info(f"[BATCH-METADATA] ✓ Complete! {len(product_ids)} products created successfully")
+        
+        return jsonify({
+            'success': True,
+            'product_ids': product_ids,
+            'count': len(product_ids),
+            'message': f'Successfully created {len(product_ids)} products',
+            'mode': 'metadata_batch'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error creating batch metadata products: {e}", exc_info=True)
+        return create_error_response(
+            'BATCH_CREATION_ERROR',
+            str(e),
+            'Failed to create batch of metadata products',
+            status_code=500
+        )
+
+
 @app.route('/api/products/upload', methods=['POST'])
 def upload_product():
     """
@@ -618,7 +811,12 @@ def upload_product():
         feature_error = None
         
         try:
+            logger.info(f"[UPLOAD-SINGLE] [EXTRACT] ▶ Starting feature extraction for product {product_id}")
+            logger.info(f"[UPLOAD-SINGLE] [EXTRACT] Using batch extraction internally (batch_size=1)")
+            
             features, embedding_type, embedding_version = extract_features_unified(filepath)
+            
+            logger.info(f"[UPLOAD-SINGLE] [EXTRACT] ✓ Extraction complete (type: {embedding_type}, version: {embedding_version})")
             
             # Store features in database with embedding type and version
             insert_features(
@@ -629,7 +827,7 @@ def upload_product():
                 embedding_type=embedding_type,
                 embedding_version=embedding_version
             )
-            logger.info(f"Features extracted and stored for product {product_id} (type: {embedding_type}, version: {embedding_version})")
+            logger.info(f"[UPLOAD-SINGLE] [EXTRACT] ✓ Features stored in database for product {product_id}")
             
             # Rebuild FAISS index for this category (new product added)
             if embedding_type == 'clip' and is_historical:
@@ -716,6 +914,357 @@ def upload_product():
             {'error': str(e)},
             status_code=500
         )
+
+
+@app.route('/api/products/batch-upload', methods=['POST'])
+def batch_upload_products():
+    """
+    Batch upload multiple products with images and optional metadata.
+    Uses parallel GPU batch processing for CLIP feature extraction.
+    
+    Form data (multipart/form-data):
+    - images: Multiple image files (required) - JPEG, PNG, or WebP
+    - categories: JSON array of categories (optional, same length as images or single value)
+    - product_names: JSON array of product names (optional, same length as images)
+    - skus: JSON array of SKUs (optional, same length as images)
+    - is_historical: Boolean (default: false)
+    
+    Returns:
+    - 200: Success with results for each product
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        logger.info("[BATCH-UPLOAD] Starting batch upload")
+        
+        # Get uploaded files
+        files = request.files.getlist('images')
+        
+        if not files or len(files) == 0:
+            return create_error_response(
+                'MISSING_IMAGES',
+                'No image files provided',
+                'Please upload at least one image file',
+                status_code=400
+            )
+        
+        logger.info(f"[BATCH-UPLOAD] Received {len(files)} images")
+        
+        # Get optional metadata arrays
+        import json
+        
+        categories = request.form.get('categories', None)
+        product_names = request.form.get('product_names', None)
+        skus = request.form.get('skus', None)
+        is_historical = request.form.get('is_historical', 'false').lower() == 'true'
+        
+        # Parse JSON arrays
+        try:
+            categories = json.loads(categories) if categories else [None] * len(files)
+            product_names = json.loads(product_names) if product_names else [None] * len(files)
+            skus = json.loads(skus) if skus else [None] * len(files)
+        except json.JSONDecodeError as e:
+            return create_error_response(
+                'INVALID_JSON',
+                f'Failed to parse metadata JSON: {str(e)}',
+                'Ensure categories, product_names, and skus are valid JSON arrays',
+                status_code=400
+            )
+        
+        # Validate array lengths
+        if len(categories) == 1 and len(files) > 1:
+            # Single category for all products
+            categories = categories * len(files)
+        
+        if len(categories) != len(files):
+            return create_error_response(
+                'ARRAY_LENGTH_MISMATCH',
+                f'categories array length ({len(categories)}) does not match number of images ({len(files)})',
+                'Provide one category per image or a single category for all',
+                status_code=400
+            )
+        
+        if len(product_names) != len(files):
+            return create_error_response(
+                'ARRAY_LENGTH_MISMATCH',
+                f'product_names array length ({len(product_names)}) does not match number of images ({len(files)})',
+                'Provide one product name per image',
+                status_code=400
+            )
+        
+        if len(skus) != len(files):
+            return create_error_response(
+                'ARRAY_LENGTH_MISMATCH',
+                f'skus array length ({len(skus)}) does not match number of images ({len(files)})',
+                'Provide one SKU per image',
+                status_code=400
+            )
+        
+        # Step 1: Save all files and validate (skip invalid ones, retry once)
+        logger.info("[BATCH-UPLOAD] Step 1: Saving and validating files")
+        
+        def process_files_batch(files_to_process, file_indices_to_process, attempt=1):
+            """Process a batch of files, return (saved_files, file_indices, skipped_files)"""
+            saved = []
+            indices = []
+            skipped = []
+            
+            for idx, (i, file) in enumerate(zip(file_indices_to_process, files_to_process)):
+                try:
+                    if file.filename == '':
+                        logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: Empty filename")
+                        skipped.append({'index': i, 'filename': 'unknown', 'reason': 'Empty filename'})
+                        continue
+                    
+                    if not allowed_file(file.filename):
+                        logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: Unsupported format ({file.filename})")
+                        skipped.append({'index': i, 'filename': file.filename, 'reason': 'Unsupported format'})
+                        continue
+                    
+                    # Save file
+                    filename = secure_filename(file.filename)
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    unique_filename = f"{timestamp}_{i}_{filename}"
+                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+                    
+                    file.save(filepath)
+                    logger.debug(f"[BATCH-UPLOAD] Attempt {attempt}: Saved file {i+1}/{len(files_to_process)}: {filepath}")
+                    
+                    # Validate image
+                    is_valid, error_msg, error_code = validate_image_file(filepath)
+                    if not is_valid:
+                        logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: {error_msg}")
+                        skipped.append({'index': i, 'filename': file.filename, 'reason': error_msg})
+                        try:
+                            os.remove(filepath)
+                        except:
+                            pass
+                        continue
+                    
+                    saved.append(filepath)
+                    indices.append(i)
+                    
+                except Exception as e:
+                    logger.error(f"[BATCH-UPLOAD] Attempt {attempt}: Error processing file {i+1}: {e}")
+                    skipped.append({'index': i, 'filename': file.filename, 'reason': str(e)})
+                    continue
+            
+            return saved, indices, skipped
+        
+        # First attempt: process all files
+        saved_files, file_indices, skipped_files = process_files_batch(files, list(range(len(files))), attempt=1)
+        
+        if len(skipped_files) > 0:
+            logger.info(f"[BATCH-UPLOAD] Attempt 1: Skipped {len(skipped_files)} files, processing {len(saved_files)} valid files")
+            
+            # Retry skipped files once
+            logger.info(f"[BATCH-UPLOAD] Retrying {len(skipped_files)} skipped files (Attempt 2)")
+            retry_files = [files[s['index']] for s in skipped_files]
+            retry_indices = [s['index'] for s in skipped_files]
+            
+            retry_saved, retry_indices_result, retry_skipped = process_files_batch(retry_files, retry_indices, attempt=2)
+            
+            # Merge retry results
+            saved_files.extend(retry_saved)
+            file_indices.extend(retry_indices_result)
+            
+            # Update skipped list with files that failed retry
+            skipped_files = retry_skipped
+            
+            if len(retry_saved) > 0:
+                logger.info(f"[BATCH-UPLOAD] Retry successful: {len(retry_saved)} files recovered, {len(retry_skipped)} still skipped")
+            else:
+                logger.info(f"[BATCH-UPLOAD] Retry failed: All {len(retry_skipped)} files still invalid")
+        
+        if len(saved_files) == 0:
+            return create_error_response(
+                'NO_VALID_FILES',
+                'No valid image files found in batch',
+                'All files were invalid or skipped',
+                status_code=400
+            )
+        
+        logger.info(f"[BATCH-UPLOAD] {len(saved_files)} files saved and validated (after retry)")
+        
+        # Step 2: Insert products into database (incremental to overlap with feature extraction)
+        logger.info("[BATCH-UPLOAD] Step 2: Inserting products into database (incremental)")
+        product_ids = []
+        PRODUCT_BATCH_SIZE = 32  # Insert every 32 products (matches GPU batch size)
+        
+        for i, filepath in enumerate(saved_files):
+            original_idx = file_indices[i]  # Map back to original file index
+            category = categories[original_idx]
+            product_name = product_names[original_idx]
+            sku = skus[original_idx]
+            
+            # Normalize empty strings to None
+            if category and str(category).strip() == '':
+                category = None
+            if product_name and str(product_name).strip() == '':
+                product_name = None
+            if sku and str(sku).strip() == '':
+                sku = None
+            
+            # Validate SKU if provided
+            if sku:
+                is_valid, error_msg = validate_sku_format(sku)
+                if not is_valid:
+                    logger.warning(f"[BATCH-UPLOAD] Invalid SKU for file {i+1}: {error_msg}")
+                    sku = None
+                else:
+                    sku = normalize_sku(sku)
+            
+            # Insert product
+            try:
+                product_id = insert_product(
+                    image_path=filepath,
+                    category=category,
+                    product_name=product_name,
+                    sku=sku,
+                    is_historical=is_historical
+                )
+                product_ids.append(product_id)
+                logger.debug(f"[BATCH-UPLOAD] Inserted product {i+1}/{len(saved_files)}: ID={product_id}")
+            except Exception as e:
+                logger.error(f"[BATCH-UPLOAD] Database error for file {i+1}: {e}")
+                # Continue with other products
+                product_ids.append(None)
+        
+        inserted_count = sum(1 for pid in product_ids if pid is not None)
+        logger.info(f"[BATCH-UPLOAD] Inserted {inserted_count}/{len(saved_files)} products")
+        
+        # Step 3: Extract features in batch (GPU-optimized parallel processing)
+        logger.info("[BATCH-UPLOAD] Step 3: Extracting features in batch (GPU-optimized)")
+        
+        from feature_extraction_service import batch_extract_features_unified
+        
+        # Only extract features for successfully inserted products
+        valid_indices = [i for i, pid in enumerate(product_ids) if pid is not None]
+        valid_filepaths = [saved_files[i] for i in valid_indices]
+        
+        if valid_filepaths:
+            feature_results = batch_extract_features_unified(valid_filepaths)
+            
+            # Step 4: Store features in database - INCREMENTAL BATCH INSERT
+            logger.info("[BATCH-UPLOAD] Step 4: Storing features in database (incremental batch insert)")
+            
+            from database import serialize_numpy_array, bulk_insert_features
+            
+            # Collect features for batch insert (incremental to avoid memory bloat)
+            features_to_insert = []
+            INCREMENTAL_BATCH_SIZE = 32  # Insert every 32 features (matches GPU batch size)
+            total_inserted = 0
+            
+            for idx, (filepath, features_dict, embedding_type, embedding_version, error_msg) in enumerate(feature_results):
+                original_idx = valid_indices[idx]
+                product_id = product_ids[original_idx]
+                
+                if features_dict is not None:
+                    try:
+                        # Serialize numpy arrays to bytes
+                        color_blob = serialize_numpy_array(features_dict['color_features'])
+                        shape_blob = serialize_numpy_array(features_dict['shape_features'])
+                        texture_blob = serialize_numpy_array(features_dict['texture_features'])
+                        
+                        # Add to batch
+                        features_to_insert.append((
+                            product_id,
+                            color_blob,
+                            shape_blob,
+                            texture_blob,
+                            embedding_type,
+                            embedding_version
+                        ))
+                        logger.debug(f"[BATCH-UPLOAD] Collected features for product {product_id}")
+                        
+                        # OPTIMIZATION: Insert incrementally to match GPU batch size
+                        # This starts inserting while GPU is still processing remaining images
+                        if len(features_to_insert) >= INCREMENTAL_BATCH_SIZE:
+                            try:
+                                inserted_count = bulk_insert_features(features_to_insert)
+                                total_inserted += inserted_count
+                                logger.debug(f"[BATCH-UPLOAD] Incremental insert: {inserted_count} features (total: {total_inserted})")
+                                features_to_insert = []  # Clear for next batch
+                            except Exception as e:
+                                logger.warning(f"[BATCH-UPLOAD] Incremental insert failed: {e}, will retry at end")
+                    except Exception as e:
+                        logger.error(f"[BATCH-UPLOAD] Failed to serialize features for product {product_id}: {e}")
+                else:
+                    logger.warning(f"[BATCH-UPLOAD] Feature extraction failed for product {product_id}: {error_msg}")
+            
+            # Batch insert remaining features
+            if features_to_insert:
+                try:
+                    inserted_count = bulk_insert_features(features_to_insert)
+                    total_inserted += inserted_count
+                    logger.info(f"[BATCH-UPLOAD] ✓ Final batch inserted {inserted_count} remaining feature records (total: {total_inserted})")
+                except Exception as e:
+                    logger.error(f"[BATCH-UPLOAD] Failed to batch insert remaining features: {e}")
+        
+        # Step 5: Rebuild FAISS indexes for affected categories
+        if is_historical:
+            logger.info("[BATCH-UPLOAD] Step 5: Rebuilding FAISS indexes")
+            try:
+                from database import rebuild_all_faiss_indexes
+                rebuild_all_faiss_indexes()
+                logger.info("[BATCH-UPLOAD] FAISS indexes rebuilt")
+            except Exception as e:
+                logger.warning(f"[BATCH-UPLOAD] Failed to rebuild FAISS indexes: {e}")
+        
+        # Prepare response
+        results = []
+        
+        # Add successful products
+        for i, product_id in enumerate(product_ids):
+            original_idx = file_indices[i]
+            if product_id is not None:
+                results.append({
+                    'index': original_idx,
+                    'status': 'success',
+                    'product_id': product_id,
+                    'filename': files[original_idx].filename
+                })
+            else:
+                results.append({
+                    'index': original_idx,
+                    'status': 'failed',
+                    'error': 'Database insertion failed',
+                    'filename': files[original_idx].filename
+                })
+        
+        # Add skipped files
+        for skipped in skipped_files:
+            results.append({
+                'index': skipped['index'],
+                'status': 'skipped',
+                'reason': skipped['reason'],
+                'filename': skipped['filename']
+            })
+        
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        skipped_count = len(skipped_files)
+        failed_count = sum(1 for r in results if r['status'] == 'failed')
+        
+        logger.info(f"[BATCH-UPLOAD] ✓ Complete! {success_count} successful, {failed_count} failed, {skipped_count} skipped")
+        
+        return jsonify({
+            'status': 'success',
+            'total': len(files),
+            'successful': success_count,
+            'failed': failed_count,
+            'skipped': skipped_count,
+            'results': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"[BATCH-UPLOAD] Unexpected error: {e}", exc_info=True)
+        return create_error_response(
+            'BATCH_UPLOAD_ERROR',
+            f'Batch upload failed: {str(e)}',
+            'Please try again',
+            status_code=500
+        )
+
 
 @app.route('/api/products/match', methods=['POST'])
 def match_products():
@@ -1031,6 +1580,194 @@ def match_products():
         return create_error_response(
             'UNKNOWN_ERROR',
             'An unexpected error occurred during matching',
+            'Please try again or contact support',
+            {'error': str(e)},
+            status_code=500
+        )
+
+@app.route('/api/products/batch-match', methods=['POST'])
+def batch_match_products():
+    """
+    Batch match multiple products with full parallelization.
+    
+    This endpoint processes multiple products in parallel using:
+    - Mode 1 (Visual): FAISS + GPU + ThreadPoolExecutor
+    - Mode 2 (Metadata): Batch fetching + ThreadPoolExecutor
+    - Mode 3 (Hybrid): Both modes in parallel, then merge
+    
+    Request body:
+    {
+        "product_ids": [1, 2, 3, ...],
+        "threshold": 50,
+        "limit": 10,
+        "visual_weight": 0.5,
+        "metadata_weight": 0.5,
+        "match_against_all": false
+    }
+    
+    Returns:
+    - 200: Success with batch results
+    - 400: Invalid request
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+        
+        # Validate request
+        if not data:
+            return create_error_response(
+                'INVALID_REQUEST',
+                'Request body is required',
+                'Send JSON with product_ids array',
+                status_code=400
+            )
+        
+        product_ids = data.get('product_ids', [])
+        if not product_ids or not isinstance(product_ids, list):
+            return create_error_response(
+                'INVALID_PRODUCT_IDS',
+                'product_ids must be a non-empty array',
+                'Example: {"product_ids": [1, 2, 3]}',
+                status_code=400
+            )
+        
+        # Get parameters
+        threshold = int(data.get('threshold', 0))
+        limit = int(data.get('limit', 10))
+        match_against_all = data.get('match_against_all', False)
+        
+        # Get weights
+        visual_weight = float(data.get('visual_weight', 0.5))
+        metadata_weight = float(data.get('metadata_weight', 0.5))
+        
+        # Validate weights
+        total_weight = visual_weight + metadata_weight
+        if not (0.99 <= total_weight <= 1.01):
+            return create_error_response(
+                'INVALID_WEIGHTS',
+                f'Weights must sum to 1.0, got {total_weight:.3f}',
+                'Adjust visual_weight and metadata_weight so they sum to 1.0',
+                status_code=400
+            )
+        
+        # Get metadata weights
+        sku_weight = float(data.get('sku_weight', 0.30))
+        name_weight = float(data.get('name_weight', 0.25))
+        category_weight = float(data.get('category_weight', 0.20))
+        price_weight = float(data.get('price_weight', 0.15))
+        performance_weight = float(data.get('performance_weight', 0.10))
+        
+        logger.info(f"[BATCH] Starting batch matching for {len(product_ids)} products")
+        logger.info(f"[BATCH] Weights - Visual: {visual_weight*100}%, Metadata: {metadata_weight*100}%")
+        logger.info(f"[BATCH] Parameters - Threshold: {threshold}, Limit: {limit}, Match all: {match_against_all}")
+        
+        # Determine matching mode based on weights
+        # Mode 1: visual_weight > 0 and metadata_weight == 0
+        # Mode 2: visual_weight == 0 and metadata_weight > 0
+        # Mode 3: both visual_weight > 0 and metadata_weight > 0
+        is_pure_visual = visual_weight > 0 and metadata_weight == 0
+        is_pure_metadata = visual_weight == 0 and metadata_weight > 0
+        is_hybrid = visual_weight > 0 and metadata_weight > 0
+        
+        # Call appropriate batch function
+        try:
+            if is_hybrid:
+                # Mode 3: Hybrid batch matching
+                logger.info(f"[BATCH] Mode 3 (Hybrid) - Processing {len(product_ids)} products in parallel")
+                logger.info(f"[BATCH] Mode 3 will run Mode 1 (Visual) and Mode 2 (Metadata) simultaneously")
+                result = batch_find_hybrid_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    visual_weight=visual_weight,
+                    metadata_weight=metadata_weight,
+                    sku_weight=sku_weight,
+                    name_weight=name_weight,
+                    category_weight=category_weight,
+                    price_weight=price_weight,
+                    performance_weight=performance_weight,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
+            elif is_pure_visual:
+                # Mode 1: Visual batch matching
+                logger.info(f"[BATCH] Mode 1 (Visual) - Processing {len(product_ids)} products in parallel")
+                result = batch_find_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    match_against_all=match_against_all,
+                    include_uncategorized=True,
+                    store_matches=True,
+                    skip_invalid_products=True
+                )
+            elif is_pure_metadata:
+                # Mode 2: Metadata batch matching
+                logger.info(f"[BATCH] Mode 2 (Metadata) - Processing {len(product_ids)} products in parallel")
+                logger.info(f"[BATCH] Mode 2 metadata weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight}, Price={price_weight}, Performance={performance_weight}")
+                logger.info(f"[BATCH] Mode 2 will use ThreadPoolExecutor for parallel metadata comparison (no GPU needed)")
+                result = batch_find_metadata_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    sku_weight=sku_weight,
+                    name_weight=name_weight,
+                    category_weight=category_weight,
+                    price_weight=price_weight,
+                    performance_weight=performance_weight,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
+            else:
+                # Fallback: shouldn't happen, but default to metadata
+                logger.warning(f"[BATCH] Unexpected weight combination: visual={visual_weight}, metadata={metadata_weight}. Defaulting to Mode 2 (Metadata)")
+                result = batch_find_metadata_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    sku_weight=sku_weight,
+                    name_weight=name_weight,
+                    category_weight=category_weight,
+                    price_weight=price_weight,
+                    performance_weight=performance_weight,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
+            
+            # Prepare response
+            response = {
+                'status': 'success',
+                'batch_size': len(product_ids),
+                'results': result['results'],
+                'summary': result['summary'],
+                'errors': result.get('errors', [])
+            }
+            
+            logger.info(f"[BATCH] ✓ Batch matching complete!")
+            logger.info(f"[BATCH] Results - Successful: {result['summary']['successful']}, Failed: {result['summary']['failed']}")
+            logger.info(f"[BATCH] Success rate: {result['summary']['success_rate']}%")
+            logger.info(f"[BATCH] Total matches found: {result['summary']['total_matches']}")
+            logger.info(f"[BATCH] Batch insert used: {result['summary']['batch_insert_used']}")
+            
+            return jsonify(response), 200
+            
+        except Exception as e:
+            logger.error(f"Batch matching failed: {e}", exc_info=True)
+            return create_error_response(
+                'BATCH_MATCHING_ERROR',
+                f'Batch matching failed: {str(e)}',
+                'Check product IDs and try again',
+                status_code=500
+            )
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in batch_match_products: {e}", exc_info=True)
+        return create_error_response(
+            'UNKNOWN_ERROR',
+            'An unexpected error occurred during batch matching',
             'Please try again or contact support',
             {'error': str(e)},
             status_code=500
@@ -1944,6 +2681,8 @@ def get_catalog_products():
         elif features == 'no_features':
             has_features = False
         
+        logger.info(f"[GET-PRODUCTS] Query: type={product_type}, is_historical={is_historical}, limit={limit}")
+        
         result = get_products_paginated(
             page=page,
             limit=limit,
@@ -1953,6 +2692,8 @@ def get_catalog_products():
             has_features=has_features,
             sort_by=sort_by
         )
+        
+        logger.info(f"[GET-PRODUCTS] Result: {result['total']} total products, {len(result['products'])} returned")
         
         return jsonify(result), 200
         

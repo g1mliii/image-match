@@ -4,12 +4,12 @@ Feature Extraction Service
 This module provides CLIP-based feature extraction for product matching.
 CLIP works on both GPU (fast) and CPU (slower but still accurate).
 
-No legacy fallback - CLIP only for simplicity and better accuracy.
+All extraction now uses batch processing internally for consistency and performance.
 """
 
 import numpy as np
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Import CLIP (required)
 try:
     from image_processing_clip import (
-        extract_clip_embedding,
+        batch_extract_clip_embeddings,
         is_clip_available,
         load_clip_config,
         CLIPModelError,
@@ -40,10 +40,10 @@ from image_processing import (
 
 
 def extract_features_unified(image_path: str) -> Tuple[Dict[str, np.ndarray], str, Optional[str]]:
-    """Extract features using CLIP (GPU or CPU)
+    """Extract features using CLIP (GPU or CPU) - delegates to batch extraction
     
-    This is the main entry point for feature extraction.
-    Always uses CLIP - no legacy fallback.
+    This function delegates to batch_extract_clip_embeddings() for consistency.
+    For multiple images, use batch_extract_features_unified() instead for better performance.
     
     Args:
         image_path: Path to image file
@@ -64,62 +64,91 @@ def extract_features_unified(image_path: str) -> Tuple[Dict[str, np.ndarray], st
             "Install PyTorch and sentence-transformers: pip install torch sentence-transformers"
         )
     
-    # Always use CLIP
-    return _extract_clip_features(image_path)
+    logger.info(f"[EXTRACT-SINGLE] ▶ Delegating to batch_extract_clip_embeddings (batch_size=1)")
+    logger.info(f"[EXTRACT-SINGLE] This uses GPU batch processing even for single images")
+    
+    # Use batch extraction even for single image (simpler, consistent, GPU-optimized)
+    results = batch_extract_clip_embeddings(
+        image_paths=[image_path],
+        batch_size=1,
+        skip_errors=False,
+        use_amp=True,
+        auto_adjust_batch=True
+    )
+    
+    if not results or results[0][1] is None:
+        error_msg = results[0][2] if results and results[0][2] else "Unknown error"
+        raise ImageProcessingFailedError(f"CLIP extraction failed: {error_msg}")
+    
+    clip_embedding = results[0][1]
+    logger.info(f"[EXTRACT-SINGLE] ✓ CLIP embedding extracted: {len(clip_embedding)} dimensions")
+    
+    # Create features dict compatible with database
+    features_dict = {
+        'color_features': clip_embedding,
+        'shape_features': np.array([], dtype=np.float32),
+        'texture_features': np.array([], dtype=np.float32)
+    }
+    
+    return features_dict, 'clip', 'clip-ViT-B-32'
 
 
-def _extract_clip_features(image_path: str) -> Tuple[Dict[str, np.ndarray], str, str]:
-    """Extract CLIP embeddings
+def batch_extract_features_unified(image_paths: List[str]) -> List[Tuple[str, Optional[Dict[str, np.ndarray]], Optional[str], Optional[str], Optional[str]]]:
+    """Extract features from multiple images using batch CLIP extraction (GPU-optimized)
+    
+    This is the preferred method for processing multiple images as it:
+    - Uses GPU batch processing for maximum throughput
+    - Processes all images in parallel on GPU
+    - Automatically adjusts batch size based on available memory
     
     Args:
-        image_path: Path to image file
+        image_paths: List of paths to image files
     
     Returns:
-        Tuple of (features_dict, 'clip', model_version)
-    
-    Raises:
-        CLIPModelError: If CLIP extraction fails
-        ImageProcessingError: If image is invalid
+        List of tuples: (image_path, features_dict, embedding_type, embedding_version, error_msg)
+        - image_path: Original path
+        - features_dict: Dictionary with CLIP embedding (None if failed)
+        - embedding_type: Always 'clip' (or None if failed)
+        - embedding_version: Model version string (or None if failed)
+        - error_msg: Error message if extraction failed (None if success)
     """
-    try:
-        # Load config to get model name
-        config = load_clip_config()
-        model_name = config.get('model_name', 'clip-ViT-B-32')
-        
-        # Extract CLIP embedding
-        logger.info(f"Extracting CLIP embedding from {image_path} using {model_name}")
-        clip_embedding = extract_clip_embedding(
-            image_path,
-            model_name=model_name,
-            normalize=True,  # Pre-normalize for faster similarity computation
-            use_amp=True     # Use automatic mixed precision for faster GPU inference
-        )
-        
-        # CLIP embeddings are stored in color_features column for backward compatibility
-        # shape_features and texture_features are set to empty arrays
-        features_dict = {
-            'color_features': clip_embedding,
-            'shape_features': np.array([], dtype=np.float32),
-            'texture_features': np.array([], dtype=np.float32)
-        }
-        
-        logger.info(f"CLIP embedding extracted successfully: {len(clip_embedding)} dimensions")
-        return features_dict, 'clip', model_name
+    if not CLIP_AVAILABLE:
+        # Return errors for all images
+        return [
+            (path, None, None, None, "CLIP not available - install PyTorch and sentence-transformers")
+            for path in image_paths
+        ]
     
-    except (CLIPModelError, CLIPModelDownloadError) as e:
-        logger.error(f"CLIP extraction failed: {e.message}")
-        raise
+    logger.info(f"[BATCH-EXTRACT] Starting batch CLIP extraction for {len(image_paths)} images")
     
-    except (InvalidImageFormatError, CorruptedImageError, ImageTooSmallError, ImageProcessingFailedError):
-        # Re-raise image errors (these are not CLIP-specific)
-        raise
+    # Extract CLIP embeddings in batch (GPU-optimized)
+    results = batch_extract_clip_embeddings(
+        image_paths=image_paths,
+        batch_size=32,  # Let auto_adjust_batch optimize this
+        skip_errors=True,  # Continue processing even if some images fail
+        use_amp=True,  # Use automatic mixed precision for faster GPU inference
+        auto_adjust_batch=True  # Automatically adjust batch size based on GPU memory
+    )
     
-    except Exception as e:
-        logger.error(f"Unexpected error during CLIP extraction: {e}", exc_info=True)
-        raise ImageProcessingFailedError(
-            f"CLIP extraction failed: {str(e)}",
-            "Check CLIP setup and ensure PyTorch is installed correctly"
-        )
+    # Convert to unified format
+    unified_results = []
+    for path, clip_embedding, error_msg in results:
+        if clip_embedding is not None:
+            # Success - create features dict
+            features_dict = {
+                'color_features': clip_embedding,
+                'shape_features': np.array([], dtype=np.float32),
+                'texture_features': np.array([], dtype=np.float32)
+            }
+            unified_results.append((path, features_dict, 'clip', 'clip-ViT-B-32', None))
+        else:
+            # Failed - return error
+            unified_results.append((path, None, None, None, error_msg or "Unknown error"))
+    
+    success_count = sum(1 for _, features, _, _, _ in unified_results if features is not None)
+    logger.info(f"[BATCH-EXTRACT] Completed: {success_count}/{len(image_paths)} successful")
+    
+    return unified_results
 
 
 def get_feature_extraction_info() -> Dict[str, Any]:

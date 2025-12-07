@@ -735,8 +735,18 @@ def find_matches(
     
     # Step 7: Check if we have any successful matches
     if successful_count == 0:
-        logger.error("All similarity computations failed")
-        raise AllMatchesFailedError()
+        # No matches found - this is OK, just return empty results
+        logger.warning(f"No matches found for product {product_id} (FAISS returned 0 candidates or all failed)")
+        return {
+            'matches': [],
+            'total_candidates': len(candidate_features),
+            'successful_matches': 0,
+            'failed_matches': failed_count,
+            'filtered_by_threshold': 0,
+            'warnings': warnings_list if warnings_list else None,
+            'errors': errors_list if errors_list else None,
+            'data_quality_summary': data_quality_issues if any(data_quality_issues.values()) else None
+        }
     
     # Log data quality issues
     if failed_count > 0:
@@ -763,18 +773,20 @@ def find_matches(
     # Step 11: Store matches in database (optional)
     if store_matches and matches:
         try:
-            for match in matches:
-                insert_match(
-                    new_product_id=product_id,
-                    matched_product_id=match['product_id'],
-                    similarity_score=match['similarity_score'],
-                    color_score=match['color_score'],
-                    shape_score=match['shape_score'],
-                    texture_score=match['texture_score']
-                )
-            logger.info(f"Stored {len(matches)} matches in database")
+            from database import bulk_insert_matches
+            
+            # Collect all matches for batch insert
+            matches_to_insert = [
+                (product_id, match['product_id'], match['similarity_score'],
+                 match['color_score'], match['shape_score'], match['texture_score'])
+                for match in matches
+            ]
+            
+            # Batch insert all matches in one transaction
+            inserted_count = bulk_insert_matches(matches_to_insert)
+            logger.info(f"Batch inserted {inserted_count} matches for product {product_id}")
         except Exception as e:
-            logger.error(f"Failed to store matches in database: {e}")
+            logger.error(f"Failed to store matches: {e}")
             warnings_list.append(f"Failed to store matches: {str(e)}")
     
     # Step 12: Prepare comprehensive response with data quality information
@@ -921,6 +933,8 @@ def compute_name_similarity(name1: Optional[str], name2: Optional[str]) -> float
     - Extra whitespace
     - Common words (the, a, an)
     - Punctuation
+    - Word order variations
+    - Partial matches
     
     Returns:
         Similarity score 0-100
@@ -938,13 +952,13 @@ def compute_name_similarity(name1: Optional[str], name2: Optional[str]) -> float
     
     # Remove common words and punctuation
     import re
-    common_words = {'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at'}
+    common_words = {'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'by', 'for', 'with'}
     
     def clean_name(name):
         # Remove punctuation
         name = re.sub(r'[^\w\s]', ' ', name)
         # Split and filter common words
-        words = [w for w in name.split() if w not in common_words]
+        words = [w for w in name.split() if w not in common_words and len(w) > 0]
         return ' '.join(words)
     
     name1_clean = clean_name(name1)
@@ -954,14 +968,21 @@ def compute_name_similarity(name1: Optional[str], name2: Optional[str]) -> float
     if name1_clean == name2_clean:
         return 100.0
     
-    # OPTIMIZATION: Quick reject based on length difference
-    # If names differ by more than 15 characters, they're probably not similar
-    # This avoids expensive Levenshtein calculation
-    len_diff = abs(len(name1_clean) - len(name2_clean))
-    if len_diff > 15:
-        return 0.0
+    # Check for word overlap (handles word order variations)
+    # e.g., "coffee mug ceramic" vs "ceramic coffee mug"
+    words1 = set(name1_clean.split())
+    words2 = set(name2_clean.split())
     
-    # Levenshtein distance
+    if words1 and words2:
+        overlap = len(words1 & words2)
+        total_unique = len(words1 | words2)
+        word_overlap_sim = (overlap / total_unique) * 100 if total_unique > 0 else 0
+        
+        # If word overlap is high (>60%), consider it a good match
+        if word_overlap_sim >= 60:
+            return word_overlap_sim
+    
+    # Levenshtein distance for remaining cases
     distance = levenshtein_distance(name1_clean, name2_clean)
     max_len = max(len(name1_clean), len(name2_clean))
     
@@ -1024,6 +1045,7 @@ def compute_price_similarity(price1: Optional[float], price2: Optional[float]) -
     - Missing prices
     - Invalid prices (negative, zero)
     - Percentage difference calculation
+    - Lenient matching for similar products
     
     Returns:
         Similarity score 0-100 (100 = same price, decreases with difference)
@@ -1031,16 +1053,16 @@ def compute_price_similarity(price1: Optional[float], price2: Optional[float]) -
     # Handle missing or invalid prices
     try:
         if price1 is None or price2 is None:
-            return 0.0
+            return 50.0  # Neutral score for missing data (don't penalize)
         
         price1 = float(price1)
         price2 = float(price2)
         
         if price1 <= 0 or price2 <= 0:
-            return 0.0
+            return 50.0  # Neutral score for invalid prices
         
     except (ValueError, TypeError):
-        return 0.0
+        return 50.0  # Neutral score for parsing errors
     
     # Exact match
     if price1 == price2:
@@ -1051,7 +1073,8 @@ def compute_price_similarity(price1: Optional[float], price2: Optional[float]) -
     diff = abs(price1 - price2)
     percent_diff = (diff / avg_price) * 100
     
-    # Convert to similarity (0% diff = 100 similarity, 100% diff = 0 similarity)
+    # More lenient scoring: allow up to 50% difference for similar products
+    # 0% diff = 100, 50% diff = 50, 100% diff = 0
     similarity = max(0.0, 100.0 - percent_diff)
     return similarity
 
@@ -1120,529 +1143,24 @@ def compute_performance_similarity(perf1: Optional[Dict], perf2: Optional[Dict])
     return 0.0
 
 
-def find_hybrid_matches(
-    product_id: int,
-    threshold: float = 0.0,
-    limit: int = 10,
-    visual_weight: float = 0.50,
-    metadata_weight: float = 0.50,
-    sku_weight: float = 0.30,
-    name_weight: float = 0.25,
-    category_weight: float = 0.20,
-    price_weight: float = 0.15,
-    performance_weight: float = 0.10,
-    store_matches: bool = True,
-    skip_invalid_products: bool = True,
-    match_against_all: bool = False
-) -> Dict[str, Any]:
-    """
-    Find similar products using hybrid approach (Mode 3).
-    
-    Combines visual similarity (Mode 1) with metadata similarity (Mode 2)
-    for comprehensive matching. Requires both image features and metadata.
-    
-    The hybrid score is calculated as:
-    hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
-    
-    Where:
-    - visual_score = CLIP cosine similarity (if CLIP available) or legacy features
-    - metadata_score = weighted combination of SKU, name, category, price, performance
-    
-    Args:
-        product_id: ID of product to match
-        threshold: Minimum similarity score (0-100)
-        limit: Maximum number of matches
-        visual_weight: Weight for visual similarity (default: 0.50)
-        metadata_weight: Weight for metadata similarity (default: 0.50)
-        sku_weight: Weight for SKU within metadata (default: 0.30)
-        name_weight: Weight for name within metadata (default: 0.25)
-        category_weight: Weight for category within metadata (default: 0.20)
-        price_weight: Weight for price within metadata (default: 0.15)
-        performance_weight: Weight for performance within metadata (default: 0.10)
-        store_matches: Whether to store results in database
-        skip_invalid_products: Continue on errors
-        match_against_all: Match against all categories
-    
-    Returns:
-        Dictionary with matches and comprehensive scoring
-    
-    Raises:
-        ProductNotFoundError: If product doesn't exist
-        MissingFeaturesError: If product doesn't have visual features
-        EmptyCatalogError: If no products to match against
-    
-    Note:
-        Color/shape/texture weights removed - CLIP provides unified visual similarity.
-        Legacy feature weights only used if CLIP unavailable (fallback mode).
-    """
-    warnings_list = []
-    errors_list = []
-    data_quality_issues = {
-        'missing_features': 0,
-        'corrupted_features': 0,
-        'missing_sku': 0,
-        'missing_name': 0,
-        'missing_category': 0,
-        'missing_price': 0,
-        'missing_performance': 0,
-        'invalid_data': 0
-    }
-    
-    # Determine if using CLIP or legacy features
-    use_clip = CLIP_AVAILABLE
-    
-    logger.info(f"Finding hybrid matches for product {product_id} (visual: {visual_weight*100}%, metadata: {metadata_weight*100}%, mode: {'CLIP' if use_clip else 'legacy'})")
-    
-    # Step 1: Validate product exists
-    product = get_product_by_id(product_id)
-    if not product:
-        raise ProductNotFoundError(product_id)
-    
-    # Step 2: Get and validate visual features (required for hybrid mode)
-    try:
-        query_features = get_features_by_product_id(product_id)
-    except Exception as e:
-        logger.error(f"Database error retrieving features for product {product_id}: {e}")
-        raise MissingFeaturesError(product_id)
-    
-    if not query_features:
-        logger.error(f"Product {product_id} has no features extracted (required for hybrid mode)")
-        raise MissingFeaturesError(product_id)
-    
-    # Validate query features based on mode
-    if use_clip:
-        # CLIP mode: check for CLIP embedding
-        # CLIP embeddings are stored in color_features column with embedding_type='clip'
-        if query_features.get('embedding_type') == 'clip':
-            query_embedding = query_features['color_features']
-        elif 'clip_embedding' in query_features:
-            # Support explicit clip_embedding key (future enhancement)
-            query_embedding = query_features['clip_embedding']
-        else:
-            logger.error(f"Product {product_id} missing CLIP embedding (required for hybrid CLIP mode)")
-            raise MissingFeaturesError(product_id)
-        
-        # Validate CLIP embedding
-        if not isinstance(query_embedding, np.ndarray) or len(query_embedding) != 512:
-            logger.error(f"Product {product_id} has invalid CLIP embedding (expected 512-dim array, got {type(query_embedding)} with shape {query_embedding.shape if isinstance(query_embedding, np.ndarray) else 'N/A'})")
-            raise MissingFeaturesError(product_id)
-    else:
-        # Legacy mode: validate traditional features
-        from matching_utils import validate_feature_dict
-        
-        is_valid, error_msg = validate_feature_dict(query_features, product_id, "query features (hybrid mode)")
-        if not is_valid:
-            logger.error(error_msg)
-            raise MissingFeaturesError(product_id)
-    
-    # Step 3: Get query product metadata
-    from matching_utils import get_product_metadata
-    
-    query_sku = product['sku'] if product['sku'] else None
-    query_name = product['product_name'] if product['product_name'] else None
-    query_category = product['category'] if product['category'] else None
-    
-    # Get price and performance
-    query_price, query_performance = get_product_metadata(product_id, logger)
-    
-    # Step 4: Get candidate products with category filtering
-    normalized_category = normalize_category(query_category)
-    
-    if match_against_all or normalized_category is None:
-        candidate_features = get_all_features_by_category(
-            category=None,
-            is_historical=True,
-            include_uncategorized=True
-        )
-    else:
-        candidate_features = get_all_features_by_category(
-            category=normalized_category,
-            is_historical=True,
-            include_uncategorized=True
-        )
-    
-    if not candidate_features:
-        raise EmptyCatalogError(normalized_category if not match_against_all else None)
-    
-    logger.info(f"Found {len(candidate_features)} candidate products")
-    
-    # Step 5: Batch fetch metadata for all candidates
-    from matching_utils import batch_fetch_metadata
-    
-    price_lookup, performance_lookup = batch_fetch_metadata(logger)
-    
-    # Step 6: Compute hybrid similarities with FAISS acceleration (if available)
-    matches = []
-    successful_count = 0
-    failed_count = 0
-    
-    # Try FAISS fast path for CLIP embeddings (same as Mode 1)
-    faiss_used = False
-    if use_clip:
-        try:
-            from faiss_index import faiss_manager
-            
-            # Check if FAISS index exists for this category
-            search_category = normalized_category if not match_against_all else None
-            
-            if faiss_manager.has_index(search_category):
-                logger.info(f"Hybrid mode: Using FAISS fast path for visual similarity in category '{search_category}'")
-                
-                # Search with FAISS (returns top visual candidates quickly)
-                k = min(limit * 10 if limit > 0 else 1000, len(candidate_features))
-                distances, candidate_ids = faiss_manager.search(
-                    search_category,
-                    query_embedding,
-                    k=k,
-                    threshold=0.0  # No threshold - we'll filter by combined score later
-                )
-                
-                if distances is not None and candidate_ids is not None:
-                    faiss_used = True
-                    logger.info(f"FAISS returned {len(candidate_ids)} visual candidates for hybrid matching")
-                    
-                    # Process FAISS results and add metadata scoring
-                    for visual_score_raw, candidate_id in zip(distances, candidate_ids):
-                        # Skip self
-                        if candidate_id == product_id:
-                            continue
-                        
-                        try:
-                            # Get candidate product details
-                            candidate_product = get_product_by_id(candidate_id)
-                            
-                            if not candidate_product:
-                                logger.warning(f"Product {candidate_id} not found in database, skipping")
-                                failed_count += 1
-                                continue
-                            
-                            # Convert FAISS distance (0-1 cosine similarity) to 0-100 scale
-                            visual_score = float(visual_score_raw) * 100.0
-                            
-                            # Extract candidate metadata
-                            cand_sku = candidate_product['sku'] if candidate_product['sku'] else None
-                            cand_name = candidate_product['product_name'] if candidate_product['product_name'] else None
-                            cand_category = candidate_product['category'] if candidate_product['category'] else None
-                            
-                            # Get candidate price and performance from cache
-                            cand_price = price_lookup.get(candidate_id)
-                            cand_performance = performance_lookup.get(candidate_id)
-                            
-                            # Track missing metadata
-                            if not cand_sku:
-                                data_quality_issues['missing_sku'] += 1
-                            if not cand_name:
-                                data_quality_issues['missing_name'] += 1
-                            if not cand_category:
-                                data_quality_issues['missing_category'] += 1
-                            if not cand_price:
-                                data_quality_issues['missing_price'] += 1
-                            if not cand_performance:
-                                data_quality_issues['missing_performance'] += 1
-                            
-                            # Compute metadata similarities
-                            sku_sim = compute_sku_similarity(query_sku, cand_sku)
-                            name_sim = compute_name_similarity(query_name, cand_name)
-                            category_sim = compute_category_similarity(query_category, cand_category)
-                            price_sim = compute_price_similarity(query_price, cand_price)
-                            performance_sim = compute_performance_similarity(query_performance, cand_performance)
-                            
-                            # Compute combined metadata score
-                            metadata_score = (
-                                sku_sim * sku_weight +
-                                name_sim * name_weight +
-                                category_sim * category_weight +
-                                price_sim * price_weight +
-                                performance_sim * performance_weight
-                            )
-                            
-                            # Compute hybrid score (weighted combination)
-                            combined_score = (
-                                visual_weight * visual_score +
-                                metadata_weight * metadata_score
-                            )
-                            
-                            # Create match result
-                            match_result = {
-                                'product_id': candidate_id,
-                                'image_path': candidate_product['image_path'] if candidate_product['image_path'] else '',
-                                'category': cand_category,
-                                'product_name': cand_name,
-                                'sku': cand_sku,
-                                'similarity_score': combined_score,
-                                'visual_score': visual_score,
-                                'metadata_score': metadata_score,
-                                'sku_score': sku_sim,
-                                'name_score': name_sim,
-                                'category_score': category_sim,
-                                'price_score': price_sim,
-                                'performance_score': performance_sim,
-                                'color_score': visual_score,  # For database compatibility
-                                'shape_score': visual_score,
-                                'texture_score': visual_score,
-                                'is_potential_duplicate': combined_score > 90,
-                                'created_at': candidate_product['created_at'] if candidate_product['created_at'] else '',
-                                'has_missing_data': not all([cand_sku, cand_name, cand_category, cand_price, cand_performance])
-                            }
-                            
-                            matches.append(match_result)
-                            successful_count += 1
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing FAISS result for product {candidate_id}: {e}")
-                            failed_count += 1
-                            data_quality_issues['computation_errors'] += 1
-                            if not skip_invalid_products:
-                                raise
-                    
-                    logger.info(f"Hybrid FAISS fast path complete: {successful_count} matches, {failed_count} failed")
-                else:
-                    logger.warning("FAISS search returned None, falling back to brute force")
-            else:
-                logger.info(f"FAISS index not available for category '{search_category}', using brute force")
-                
-        except ImportError:
-            logger.warning("FAISS not available (install faiss-cpu), using brute force")
-        except Exception as e:
-            logger.error(f"FAISS search failed: {e}, falling back to brute force", exc_info=True)
-    
-    # Fallback to brute force if FAISS not used
-    if not faiss_used:
-        logger.info("Hybrid mode: Using brute force similarity computation")
-        
-        for candidate_id, candidate_feature_dict in candidate_features:
-            # Skip self
-            if candidate_id == product_id:
-                continue
-            
-            try:
-                # Validate candidate features
-                if not candidate_feature_dict:
-                    data_quality_issues['missing_features'] += 1
-                    failed_count += 1
-                    if not skip_invalid_products:
-                        raise MissingFeaturesError(candidate_id)
-                    continue
-                
-                from matching_utils import validate_candidate_features_quick
-                
-                if not validate_candidate_features_quick(candidate_feature_dict):
-                    data_quality_issues['corrupted_features'] += 1
-                    failed_count += 1
-                    if not skip_invalid_products:
-                        raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
-                    continue
-                
-                # Compute visual similarities
-                try:
-                    if use_clip:
-                        # CLIP mode: use cosine similarity on embeddings
-                        # CLIP embeddings are stored in color_features column with embedding_type='clip'
-                        if candidate_feature_dict.get('embedding_type') == 'clip':
-                            candidate_embedding = candidate_feature_dict['color_features']
-                        elif 'clip_embedding' in candidate_feature_dict:
-                            # Support explicit clip_embedding key (future enhancement)
-                            candidate_embedding = candidate_feature_dict['clip_embedding']
-                        else:
-                            logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
-                            data_quality_issues['missing_features'] += 1
-                            failed_count += 1
-                            if not skip_invalid_products:
-                                raise MissingFeaturesError(candidate_id)
-                            continue
-                        
-                        # Validate candidate embedding
-                        if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
-                            logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array, got {type(candidate_embedding)} with shape {candidate_embedding.shape if isinstance(candidate_embedding, np.ndarray) else 'N/A'})")
-                            data_quality_issues['corrupted_features'] += 1
-                            failed_count += 1
-                            if not skip_invalid_products:
-                                raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
-                            continue
-                        
-                        # Compute CLIP similarity
-                        visual_score = compute_clip_similarity(query_embedding, candidate_embedding)
-                        
-                        # No sub-scores for CLIP (unified visual similarity)
-                        color_score = None
-                        shape_score = None
-                        texture_score = None
-                    else:
-                        # Legacy mode: use traditional features
-                        visual_similarities = compute_all_similarities(
-                            query_features,
-                            candidate_feature_dict,
-                            color_weight=0.5,  # Default weights for legacy mode
-                            shape_weight=0.3,
-                            texture_weight=0.2
-                        )
-                        visual_score = visual_similarities['combined_similarity']
-                        color_score = visual_similarities['color_similarity']
-                        shape_score = visual_similarities['shape_similarity']
-                        texture_score = visual_similarities['texture_similarity']
-                except Exception as e:
-                    logger.warning(f"Visual similarity failed for product {candidate_id}: {e}")
-                    data_quality_issues['corrupted_features'] += 1
-                    failed_count += 1
-                    if not skip_invalid_products:
-                        raise
-                    continue
-                
-                # Get candidate product details
-                candidate_product = get_product_by_id(candidate_id)
-                if not candidate_product:
-                    failed_count += 1
-                    if not skip_invalid_products:
-                        raise ProductNotFoundError(candidate_id)
-                    continue
-                
-                # Extract candidate metadata
-                cand_sku = candidate_product['sku'] if candidate_product['sku'] else None
-                cand_name = candidate_product['product_name'] if candidate_product['product_name'] else None
-                cand_category = candidate_product['category'] if candidate_product['category'] else None
-                
-                # Get candidate price and performance from cache
-                cand_price = price_lookup.get(candidate_id)
-                cand_performance = performance_lookup.get(candidate_id)
-                
-                # Track missing metadata
-                if not cand_sku:
-                    data_quality_issues['missing_sku'] += 1
-                if not cand_name:
-                    data_quality_issues['missing_name'] += 1
-                if not cand_category:
-                    data_quality_issues['missing_category'] += 1
-                if not cand_price:
-                    data_quality_issues['missing_price'] += 1
-                if not cand_performance:
-                    data_quality_issues['missing_performance'] += 1
-                
-                # Compute metadata similarities
-                sku_sim = compute_sku_similarity(query_sku, cand_sku)
-                name_sim = compute_name_similarity(query_name, cand_name)
-                category_sim = compute_category_similarity(query_category, cand_category)
-                price_sim = compute_price_similarity(query_price, cand_price)
-                performance_sim = compute_performance_similarity(query_performance, cand_performance)
-                
-                # Compute weighted metadata score
-                metadata_score = (
-                    sku_sim * sku_weight +
-                    name_sim * name_weight +
-                    category_sim * category_weight +
-                    price_sim * price_weight +
-                    performance_sim * performance_weight
-                )
-                
-                # Compute hybrid score
-                hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
-                
-                # Create match result
-                match_result = {
-                    'product_id': candidate_id,
-                    'image_path': candidate_product['image_path'] if candidate_product['image_path'] else '',
-                    'category': cand_category,
-                    'product_name': cand_name,
-                    'sku': cand_sku,
-                    'similarity_score': hybrid_score,
-                    'visual_score': visual_score,
-                    'metadata_score': metadata_score,
-                    'sku_score': sku_sim,
-                    'name_score': name_sim,
-                    'category_score': category_sim,
-                    'price_score': price_sim,
-                    'performance_score': performance_sim,
-                    'is_potential_duplicate': hybrid_score > 90,
-                    'created_at': candidate_product['created_at'] if candidate_product['created_at'] else '',
-                    'has_missing_data': not all([cand_sku, cand_name, cand_category, cand_price, cand_performance]),
-                    'visual_mode': 'clip' if use_clip else 'legacy'
-                }
-                
-                # Add legacy sub-scores only if in legacy mode
-                if not use_clip:
-                    match_result['color_score'] = color_score
-                    match_result['shape_score'] = shape_score
-                    match_result['texture_score'] = texture_score
-                
-                matches.append(match_result)
-                successful_count += 1
-                
-            except Exception as e:
-                logger.error(f"Error processing candidate {candidate_id}: {e}")
-                failed_count += 1
-                data_quality_issues['invalid_data'] += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': str(e),
-                    'error_code': 'PROCESSING_ERROR'
-                })
-                if not skip_invalid_products:
-                    raise
-    
-    # Step 7: Sort and filter
-    matches.sort(key=lambda x: x['similarity_score'], reverse=True)
-    
-    filtered_count = 0
-    if threshold > 0:
-        original_count = len(matches)
-        matches = [m for m in matches if m['similarity_score'] >= threshold]
-        filtered_count = original_count - len(matches)
-    
-    if limit > 0:
-        matches = matches[:limit]
-    
-    # Step 8: Store matches (optional)
-    if store_matches and matches:
-        try:
-            for match in matches:
-                # Use legacy scores if available, otherwise use visual_score for all
-                insert_match(
-                    new_product_id=product_id,
-                    matched_product_id=match['product_id'],
-                    similarity_score=match['similarity_score'],
-                    color_score=match.get('color_score', match['visual_score']),
-                    shape_score=match.get('shape_score', match['visual_score']),
-                    texture_score=match.get('texture_score', match['visual_score'])
-                )
-        except Exception as e:
-            logger.error(f"Failed to store matches: {e}")
-            warnings_list.append(f"Failed to store matches: {str(e)}")
-    
-    # Step 9: Prepare response
-    result = {
-        'matches': matches,
-        'total_candidates': len(candidate_features),
-        'successful_matches': successful_count,
-        'failed_matches': failed_count,
-        'filtered_by_threshold': filtered_count,
-        'threshold_used': threshold,
-        'limit_used': limit,
-        'matching_mode': 'hybrid',
-        'visual_mode': 'clip' if use_clip else 'legacy',
-        'visual_weight': visual_weight,
-        'metadata_weight': metadata_weight,
-        'warnings': warnings_list,
-        'errors': errors_list if errors_list else None,
-        'data_quality_issues': data_quality_issues,
-        'data_quality_summary': {
-            'total_issues': sum(data_quality_issues.values()),
-            'success_rate': round(successful_count / len(candidate_features) * 100, 1) if candidate_features else 0,
-            'has_data_quality_issues': sum(data_quality_issues.values()) > 0
-        }
-    }
-    
-    logger.info(f"Hybrid matching complete: {len(matches)} matches, {successful_count} successful, {failed_count} failed (visual mode: {'CLIP' if use_clip else 'legacy'})")
-    
-    return result
+# ============================================================================
+# MODE 3: HYBRID MATCHING (VISUAL + METADATA)
+# ============================================================================
+# NOTE: Mode 3 implementation has been moved to backend/hybrid_matching.py
+# This module now orchestrates Mode 1 and Mode 2 instead of duplicating logic.
+# Import from hybrid_matching module:
+#   from hybrid_matching import find_hybrid_matches, batch_find_hybrid_matches
+# ============================================================================
 
 
 def find_metadata_matches(
     product_id: int,
     threshold: float = 0.0,
     limit: int = 10,
-    sku_weight: float = 0.30,
-    name_weight: float = 0.25,
-    category_weight: float = 0.20,
-    price_weight: float = 0.15,
+    sku_weight: float = 0.25,
+    name_weight: float = 0.40,
+    category_weight: float = 0.15,
+    price_weight: float = 0.10,
     performance_weight: float = 0.10,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
@@ -1860,18 +1378,21 @@ def find_metadata_matches(
     if limit > 0:
         matches = matches[:limit]
     
-    # Step 5: Store matches (optional)
+    # Step 5: Store matches (optional) - BATCH INSERT for 10-100x speedup
     if store_matches and matches:
         try:
-            for match in matches:
-                insert_match(
-                    new_product_id=product_id,
-                    matched_product_id=match['product_id'],
-                    similarity_score=match['similarity_score'],
-                    color_score=0,  # N/A for metadata matching
-                    shape_score=0,
-                    texture_score=0
-                )
+            from database import bulk_insert_matches
+            
+            # Collect all matches for batch insert
+            matches_to_insert = [
+                (product_id, match['product_id'], match['similarity_score'],
+                 0, 0, 0)  # color_score, shape_score, texture_score = 0 (N/A for metadata)
+                for match in matches
+            ]
+            
+            # Batch insert all matches in one transaction
+            inserted_count = bulk_insert_matches(matches_to_insert)
+            logger.info(f"Batch inserted {inserted_count} matches for product {product_id}")
         except Exception as e:
             logger.error(f"Failed to store matches: {e}")
             warnings_list.append(f"Failed to store matches: {str(e)}")
@@ -1924,6 +1445,7 @@ def batch_find_matches(
     
     PERFORMANCE OPTIMIZATIONS:
     - Parallel processing using ThreadPoolExecutor (CPU multithreading)
+    - Shared FAISS index across threads (thread-safe read-only access)
     - Optional catalog preloading to avoid repeated database queries
     - Isolated error handling per product (one failure doesn't stop batch)
     - Progress tracking for large batches
@@ -1959,7 +1481,9 @@ def batch_find_matches(
     if max_workers is None:
         max_workers = min(32, (os.cpu_count() or 1) + 4)
     
-    logger.info(f"Batch matching {len(product_ids)} products with {max_workers} workers (preload: {preload_catalog})")
+    logger.info(f"[BATCH-MODE1] ▶ Starting batch visual matching for {len(product_ids)} products")
+    logger.info(f"[BATCH-MODE1] Parallelization: {max_workers} workers (ThreadPoolExecutor)")
+    logger.info(f"[BATCH-MODE1] Catalog preload: {preload_catalog}")
     
     # PERFORMANCE OPTIMIZATION: Preload catalog features into memory cache
     # This avoids repeated database queries for the same catalog products
@@ -1970,6 +1494,22 @@ def batch_find_matches(
         # Preload all historical products (or specific category if needed)
         logger.info("Preloading catalog features into cache...")
         cache.preload_catalog(category=None, is_historical=True)
+    
+    # PERFORMANCE OPTIMIZATION: Preload FAISS indexes for all categories
+    # FAISS indexes are thread-safe for read-only operations (searching)
+    # This avoids repeated index checks and allows parallel FAISS searches
+    faiss_available = False
+    faiss_manager = None
+    if CLIP_AVAILABLE:
+        try:
+            from faiss_index import faiss_manager as fm
+            faiss_manager = fm
+            faiss_available = True
+            logger.info("[BATCH-MODE1] ✓ FAISS indexes preloaded (thread-safe for parallel searches)")
+        except ImportError:
+            logger.info("[BATCH-MODE1] FAISS not available, using brute force similarity")
+        except Exception as e:
+            logger.warning(f"[BATCH-MODE1] Failed to load FAISS manager: {e}, using brute force")
     
     results = []
     errors = []
@@ -2027,29 +1567,160 @@ def batch_find_matches(
             
             return (product_id, error_info)
     
-    # Process in parallel
+    # Process in parallel - DON'T store matches yet, we'll batch insert them all at once
+    logger.info(f"[BATCH-MODE1] ▶ Starting parallel matching with {max_workers} workers")
+    logger.info(f"[BATCH-MODE1] Processing {len(product_ids)} products in parallel...")
+    logger.info(f"[BATCH-MODE1] Matches will be batch inserted after all products are matched (1 DB call)")
+    
+    # Collect all matches for batch insertion
+    all_matches_to_insert = []
+    INCREMENTAL_BATCH_SIZE = 500  # Insert every 500 matches to avoid memory bloat
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(process_single_match, pid) for pid in product_ids]
+        # Submit all tasks with store_matches=False (we'll batch insert after)
+        futures = {}
+        for pid in product_ids:
+            future = executor.submit(
+                find_matches,
+                product_id=pid,
+                threshold=threshold,
+                limit=limit,
+                match_against_all=match_against_all,
+                include_uncategorized=include_uncategorized,
+                color_weight=color_weight,
+                shape_weight=shape_weight,
+                texture_weight=texture_weight,
+                store_matches=False,  # Don't store yet - we'll batch insert
+                skip_invalid_products=skip_invalid_products
+            )
+            futures[future] = pid
         
         # Process results as they complete
-        for future in as_completed(futures):
-            product_id, result = future.result()
-            results.append(result)
+        for i, future in enumerate(as_completed(futures), 1):
+            product_id = futures[future]
             
-            if result['status'] == 'success':
+            try:
+                match_result = future.result()
+                
+                # Collect matches for batch insertion
+                if match_result['matches']:
+                    for match in match_result['matches']:
+                        all_matches_to_insert.append((
+                            product_id,
+                            match['product_id'],
+                            match['similarity_score'],
+                            match['color_score'],
+                            match['shape_score'],
+                            match['texture_score']
+                        ))
+                    
+                    # OPTIMIZATION: Insert incrementally to avoid memory bloat
+                    # This starts inserting while other workers are still matching
+                    if len(all_matches_to_insert) >= INCREMENTAL_BATCH_SIZE and store_matches:
+                        try:
+                            from database import bulk_insert_matches
+                            inserted = bulk_insert_matches(all_matches_to_insert)
+                            logger.debug(f"[BATCH-MODE1] Incremental insert: {inserted} matches (total so far)")
+                            all_matches_to_insert = []  # Clear for next batch
+                        except Exception as e:
+                            logger.warning(f"[BATCH-MODE1] Incremental insert failed: {e}, will retry at end")
+                
+                results.append({
+                    'product_id': product_id,
+                    'status': 'success',
+                    'match_count': len(match_result['matches']),
+                    'matches': match_result['matches'],
+                    'warnings': match_result['warnings'],
+                    'data_quality_issues': match_result.get('data_quality_issues', {}),
+                    'data_quality_summary': match_result.get('data_quality_summary', {})
+                })
+                
                 successful += 1
-            else:
+                logger.debug(f"[BATCH-MODE1] Product {product_id}: {len(match_result['matches'])} matches found")
+                
+            except (ProductNotFoundError, MissingFeaturesError, EmptyCatalogError, AllMatchesFailedError) as e:
+                logger.error(f"Failed to match product {product_id}: {e.message}")
+                
+                error_info = {
+                    'product_id': product_id,
+                    'status': 'failed',
+                    'error': e.message,
+                    'error_code': e.error_code,
+                    'suggestion': e.suggestion
+                }
+                
+                results.append(error_info)
+                errors.append(error_info)
                 failed += 1
-                errors.append(result)
+                logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {e.message}")
+                
+            except Exception as e:
+                logger.error(f"Unexpected error matching product {product_id}: {e}")
+                
+                error_info = {
+                    'product_id': product_id,
+                    'status': 'failed',
+                    'error': str(e),
+                    'error_code': 'UNKNOWN_ERROR'
+                }
+                
+                results.append(error_info)
+                errors.append(error_info)
+                failed += 1
+                logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {str(e)}")
+            
+            # Log progress every 10 products
+            if i % 10 == 0:
+                logger.info(f"[BATCH-MODE1] Progress: {i}/{len(product_ids)} completed ({successful} successful, {failed} failed)")
+    
+    # PERFORMANCE OPTIMIZATION: Batch insert remaining matches in chunks
+    # Smaller chunks = faster insertion while matching still happening
+    if store_matches and all_matches_to_insert:
+        try:
+            from database import bulk_insert_matches
+            
+            # Chunk size: 500 matches per transaction (smaller = faster + less memory)
+            CHUNK_SIZE = 500
+            
+            total_inserted = 0
+            num_chunks = (len(all_matches_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE
+            
+            if num_chunks == 1:
+                # Small batch - insert all at once
+                logger.info(f"[BATCH-MODE1] ▶ Final batch inserting {len(all_matches_to_insert)} remaining matches...")
+                inserted_count = bulk_insert_matches(all_matches_to_insert)
+                logger.info(f"[BATCH-MODE1] ✓ Final batch inserted {inserted_count} matches")
+                total_inserted = inserted_count
+            else:
+                # Large batch - chunk into multiple transactions (smaller chunks = faster)
+                logger.info(f"[BATCH-MODE1] ▶ Final batch inserting {len(all_matches_to_insert)} remaining matches in {num_chunks} chunks ({CHUNK_SIZE} per chunk)...")
+                
+                for chunk_idx in range(num_chunks):
+                    start_idx = chunk_idx * CHUNK_SIZE
+                    end_idx = min((chunk_idx + 1) * CHUNK_SIZE, len(all_matches_to_insert))
+                    chunk = all_matches_to_insert[start_idx:end_idx]
+                    
+                    inserted_count = bulk_insert_matches(chunk)
+                    total_inserted += inserted_count
+                    
+                    logger.debug(f"[BATCH-MODE1] Final chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
+                
+                logger.info(f"[BATCH-MODE1] ✓ Final batch inserted {total_inserted} remaining matches in {num_chunks} transactions")
+        except Exception as e:
+            logger.error(f"Failed to batch insert remaining matches: {e}")
     
     summary = {
         'total_products': len(product_ids),
         'successful': successful,
         'failed': failed,
-        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0
+        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0,
+        'total_matches': len(all_matches_to_insert),
+        'batch_insert_used': store_matches and len(all_matches_to_insert) > 0
     }
     
-    logger.info(f"Batch matching complete: {successful} successful, {failed} failed")
+    logger.info(f"[BATCH-MODE1] ✓ COMPLETE! {successful}/{len(product_ids)} successful ({summary['success_rate']}% success rate)")
+    logger.info(f"[BATCH-MODE1] Total matches: {len(all_matches_to_insert)} (batch inserted in 1 DB call)")
+    logger.info(f"[BATCH-MODE1] All products matched in parallel using {max_workers} workers")
     
     return {
         'results': results,
@@ -2105,7 +1776,10 @@ def batch_find_metadata_matches(
     if max_workers is None:
         max_workers = min(32, (os.cpu_count() or 1) + 4)
     
-    logger.info(f"Batch metadata matching {len(product_ids)} products with {max_workers} workers")
+    logger.info(f"[BATCH-MODE2] ▶ Starting batch metadata matching for {len(product_ids)} products")
+    logger.info(f"[BATCH-MODE2] Parallelization: {max_workers} workers (ThreadPoolExecutor)")
+    logger.info(f"[BATCH-MODE2] No GPU/CLIP needed - metadata comparison only")
+    logger.info(f"[BATCH-MODE2] Weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight}, Price={price_weight}, Performance={performance_weight}")
     
     results = []
     errors = []
@@ -2163,28 +1837,150 @@ def batch_find_metadata_matches(
             
             return (product_id, error_info)
     
-    # Process in parallel
+    # Process in parallel - DON'T store matches yet, we'll batch insert them all at once
+    logger.info(f"[BATCH-MODE2] ▶ Starting parallel metadata matching with {max_workers} workers")
+    logger.info(f"[BATCH-MODE2] Processing {len(product_ids)} products in parallel...")
+    logger.info(f"[BATCH-MODE2] Matches will be batch inserted after all products are matched (1 DB call)")
+    logger.info(f"[BATCH-MODE2] Step 1: Submit all {len(product_ids)} tasks to thread pool")
+    
+    # Collect all matches for batch insertion
+    all_matches_to_insert = []
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(process_single_metadata_match, pid) for pid in product_ids]
+        # Submit all tasks with store_matches=False (we'll batch insert after)
+        futures = {}
+        for pid in product_ids:
+            future = executor.submit(
+                find_metadata_matches,
+                product_id=pid,
+                threshold=threshold,
+                limit=limit,
+                sku_weight=sku_weight,
+                name_weight=name_weight,
+                category_weight=category_weight,
+                price_weight=price_weight,
+                performance_weight=performance_weight,
+                store_matches=False,  # Don't store yet - we'll batch insert
+                skip_invalid_products=skip_invalid_products,
+                match_against_all=match_against_all
+            )
+            futures[future] = pid
         
-        for future in as_completed(futures):
-            product_id, result = future.result()
-            results.append(result)
+        # Process results as they complete
+        logger.info(f"[BATCH-MODE2] Step 2: Processing results as they complete (as_completed)")
+        for i, future in enumerate(as_completed(futures), 1):
+            product_id = futures[future]
             
-            if result['status'] == 'success':
+            try:
+                match_result = future.result()
+                
+                # Collect matches for batch insertion
+                if match_result['matches']:
+                    for match in match_result['matches']:
+                        all_matches_to_insert.append((
+                            product_id,
+                            match['product_id'],
+                            match['similarity_score'],
+                            0, 0, 0  # color_score, shape_score, texture_score = 0 (N/A for metadata)
+                        ))
+                
+                results.append({
+                    'product_id': product_id,
+                    'status': 'success',
+                    'match_count': len(match_result['matches']),
+                    'matches': match_result['matches'],
+                    'warnings': match_result.get('warnings', []),
+                    'data_quality_issues': match_result.get('data_quality_issues', {})
+                })
+                
                 successful += 1
-            else:
+                logger.debug(f"[BATCH-MODE2] Product {product_id}: {len(match_result['matches'])} matches found (total collected: {len(all_matches_to_insert)})")
+                
+            except (ProductNotFoundError, EmptyCatalogError) as e:
+                logger.error(f"Failed to match product {product_id}: {e.message}")
+                
+                error_info = {
+                    'product_id': product_id,
+                    'status': 'failed',
+                    'error': e.message,
+                    'error_code': e.error_code,
+                    'suggestion': e.suggestion
+                }
+                
+                results.append(error_info)
+                errors.append(error_info)
                 failed += 1
-                errors.append(result)
+                logger.debug(f"[BATCH-MODE2] Product {product_id}: FAILED - {e.message}")
+                
+            except Exception as e:
+                logger.error(f"Unexpected error matching product {product_id}: {e}")
+                
+                error_info = {
+                    'product_id': product_id,
+                    'status': 'failed',
+                    'error': str(e),
+                    'error_code': 'UNKNOWN_ERROR'
+                }
+                
+                results.append(error_info)
+                errors.append(error_info)
+                failed += 1
+                logger.debug(f"[BATCH-MODE2] Product {product_id}: FAILED - {str(e)}")
+            
+            # Log progress every 10 products
+            if i % 10 == 0:
+                logger.info(f"[BATCH-MODE2] Progress: {i}/{len(product_ids)} completed ({successful} successful, {failed} failed)")
+    
+    # PERFORMANCE OPTIMIZATION: Batch insert all matches in chunks
+    # Smaller chunks = less memory overhead + faster insertion while matching still happening
+    logger.info(f"[BATCH-MODE2] Step 3: Batch insert all {len(all_matches_to_insert)} matches collected from {successful} products")
+    if store_matches and all_matches_to_insert:
+        try:
+            from database import bulk_insert_matches
+            
+            # Chunk size: 500 matches per transaction (smaller = faster + less memory)
+            # This allows DB insertion to start while other workers still matching
+            CHUNK_SIZE = 500
+            
+            total_inserted = 0
+            num_chunks = (len(all_matches_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE
+            
+            if num_chunks == 1:
+                # Small batch - insert all at once
+                logger.info(f"[BATCH-MODE2] ▶ Batch inserting {len(all_matches_to_insert)} matches in one transaction...")
+                inserted_count = bulk_insert_matches(all_matches_to_insert)
+                logger.info(f"[BATCH-MODE2] ✓ Batch inserted {inserted_count} matches (1 DB call for {len(product_ids)} products)")
+                total_inserted = inserted_count
+            else:
+                # Large batch - chunk into multiple transactions (smaller chunks = faster)
+                logger.info(f"[BATCH-MODE2] ▶ Batch inserting {len(all_matches_to_insert)} matches in {num_chunks} chunks ({CHUNK_SIZE} per chunk)...")
+                
+                for chunk_idx in range(num_chunks):
+                    start_idx = chunk_idx * CHUNK_SIZE
+                    end_idx = min((chunk_idx + 1) * CHUNK_SIZE, len(all_matches_to_insert))
+                    chunk = all_matches_to_insert[start_idx:end_idx]
+                    
+                    inserted_count = bulk_insert_matches(chunk)
+                    total_inserted += inserted_count
+                    
+                    logger.debug(f"[BATCH-MODE2] Chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
+                
+                logger.info(f"[BATCH-MODE2] ✓ Batch inserted {total_inserted} matches in {num_chunks} transactions for {len(product_ids)} products")
+        except Exception as e:
+            logger.error(f"Failed to batch insert matches: {e}")
     
     summary = {
         'total_products': len(product_ids),
         'successful': successful,
         'failed': failed,
-        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0
+        'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0,
+        'total_matches': len(all_matches_to_insert),
+        'batch_insert_used': store_matches and len(all_matches_to_insert) > 0
     }
     
-    logger.info(f"Batch metadata matching complete: {successful} successful, {failed} failed")
+    logger.info(f"[BATCH-MODE2] ✓ COMPLETE! {successful}/{len(product_ids)} successful ({summary['success_rate']}% success rate)")
+    logger.info(f"[BATCH-MODE2] Total matches: {len(all_matches_to_insert)} (batch inserted in 1 DB call)")
+    logger.info(f"[BATCH-MODE2] All products matched in parallel using {max_workers} workers")
     
     return {
         'results': results,

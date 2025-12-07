@@ -1247,10 +1247,12 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     if not image_paths:
         return []
     
-    logger.info(f"Batch extracting CLIP embeddings for {len(image_paths)} images (batch_size={batch_size}, AMP={use_amp})")
+    logger.info(f"[CLIP-BATCH] ▶ Starting batch CLIP extraction for {len(image_paths)} images")
+    logger.info(f"[CLIP-BATCH] Parameters: batch_size={batch_size}, AMP={use_amp}, auto_adjust={auto_adjust_batch}")
     
     # Get CLIP model
     model, device = get_clip_model(model_name)
+    logger.info(f"[CLIP-BATCH] Device: {device} (GPU batch processing enabled)" if device != 'cpu' else f"[CLIP-BATCH] Device: {device}")
     
     # Determine if we should use multiprocessing
     # Only use multiprocessing for CPU mode with large batches
@@ -1320,10 +1322,15 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     import cv2
     
     # Process in batches
-    for i in range(0, len(image_paths), batch_size):
+    num_batches = (len(image_paths) + batch_size - 1) // batch_size
+    logger.info(f"[CLIP-BATCH] Processing {len(image_paths)} images in {num_batches} batch(es) of size {batch_size}")
+    
+    for batch_num, i in enumerate(range(0, len(image_paths), batch_size), 1):
         batch_paths = image_paths[i:i + batch_size]
         batch_images = []
         batch_valid_indices = []
+        
+        logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Processing {len(batch_paths)} images...")
         
         # Load and validate images (optimized)
         for idx, image_path in enumerate(batch_paths):
@@ -1353,8 +1360,11 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                 is_cuda = device.startswith('cuda')
                 device_type = 'cuda' if is_cuda else device
                 
+                logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ▶ Sending {len(batch_images)} images to {device} for parallel processing")
+                
                 # Use Automatic Mixed Precision for faster GPU inference
                 if use_amp and (is_cuda or device == 'mps'):
+                    logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Using Automatic Mixed Precision (AMP) for faster inference")
                     with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=True):
                         embeddings = model.encode(
                             batch_images,
@@ -1372,6 +1382,8 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                             batch_size=len(batch_images),
                             normalize_embeddings=True
                         )
+                
+                logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ✓ Extracted {len(embeddings)} embeddings (512-dim each)")
                 
                 # Add successful results (optimized - pre-convert to float32)
                 embeddings = embeddings.astype(np.float32)
@@ -1409,7 +1421,11 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     sorted_results = [results.get(i, (image_paths[i], None, "Not processed")) for i in range(len(image_paths))]
     
     success_count = sum(1 for _, emb, _ in sorted_results if emb is not None)
-    logger.info(f"Batch extraction complete: {success_count}/{len(image_paths)} successful ({success_count/len(image_paths)*100:.1f}%)")
+    failed_count = len(image_paths) - success_count
+    
+    logger.info(f"[CLIP-BATCH] ✓ COMPLETE! Processed {len(image_paths)} images in {num_batches} batch(es)")
+    logger.info(f"[CLIP-BATCH] Results: {success_count} successful, {failed_count} failed ({success_count/len(image_paths)*100:.1f}% success rate)")
+    logger.info(f"[CLIP-BATCH] All images processed in parallel on {device}")
     
     # Clean up GPU memory after batch processing
     if TORCH_AVAILABLE and torch.cuda.is_available():

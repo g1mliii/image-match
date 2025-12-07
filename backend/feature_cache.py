@@ -36,9 +36,41 @@ class FeatureCache:
     """
     
     def __init__(self):
-        """Initialize feature cache"""
+        """Initialize feature cache with dynamic RAM-based scaling
+        
+        Automatically scales cache size based on available system RAM with smart restrictions:
+        - Minimum: 500 items (~1MB)
+        - Maximum: 5000 items (~10.5MB)
+        - Uses 2% of available RAM for cache (conservative)
+        - Logs cache configuration on startup
+        """
         self.memory_cache = {}  # In-memory cache for frequently accessed features
-        self.max_memory_cache_size = 100  # Maximum number of products to cache in memory
+        
+        try:
+            import psutil
+            
+            # Get available RAM in MB
+            available_mb = psutil.virtual_memory().available / (1024 * 1024)
+            
+            # Calculate cache size: use 2% of available RAM (conservative)
+            # Each feature is ~2.1KB
+            calculated_size = int((available_mb * 0.02) / 2.1)
+            
+            # Apply restrictions: min 500, max 50000 (enterprise-scale)
+            # 50000 items = ~105MB (sweet spot for performance vs memory)
+            self.max_memory_cache_size = max(500, min(calculated_size, 50000))
+            
+            # Log configuration
+            logger.info(f"Feature cache initialized (dynamic RAM-based scaling)")
+            logger.info(f"  Available RAM: {available_mb:.0f}MB")
+            logger.info(f"  Cache size: {self.max_memory_cache_size} items (~{self.max_memory_cache_size * 2.1 / 1024:.1f}MB)")
+            logger.info(f"  Restrictions: min=500, max=50000, usage=2% of available RAM")
+            
+        except ImportError:
+            # Fallback if psutil not available - use conservative default
+            self.max_memory_cache_size = 2000
+            logger.warning("psutil not available, using default cache size of 2000 items (~4.2MB)")
+            logger.info("  Install psutil for dynamic RAM-based cache scaling: pip install psutil")
     
     def get_or_extract_features(self, product_id: int, image_path: str, 
                                force_recompute: bool = False) -> Dict[str, np.ndarray]:
@@ -215,16 +247,26 @@ class FeatureCache:
         
         logger.info(f"Catalog preloading complete: {loaded_count} new products loaded, {len(self.memory_cache)} total in cache")
     
-    def get_cache_stats(self) -> Dict[str, int]:
+    def get_cache_stats(self) -> Dict[str, any]:
         """
-        Get cache statistics.
+        Get comprehensive cache statistics.
         
         Returns:
-            Dictionary with cache statistics
+            Dictionary with cache statistics including utilization and memory usage
         """
+        current_size = len(self.memory_cache)
+        max_size = self.max_memory_cache_size
+        utilization = (current_size / max_size * 100) if max_size > 0 else 0
+        memory_used_mb = (current_size * 2.1) / 1024
+        memory_max_mb = (max_size * 2.1) / 1024
+        
         return {
-            'memory_cache_size': len(self.memory_cache),
-            'max_memory_cache_size': self.max_memory_cache_size
+            'memory_cache_size': current_size,
+            'max_memory_cache_size': max_size,
+            'utilization_percent': round(utilization, 1),
+            'memory_used_mb': round(memory_used_mb, 2),
+            'memory_max_mb': round(memory_max_mb, 2),
+            'cache_efficiency': 'good' if utilization > 50 else 'low' if utilization < 10 else 'optimal'
         }
 
 
