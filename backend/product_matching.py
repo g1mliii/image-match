@@ -273,6 +273,8 @@ def find_matches(
     store_matches: bool = True,
     skip_invalid_products: bool = True
 ) -> Dict[str, Any]:
+    # Enforce minimum threshold of 30% for filtering
+    threshold = max(threshold, 30.0)
     """
     Find similar products in the historical catalog with comprehensive error handling.
     

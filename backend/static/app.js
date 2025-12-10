@@ -23,7 +23,7 @@ let sortBy = 'similarity'; // similarity, price, performance
 let sortOrder = 'desc';
 
 // Dynamic result filters
-let dynamicThreshold = 0;
+let dynamicThreshold = 30;  // Minimum 30% threshold
 let dynamicLimit = 10;
 
 // Similarity weights for matching (default values for CLIP)
@@ -226,8 +226,16 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Cleanup on page unload - CRITICAL FIX
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', async () => {
     cleanupMemory();
+    
+    // Clean up session data (delete matches) on app close
+    try {
+        await fetch('/api/session/cleanup', { method: 'POST' });
+        console.log('[CLEANUP] Session data cleaned up');
+    } catch (error) {
+        console.error('[CLEANUP] Error cleaning up session:', error);
+    }
 });
 
 // Historical Catalog Upload
@@ -1487,7 +1495,7 @@ function displayResults(resetPage = true) {
         <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 30px; align-items: center; justify-content: center; flex-wrap: wrap;">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <label style="font-weight: 600; color: #2d3748;">Min Similarity:</label>
-                <input type="range" id="dynamicThresholdSlider" min="0" max="100" value="${dynamicThreshold}" 
+                <input type="range" id="dynamicThresholdSlider" min="30" max="100" value="${dynamicThreshold}" 
                        style="width: 150px;" oninput="updateDynamicThreshold(this.value)">
                 <span id="dynamicThresholdValue" style="font-weight: 600; min-width: 40px;">${dynamicThreshold}%</span>
             </div>
@@ -1501,6 +1509,22 @@ function displayResults(resetPage = true) {
                     <option value="50" ${dynamicLimit === 50 ? 'selected' : ''}>50</option>
                     <option value="0" ${dynamicLimit === 0 ? 'selected' : ''}>All</option>
                 </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-weight: 600; color: #2d3748;">Category:</label>
+                <select id="dynamicCategoryFilter" onchange="updateDynamicCategory(this.value)" 
+                        style="padding: 5px 10px; border: 2px solid #000; background: white; font-weight: 600;">
+                    <option value="">All Categories</option>
+                    ${[...new Set(matchResults.map(m => m.category || 'Uncategorized'))].map(cat => 
+                        `<option value="${cat}">${cat}</option>`
+                    ).join('')}
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-weight: 600; color: #2d3748;">Search:</label>
+                <input type="text" id="dynamicSearchFilter" placeholder="Search by name/SKU..." 
+                       style="padding: 5px 10px; border: 2px solid #000; font-weight: 600;" 
+                       oninput="updateDynamicSearch(this.value)">
             </div>
         </div>
         
@@ -1637,6 +1661,52 @@ function updateDynamicThreshold(value) {
 function updateDynamicLimit(value) {
     dynamicLimit = parseInt(value);
     displayResults(true); // Reset to page 1 when filter changes
+}
+
+let dynamicCategory = '';
+let dynamicSearch = '';
+let dynamicSearchResults = new Map(); // Cache search results
+
+function updateDynamicCategory(value) {
+    dynamicCategory = value;
+    displayResults(true); // Reset to page 1 when filter changes
+}
+
+async function updateDynamicSearch(value) {
+    dynamicSearch = value.toLowerCase().trim();
+    
+    // Clear cache if search is empty
+    if (!dynamicSearch) {
+        dynamicSearchResults.clear();
+        displayResults(true);
+        return;
+    }
+    
+    // Debounce search - wait 300ms before searching
+    if (window.searchTimeout) {
+        clearTimeout(window.searchTimeout);
+    }
+    
+    window.searchTimeout = setTimeout(async () => {
+        try {
+            // Call backend search API
+            const response = await fetch(`/api/products/search?q=${encodeURIComponent(dynamicSearch)}&limit=1000`);
+            const data = await response.json();
+            
+            if (data.success) {
+                // Build a map of product IDs for fast lookup
+                dynamicSearchResults.clear();
+                data.results.forEach(product => {
+                    dynamicSearchResults.set(product.id, product);
+                });
+                console.log(`[SEARCH] Found ${data.results.length} products matching "${dynamicSearch}"`);
+            }
+        } catch (error) {
+            console.error('[SEARCH] Error:', error);
+        }
+        
+        displayResults(true);
+    }, 300);
 }
 
 function getScoreClass(score) {
@@ -3524,6 +3594,18 @@ function filterAndSortResults(results) {
     let filtered = results.map(result => {
         // Apply dynamic threshold and limit to matches
         let filteredMatches = result.matches.filter(m => m.similarity_score >= dynamicThreshold);
+        
+        // Apply dynamic category filter to matches
+        if (dynamicCategory) {
+            filteredMatches = filteredMatches.filter(m => (m.category || 'Uncategorized') === dynamicCategory);
+        }
+        
+        // Apply dynamic search filter to matches (using backend search results)
+        if (dynamicSearch && dynamicSearchResults.size > 0) {
+            filteredMatches = filteredMatches.filter(m => {
+                return dynamicSearchResults.has(m.matched_product_id);
+            });
+        }
         
         // Apply dynamic limit
         if (dynamicLimit > 0) {

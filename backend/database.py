@@ -431,6 +431,11 @@ def delete_product(product_id: int) -> bool:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
+        # Get product category before deletion (needed for FAISS invalidation)
+        cursor.execute('SELECT category FROM products WHERE id = ?', (product_id,))
+        result = cursor.fetchone()
+        category = result[0] if result else None
+        
         # Delete associated features first
         cursor.execute('DELETE FROM features WHERE product_id = ?', (product_id,))
         
@@ -442,7 +447,13 @@ def delete_product(product_id: int) -> bool:
         
         # Delete product
         cursor.execute('DELETE FROM products WHERE id = ?', (product_id,))
-        return cursor.rowcount > 0
+        deleted = cursor.rowcount > 0
+        
+        # Invalidate FAISS index for this category
+        if deleted and category:
+            invalidate_faiss_index(category)
+        
+        return deleted
 
 def get_products_by_category(category: Optional[str], is_historical: Optional[bool] = None, 
                             include_uncategorized: bool = False) -> List[sqlite3.Row]:
@@ -2167,9 +2178,17 @@ def bulk_delete_products(product_ids: List[int]) -> int:
         # Delete performance history
         cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
         
+        # Get categories before deletion (needed for FAISS invalidation)
+        cursor.execute(f'SELECT DISTINCT category FROM products WHERE id IN ({placeholders})', product_ids)
+        categories = [row[0] for row in cursor.fetchall() if row[0]]
+        
         # Delete products
         cursor.execute(f'DELETE FROM products WHERE id IN ({placeholders})', product_ids)
         deleted_count = cursor.rowcount
+        
+        # Invalidate FAISS indexes for affected categories
+        for category in categories:
+            invalidate_faiss_index(category)
         
         # Delete image files
         for path in image_paths:
@@ -2738,3 +2757,66 @@ def get_faiss_stats() -> Dict[str, any]:
     except Exception as e:
         logger.error(f"Failed to get FAISS stats: {e}")
         return {'error': str(e)}
+
+
+def search_matched_products(query: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Fast search for matched products by name, SKU, or category.
+    Uses database indexes for optimal performance on large catalogs.
+    
+    Args:
+        query: Search string (searches name, SKU, category)
+        limit: Maximum results to return
+    
+    Returns:
+        List of matched products with their details
+    """
+    if not query or len(query.strip()) < 1:
+        return []
+    
+    search_term = f"%{query.strip()}%"
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Use UNION to search across multiple fields with indexes
+            # Each field search uses its respective index for speed
+            cursor.execute('''
+                SELECT DISTINCT 
+                    p.id, p.product_name, p.sku, p.category, 
+                    p.price, p.is_historical, p.created_at
+                FROM products p
+                WHERE 
+                    p.product_name LIKE ? OR 
+                    p.sku LIKE ? OR 
+                    p.category LIKE ?
+                ORDER BY 
+                    CASE 
+                        WHEN p.product_name LIKE ? THEN 0
+                        WHEN p.sku LIKE ? THEN 1
+                        WHEN p.category LIKE ? THEN 2
+                        ELSE 3
+                    END,
+                    p.product_name ASC
+                LIMIT ?
+            ''', (search_term, search_term, search_term, search_term, search_term, search_term, limit))
+            
+            results = cursor.fetchall()
+            
+            return [
+                {
+                    'id': r[0],
+                    'name': r[1],
+                    'sku': r[2],
+                    'category': r[3],
+                    'price': r[4],
+                    'is_historical': r[5],
+                    'created_at': r[6]
+                }
+                for r in results
+            ]
+    
+    except Exception as e:
+        logger.error(f"Error searching products: {e}")
+        return []

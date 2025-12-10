@@ -1887,6 +1887,96 @@ def batch_match_products():
             status_code=500
         )
 
+@app.route('/api/session/cleanup', methods=['POST'])
+def cleanup_session():
+    """
+    Clean up session data (matches) on app close.
+    Keeps catalogs but deletes all match results and clears FAISS indexes.
+    
+    Returns:
+    - 200: Cleanup successful
+    - 500: Server error
+    """
+    try:
+        from database import get_db_connection, invalidate_faiss_index
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM matches')
+            deleted_count = cursor.rowcount
+        
+        # Invalidate all FAISS indexes to free memory
+        invalidate_faiss_index(category=None)  # None = invalidate all categories
+        
+        logger.info(f"[SESSION-CLEANUP] Deleted {deleted_count} matches on app close")
+        logger.info(f"[SESSION-CLEANUP] Invalidated all FAISS indexes")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleaned up {deleted_count} matches and cleared indexes',
+            'matches_deleted': deleted_count
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Session cleanup error: {e}", exc_info=True)
+        return create_error_response(
+            'CLEANUP_ERROR',
+            'Failed to clean up session',
+            str(e),
+            status_code=500
+        )
+
+@app.route('/api/products/search', methods=['GET'])
+def search_products():
+    """
+    Fast search for products by name, SKU, or category.
+    Uses database indexes for optimal performance.
+    
+    Query parameters:
+    - q: Search query (required)
+    - limit: Maximum results (default: 100, max: 1000)
+    
+    Returns:
+    - 200: List of matching products
+    - 400: Missing search query
+    - 500: Server error
+    """
+    try:
+        query = request.args.get('q', '').strip()
+        limit = request.args.get('limit', 100, type=int)
+        
+        if not query:
+            return create_error_response(
+                'MISSING_QUERY',
+                'Search query required',
+                'Provide ?q=search_term',
+                status_code=400
+            )
+        
+        # Limit max results to prevent abuse
+        limit = min(limit, 1000)
+        
+        from database import search_matched_products
+        results = search_matched_products(query, limit)
+        
+        logger.info(f"[SEARCH] Query: '{query}' - Found {len(results)} results")
+        
+        return jsonify({
+            'success': True,
+            'query': query,
+            'count': len(results),
+            'results': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Search error: {e}", exc_info=True)
+        return create_error_response(
+            'SEARCH_ERROR',
+            'Search failed',
+            str(e),
+            status_code=500
+        )
+
 @app.route('/api/products/<int:product_id>', methods=['GET'])
 def get_product(product_id):
     """
