@@ -644,7 +644,7 @@ def delete_features(product_id: int) -> bool:
         cursor.execute('DELETE FROM features WHERE product_id = ?', (product_id,))
         return cursor.rowcount > 0
 
-def get_all_features_by_category(category: Optional[str] = None, is_historical: bool = True,
+def get_all_features_by_category(category: Optional[str] = None, is_historical: Optional[bool] = True,
                                 include_uncategorized: bool = False, 
                                 embedding_type: Optional[str] = None,
                                 match_null_category: bool = False) -> List[Tuple[int, Dict[str, Any]]]:
@@ -658,7 +658,7 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
     
     Args:
         category: Category to filter by
-        is_historical: Filter for historical vs new products
+        is_historical: Filter for historical vs new products (None = get ALL products)
         include_uncategorized: If True and category specified, also include NULL category products
         embedding_type: Filter by embedding type ('legacy', 'clip', or None for all)
         match_null_category: If True and category is None, match ONLY NULL category products
@@ -676,7 +676,15 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
         embedding_filter = ""
         params = []
         
-        if category is None and not match_null_category:
+        if category is None and not match_null_category and is_historical is None:
+            # Get ALL products regardless of category or is_historical status
+            query = '''
+                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+                       f.embedding_type, f.embedding_version
+                FROM products p
+                JOIN features f ON p.id = f.product_id
+            '''
+        elif category is None and not match_null_category:
             # Get all products regardless of category
             query = '''
                 SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
@@ -696,6 +704,16 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
                 WHERE p.category IS NULL AND p.is_historical = ?
             '''
             params.append(is_historical)
+        elif category is not None and is_historical is None:
+            # Get products in specific category, ALL is_historical statuses
+            query = '''
+                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+                       f.embedding_type, f.embedding_version
+                FROM products p
+                JOIN features f ON p.id = f.product_id
+                WHERE p.category = ?
+            '''
+            params.append(category)
         elif include_uncategorized:
             # Get products in category OR with NULL category
             query = '''
@@ -934,7 +952,9 @@ def get_all_categories() -> List[str]:
             WHERE category IS NOT NULL
             ORDER BY category
         ''')
-        return [row['category'] for row in cursor.fetchall()]
+        categories = [row['category'] for row in cursor.fetchall()]
+        logger.info(f"[GET-CATEGORIES] Found {len(categories)} unique categories: {categories}")
+        return categories
 
 def bulk_update_category(product_ids: List[int], category: str) -> int:
     """Update category for multiple products at once
@@ -2524,7 +2544,7 @@ def export_catalog_csv() -> str:
 
 def rebuild_all_faiss_indexes() -> Dict[str, any]:
     """
-    Rebuild all FAISS indexes from database.
+    Rebuild all FAISS indexes from database (parallelized).
     
     This should be called:
     - On server startup
@@ -2537,12 +2557,15 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
     try:
         from faiss_index import faiss_manager
         import numpy as np
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        logger.info("Rebuilding FAISS indexes from database...")
+        logger.info("Rebuilding FAISS indexes from database (parallelized)...")
         
         # Get all categories
         categories = get_all_categories()
         categories.append(None)  # Include uncategorized products
+        
+        logger.info(f"Found {len(categories)} categories to index")
         
         stats = {
             'categories_processed': 0,
@@ -2551,19 +2574,27 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
             'skipped_categories': []
         }
         
-        for category in categories:
+        def build_category_index(category):
+            """Build FAISS index for a single category (runs in thread pool)"""
             try:
-                # Get all CLIP embeddings for category
+                # Get all CLIP embeddings for category (both historical AND new products)
+                # FAISS indexes ALL products for bidirectional matching
+                logger.info(f"[FAISS-BUILD] Building index for category '{category}'...")
                 features = get_all_features_by_category(
                     category=category,
-                    is_historical=True,
+                    is_historical=None,  # None = get ALL products (historical + new)
                     embedding_type='clip'
                 )
                 
                 if not features:
-                    logger.debug(f"No CLIP features found for category '{category}', skipping")
-                    stats['skipped_categories'].append(category)
-                    continue
+                    logger.warning(f"[FAISS-BUILD] No CLIP features found for category '{category}', skipping")
+                    return {
+                        'category': category,
+                        'status': 'skipped',
+                        'reason': 'no_features'
+                    }
+                
+                logger.info(f"[FAISS-BUILD] Found {len(features)} products with CLIP features for category '{category}'")
                 
                 # Extract embeddings and product IDs
                 product_ids = [pid for pid, _ in features]
@@ -2573,16 +2604,45 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
                 success = faiss_manager.build_index(category, embeddings, product_ids)
                 
                 if success:
-                    stats['categories_processed'] += 1
-                    stats['total_products_indexed'] += len(product_ids)
                     logger.info(f"Built FAISS index for '{category}': {len(product_ids)} products")
+                    return {
+                        'category': category,
+                        'status': 'success',
+                        'product_count': len(product_ids)
+                    }
                 else:
-                    stats['failed_categories'].append(category)
                     logger.warning(f"Failed to build FAISS index for '{category}'")
+                    return {
+                        'category': category,
+                        'status': 'failed',
+                        'reason': 'build_failed'
+                    }
                     
             except Exception as e:
                 logger.error(f"Failed to rebuild index for category '{category}': {e}")
-                stats['failed_categories'].append(category)
+                return {
+                    'category': category,
+                    'status': 'failed',
+                    'reason': str(e)
+                }
+        
+        # Parallel execution with thread pool (4-8 workers)
+        max_workers = min(8, len(categories))
+        logger.info(f"Using {max_workers} parallel workers for index building")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(build_category_index, cat): cat for cat in categories}
+            
+            for future in as_completed(futures):
+                result = future.result()
+                
+                if result['status'] == 'success':
+                    stats['categories_processed'] += 1
+                    stats['total_products_indexed'] += result['product_count']
+                elif result['status'] == 'skipped':
+                    stats['skipped_categories'].append(result['category'])
+                elif result['status'] == 'failed':
+                    stats['failed_categories'].append(result['category'])
         
         logger.info(f"FAISS index rebuild complete: {stats['categories_processed']} categories, {stats['total_products_indexed']} products")
         

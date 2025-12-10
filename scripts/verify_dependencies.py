@@ -140,8 +140,8 @@ def check_all_dependencies():
     packages = [
         # Web Framework
         ("flask", "Flask", "3.0.0", None, None),
-        ("flask-cors", "Flask-CORS", "4.0.0", None, None),
-        ("werkzeug", "Werkzeug", "3.0.0", None, None),
+        ("flask-cors", "Flask-CORS", "6.0.0", None, None),
+        ("werkzeug", "Werkzeug", "3.1.4", None, None),
         
         # Core Scientific Computing
         ("numpy", "NumPy", "1.26.2", None, None),

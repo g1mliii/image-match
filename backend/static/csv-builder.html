@@ -35,19 +35,19 @@
             <div class="progress-steps">
                 <div class="progress-step active" data-step="1">
                     <span class="step">1</span>
-                    <span>UPLOAD</span>
+                    <span>UPLOAD IMAGES</span>
                 </div>
                 <div class="progress-step" data-step="2">
                     <span class="step">2</span>
-                    <span>LINK</span>
+                    <span>IMPORT CSV</span>
                 </div>
                 <div class="progress-step" data-step="3">
                     <span class="step">3</span>
-                    <span>METADATA</span>
+                    <span>EDIT METADATA</span>
                 </div>
                 <div class="progress-step" data-step="4">
                     <span class="step">4</span>
-                    <span>HISTORY</span>
+                    <span>EDIT HISTORY</span>
                 </div>
                 <div class="progress-step" data-step="5">
                     <span class="step">5</span>
@@ -85,22 +85,23 @@
                 </div>
             </section>
 
-            <!-- Step 2: Link Data -->
+            <!-- Step 2: Import CSV -->
             <section class="section" id="step2" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 2: LINK PRODUCT DATA</h2>
+                    <h2>STEP 2: IMPORT CSV</h2>
                     <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
                 </div>
                 <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>IMPORT YOUR EXISTING PRODUCT DATA:</strong></p>
-                    <p>Upload a CSV/Excel file with your product data (SKU, name, price, etc.) or paste from clipboard.</p>
+                    <p><strong>IMPORT YOUR PRODUCT DATA:</strong></p>
+                    <p>Upload a CSV/Excel file with your product data (SKU, name, price, category, price history, performance history) or export a template to fill in Excel.</p>
                     <p><strong>LINKING STRATEGIES:</strong></p>
                     <p>• <strong>Filename = SKU:</strong> Image filename matches SKU exactly (e.g., PM-001.jpg → SKU: PM-001)</p>
                     <p>• <strong>Filename contains SKU:</strong> SKU is embedded in filename (e.g., photo_PM-001_front.jpg → SKU: PM-001)</p>
                     <p>• <strong>Folder name = SKU:</strong> Parent folder name is the SKU (e.g., /PM-001/image.jpg → SKU: PM-001)</p>
                     <p>• <strong>Fuzzy name matching:</strong> Match filename to product name (e.g., blue-plate.jpg → "Blue Ceramic Plate")</p>
                     <p>• <strong>Manual linking:</strong> Manually link unmatched products</p>
-                    <p><strong>OR SKIP THIS STEP:</strong> If you don't have existing data, skip to manually enter metadata.</p>
+                    <p><strong>EXCEL WORKFLOW:</strong> Export template → fill in Excel → import completed CSV</p>
+                    <p><strong>OR SKIP THIS STEP:</strong> If you don't have existing data, skip to manually enter metadata in Step 3.</p>
                 </div>
 
                 <div class="link-panel">
@@ -204,22 +205,22 @@
                 </div>
             </section>
 
-            <!-- Step 3: Metadata -->
+            <!-- Step 3: Edit Metadata -->
             <section class="section" id="step3" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 3: ADD METADATA</h2>
+                    <h2>STEP 3: EDIT METADATA</h2>
                     <button class="help-btn" onclick="toggleHelp('step3Help')">?</button>
                 </div>
                 <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>REVIEW AND EDIT PRODUCT DETAILS:</strong></p>
+                    <p><strong>EDIT PRODUCT METADATA:</strong></p>
                     <p>• <strong>Filename:</strong> Auto-filled from your images (don't change this!)</p>
-                    <p>• <strong>Category:</strong> Auto-detected from folders or linked from imported data</p>
-                    <p>• <strong>SKU:</strong> Unique product identifier (may be auto-linked)</p>
-                    <p>• <strong>Name:</strong> Descriptive product name (may be auto-linked)</p>
-                    <p>• <strong>Price:</strong> Current price (may be auto-linked)</p>
+                    <p>• <strong>Category:</strong> Auto-detected from folders or imported from CSV</p>
+                    <p>• <strong>SKU:</strong> Unique product identifier</p>
+                    <p>• <strong>Name:</strong> Descriptive product name</p>
+                    <p>• <strong>Price:</strong> Current price</p>
                     <p><strong>BULK EDIT:</strong> Use the tools above the table to apply values to multiple products at once. Select products with checkboxes first.</p>
                     <p><strong>PASTE FROM EXCEL:</strong> Copy data from Excel and paste it directly into the table!</p>
-                    <p><strong>NOTE:</strong> If you imported data in Step 2, metadata may already be filled in. Review and make any necessary edits.</p>
+                    <p><strong>NOTE:</strong> If you imported data in Step 2, metadata may already be filled in. Review and make any necessary edits. For historical data (price history, performance history), go to Step 4.</p>
                 </div>
 
                 <div class="bulk-panel">
@@ -269,14 +270,15 @@
                 </div>
             </section>
 
-            <!-- Step 4: History -->
+            <!-- Step 4: Edit History -->
             <section class="section" id="step4" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 4: PRICE & PERFORMANCE</h2>
+                    <h2>STEP 4: EDIT HISTORY</h2>
                     <button class="help-btn" onclick="toggleHelp('step4Help')">?</button>
                 </div>
                 <div class="help-text" id="step4Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>ADD HISTORICAL DATA (OPTIONAL):</strong></p>
+                    <p><strong>EDIT HISTORICAL DATA (OPTIONAL):</strong></p>
+                    <p>Select a product and edit its historical data:</p>
                     <p><strong>Price History:</strong> Track how prices changed over time (up to 12 months). Add date and price for each entry.</p>
                     <p><strong>Performance History:</strong> Track sales metrics including:</p>
                     <p>• Sales volume (units sold)</p>
@@ -284,7 +286,7 @@
                     <p>• Conversion rate (%)</p>
                     <p>• Revenue ($)</p>
                     <p><strong>WHY ADD THIS?</strong> Historical data enables trend charts, analytics, and performance comparisons in the main app.</p>
-                    <p><strong>TIP:</strong> You can skip this step if you only need basic matching.</p>
+                    <p><strong>TIP:</strong> You can skip this step if you only need basic matching. If you imported historical data in Step 2, it will be pre-populated here.</p>
                 </div>
 
                 <div class="selector">

@@ -1,10 +1,15 @@
-from flask import Flask, request, jsonify, send_file, send_from_directory
-from flask_cors import CORS
 import os
 import re
 import logging
 from werkzeug.utils import secure_filename
 from datetime import datetime
+
+# Set PyTorch environment variables BEFORE importing torch/CLIP
+# This fixes GPU memory fragmentation issues with AMD ROCm
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
+from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask_cors import CORS
 
 from database import (
     init_db, insert_product, bulk_insert_products, get_product_by_id, get_features_by_product_id,
@@ -52,8 +57,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress werkzeug HTTP request logs (too verbose)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)
+
+# Disable debug mode to prevent Flask from reloading and reloading CLIP model
+# This was causing GPU memory fragmentation with multiple model loads
+app.config['ENV'] = 'production'
+app.debug = False
 
 # Configuration
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -590,7 +603,92 @@ def create_metadata_products_batch():
             except Exception as e:
                 logger.warning(f"Failed to insert remaining performance histories: {e}")
         
+        # Step 4: Batch insert price histories (chunked)
+        logger.info("[BATCH-METADATA] Step 4: Batch inserting price histories (chunked)")
+        from database import bulk_insert_price_history
+        
+        all_price_records = []
+        PRICE_CHUNK_SIZE = 500  # Insert every 500 records
+        total_price_inserted = 0
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        
+        for product_id, product in zip(product_ids, validated_products):
+            # Process current price (single value)
+            if 'price' in product and product['price'] is not None:
+                try:
+                    price_value = float(product['price'])
+                    if price_value >= 0:
+                        all_price_records.append({
+                            'product_id': product_id,
+                            'date': today_str,
+                            'price': price_value,
+                            'currency': 'USD'
+                        })
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid price for product {product_id}: {product['price']}")
+            
+            # Process price history (array of date:price entries)
+            if 'price_history' in product and product['price_history']:
+                try:
+                    price_history = product['price_history']
+                    if isinstance(price_history, str):
+                        # Parse semicolon-separated entries: "2025-01-15:29.99;2025-02-15:27.99"
+                        entries = price_history.split(';')
+                        for entry in entries:
+                            if ':' in entry:
+                                date_str, price_str = entry.split(':', 1)
+                                try:
+                                    price_value = float(price_str.strip())
+                                    if price_value >= 0:
+                                        all_price_records.append({
+                                            'product_id': product_id,
+                                            'date': date_str.strip(),
+                                            'price': price_value,
+                                            'currency': 'USD'
+                                        })
+                                except ValueError:
+                                    logger.warning(f"Invalid price in history for product {product_id}: {price_str}")
+                    elif isinstance(price_history, list):
+                        # Handle array format if provided
+                        for item in price_history:
+                            if isinstance(item, dict) and 'date' in item and 'price' in item:
+                                try:
+                                    price_value = float(item['price'])
+                                    if price_value >= 0:
+                                        all_price_records.append({
+                                            'product_id': product_id,
+                                            'date': item['date'],
+                                            'price': price_value,
+                                            'currency': item.get('currency', 'USD')
+                                        })
+                                except (ValueError, TypeError):
+                                    logger.warning(f"Invalid price in history array for product {product_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to process price history for product {product_id}: {e}")
+            
+            # OPTIMIZATION: Insert incrementally to avoid memory bloat
+            if len(all_price_records) >= PRICE_CHUNK_SIZE:
+                try:
+                    inserted = bulk_insert_price_history(product_id, all_price_records)
+                    total_price_inserted += inserted
+                    logger.debug(f"[BATCH-METADATA] Incremental price insert: {inserted} records (total: {total_price_inserted})")
+                    all_price_records = []
+                except Exception as e:
+                    logger.warning(f"[BATCH-METADATA] Incremental price insert failed: {e}, will retry at end")
+        
+        # Insert remaining price records
+        if all_price_records:
+            try:
+                # Get the last product_id for bulk insert
+                if product_ids:
+                    inserted = bulk_insert_price_history(product_ids[-1], all_price_records)
+                    total_price_inserted += inserted
+                    logger.info(f"[BATCH-METADATA] ✓ Final price batch inserted {inserted} records (total: {total_price_inserted})")
+            except Exception as e:
+                logger.warning(f"Failed to insert remaining price histories: {e}")
+        
         logger.info(f"[BATCH-METADATA] ✓ Complete! {len(product_ids)} products created successfully")
+        logger.info(f"[BATCH-METADATA] Summary: {total_perf_inserted} performance records, {total_price_inserted} price records inserted")
         
         return jsonify({
             'success': True,
@@ -962,6 +1060,12 @@ def batch_upload_products():
             categories = json.loads(categories) if categories else [None] * len(files)
             product_names = json.loads(product_names) if product_names else [None] * len(files)
             skus = json.loads(skus) if skus else [None] * len(files)
+            
+            # Log categories for debugging
+            unique_categories = set(c for c in categories if c is not None)
+            logger.info(f"[BATCH-UPLOAD] Categories received: {len(unique_categories)} unique categories from {len(categories)} products")
+            if unique_categories:
+                logger.info(f"[BATCH-UPLOAD] Unique categories: {sorted(unique_categories)}")
         except json.JSONDecodeError as e:
             return create_error_response(
                 'INVALID_JSON',
@@ -1200,15 +1304,25 @@ def batch_upload_products():
                 except Exception as e:
                     logger.error(f"[BATCH-UPLOAD] Failed to batch insert remaining features: {e}")
         
-        # Step 5: Rebuild FAISS indexes for affected categories
+        # Step 5: Rebuild FAISS indexes in background (don't block response)
         # Always rebuild FAISS indexes when new products are added (both historical and new)
-        logger.info("[BATCH-UPLOAD] Step 5: Rebuilding FAISS indexes")
-        try:
-            from database import rebuild_all_faiss_indexes
-            rebuild_all_faiss_indexes()
-            logger.info("[BATCH-UPLOAD] FAISS indexes rebuilt")
-        except Exception as e:
-            logger.warning(f"[BATCH-UPLOAD] Failed to rebuild FAISS indexes: {e}")
+        logger.info("[BATCH-UPLOAD] Step 5: Scheduling FAISS index rebuild (background)")
+        
+        def rebuild_indexes_background():
+            """Rebuild FAISS indexes in background thread"""
+            try:
+                logger.info("[BATCH-UPLOAD-BG] Starting background FAISS index rebuild...")
+                from database import rebuild_all_faiss_indexes
+                rebuild_all_faiss_indexes()
+                logger.info("[BATCH-UPLOAD-BG] ✓ FAISS indexes rebuilt successfully")
+            except Exception as e:
+                logger.warning(f"[BATCH-UPLOAD-BG] Failed to rebuild FAISS indexes: {e}")
+        
+        # Start background thread (don't wait for it)
+        import threading
+        bg_thread = threading.Thread(target=rebuild_indexes_background, daemon=True)
+        bg_thread.start()
+        logger.info("[BATCH-UPLOAD] FAISS index rebuild scheduled in background")
         
         # Prepare response
         results = []
@@ -1395,10 +1509,12 @@ def match_products():
         
         # Get metadata weights if provided
         sku_weight = data.get('sku_weight', 0.30)
-        name_weight = data.get('name_weight', 0.25)
-        category_weight_meta = data.get('category_weight', 0.20)
-        price_weight = data.get('price_weight', 0.15)
-        performance_weight = data.get('performance_weight', 0.10)
+        name_weight = data.get('name_weight', 0.30)
+        category_weight_meta = data.get('category_weight', 0.25)
+        price_weight = data.get('price_weight', 0.10)
+        performance_weight = data.get('performance_weight', 0.05)
+        
+        logger.info(f"[MATCH] Metadata weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight_meta}, Price={price_weight}, Performance={performance_weight}")
         
         # Get hybrid weights if provided
         visual_weight = data.get('visual_weight', 0.50)
@@ -1651,10 +1767,10 @@ def batch_match_products():
         
         # Get metadata weights
         sku_weight = float(data.get('sku_weight', 0.30))
-        name_weight = float(data.get('name_weight', 0.25))
-        category_weight = float(data.get('category_weight', 0.20))
-        price_weight = float(data.get('price_weight', 0.15))
-        performance_weight = float(data.get('performance_weight', 0.10))
+        name_weight = float(data.get('name_weight', 0.30))
+        category_weight = float(data.get('category_weight', 0.25))
+        price_weight = float(data.get('price_weight', 0.10))
+        performance_weight = float(data.get('performance_weight', 0.05))
         
         logger.info(f"[BATCH] Starting batch matching for {len(product_ids)} products")
         logger.info(f"[BATCH] Weights - Visual: {visual_weight*100}%, Metadata: {metadata_weight*100}%")
@@ -1748,8 +1864,7 @@ def batch_match_products():
             logger.info(f"[BATCH] ✓ Batch matching complete!")
             logger.info(f"[BATCH] Results - Successful: {result['summary']['successful']}, Failed: {result['summary']['failed']}")
             logger.info(f"[BATCH] Success rate: {result['summary']['success_rate']}%")
-            logger.info(f"[BATCH] Total matches found: {result['summary']['total_matches']}")
-            logger.info(f"[BATCH] Batch insert used: {result['summary']['batch_insert_used']}")
+            logger.info(f"[BATCH] Total results returned: {len(result['results'])}")
             
             return jsonify(response), 200
             
@@ -1864,18 +1979,22 @@ def get_product(product_id):
 # Error handlers for common HTTP errors
 @app.errorhandler(404)
 def not_found(error):
+    logger.error(f"404 Not Found: {request.method} {request.path}")
+    logger.error(f"Full URL: {request.url}")
+    logger.error(f"Error details: {error}")
     return create_error_response(
         'NOT_FOUND',
-        'Endpoint not found',
+        f'Endpoint not found: {request.method} {request.path}',
         'Check the API documentation for valid endpoints',
         status_code=404
     )
 
 @app.errorhandler(405)
 def method_not_allowed(error):
+    logger.error(f"405 Method Not Allowed: {request.method} {request.path}")
     return create_error_response(
         'METHOD_NOT_ALLOWED',
-        'HTTP method not allowed for this endpoint',
+        f'HTTP method {request.method} not allowed for {request.path}',
         'Check the API documentation for allowed methods',
         status_code=405
     )
@@ -1964,7 +2083,7 @@ def add_product_price_history(product_id):
     - prices: Array of price records with 'date', 'price', and optional 'currency'
     
     Returns:
-    - 200: Success with number of records added
+    - 200: Success with number of records added (0 if no valid records)
     - 400: Validation error
     - 404: Product not found
     - 500: Server error
@@ -1982,12 +2101,14 @@ def add_product_price_history(product_id):
         # Parse JSON body
         data = request.get_json()
         if not data or 'prices' not in data:
-            return create_error_response(
-                'MISSING_PRICES',
-                'prices array is required',
-                'Send JSON body with prices array',
-                status_code=400
-            )
+            # Return 200 OK with 0 records inserted (graceful handling for empty requests)
+            return jsonify({
+                'status': 'success',
+                'product_id': product_id,
+                'records_inserted': 0,
+                'records_validated': 0,
+                'note': 'No price data provided'
+            }), 200
         
         prices = data['prices']
         if not isinstance(prices, list):
@@ -1996,6 +2117,16 @@ def add_product_price_history(product_id):
                 'prices must be an array',
                 status_code=400
             )
+        
+        # If prices array is empty, return 200 OK (graceful handling)
+        if len(prices) == 0:
+            return jsonify({
+                'status': 'success',
+                'product_id': product_id,
+                'records_inserted': 0,
+                'records_validated': 0,
+                'note': 'Empty price array provided'
+            }), 200
         
         # Validate price records
         valid_records = []
@@ -2041,14 +2172,16 @@ def add_product_price_history(product_id):
                 'currency': currency
             })
         
+        # If no valid records after validation, return 200 OK (graceful handling)
         if not valid_records:
-            return create_error_response(
-                'NO_VALID_RECORDS',
-                'No valid price records provided',
-                'Check the validation errors',
-                {'errors': errors},
-                status_code=400
-            )
+            return jsonify({
+                'status': 'success',
+                'product_id': product_id,
+                'records_inserted': 0,
+                'records_validated': 0,
+                'validation_errors': errors,
+                'note': f'All {len(prices)} record(s) failed validation'
+            }), 200
         
         # Insert price history
         inserted = bulk_insert_price_history(product_id, valid_records)

@@ -44,12 +44,12 @@ class FAISSIndexManager:
     Automatically rebuilds indexes when catalog changes.
     """
     
-    def __init__(self, lazy_load: bool = True, cache_size: int = 2):
+    def __init__(self, lazy_load: bool = True, cache_size: int = 1000):
         """Initialize index manager with optional lazy-loading
         
         Args:
             lazy_load: If True, load indexes on-demand instead of keeping all in memory
-            cache_size: Number of most-recently-used indexes to keep cached (default: 2)
+            cache_size: Number of most-recently-used indexes to keep cached (default: 1000 = unlimited for typical use)
         """
         self.indexes: Dict[str, faiss.Index] = {}  # category -> FAISS index
         self.product_ids: Dict[str, List[int]] = {}  # category -> list of product IDs

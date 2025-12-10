@@ -29,10 +29,10 @@ def find_hybrid_matches(
     visual_weight: float = 0.50,
     metadata_weight: float = 0.50,
     sku_weight: float = 0.30,
-    name_weight: float = 0.25,
-    category_weight: float = 0.20,
-    price_weight: float = 0.15,
-    performance_weight: float = 0.10,
+    name_weight: float = 0.30,
+    category_weight: float = 0.25,
+    price_weight: float = 0.10,
+    performance_weight: float = 0.05,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
     match_against_all: bool = False
@@ -53,10 +53,10 @@ def find_hybrid_matches(
         visual_weight: Weight for visual similarity (default: 0.50)
         metadata_weight: Weight for metadata similarity (default: 0.50)
         sku_weight: Weight for SKU within metadata (default: 0.30)
-        name_weight: Weight for name within metadata (default: 0.25)
-        category_weight: Weight for category within metadata (default: 0.20)
-        price_weight: Weight for price within metadata (default: 0.15)
-        performance_weight: Weight for performance within metadata (default: 0.10)
+        name_weight: Weight for name within metadata (default: 0.30)
+        category_weight: Weight for category within metadata (default: 0.25)
+        price_weight: Weight for price within metadata (default: 0.10)
+        performance_weight: Weight for performance within metadata (default: 0.05)
         store_matches: Whether to store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories
@@ -232,10 +232,10 @@ def batch_find_hybrid_matches(
     visual_weight: float = 0.50,
     metadata_weight: float = 0.50,
     sku_weight: float = 0.30,
-    name_weight: float = 0.25,
-    category_weight: float = 0.20,
-    price_weight: float = 0.15,
-    performance_weight: float = 0.10,
+    name_weight: float = 0.30,
+    category_weight: float = 0.25,
+    price_weight: float = 0.10,
+    performance_weight: float = 0.05,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
     match_against_all: bool = False,
@@ -261,10 +261,10 @@ def batch_find_hybrid_matches(
         visual_weight: Weight for visual similarity (default: 0.50)
         metadata_weight: Weight for metadata similarity (default: 0.50)
         sku_weight: Weight for SKU within metadata (default: 0.30)
-        name_weight: Weight for name within metadata (default: 0.25)
-        category_weight: Weight for category within metadata (default: 0.20)
-        price_weight: Weight for price within metadata (default: 0.15)
-        performance_weight: Weight for performance within metadata (default: 0.10)
+        name_weight: Weight for name within metadata (default: 0.30)
+        category_weight: Weight for category within metadata (default: 0.25)
+        price_weight: Weight for price within metadata (default: 0.10)
+        performance_weight: Weight for performance within metadata (default: 0.05)
         store_matches: Store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories

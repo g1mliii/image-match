@@ -1107,64 +1107,46 @@ def compute_performance_similarity(perf1: Optional[Dict], perf2: Optional[Dict])
     """
     Compute performance tier similarity based on sales metrics.
     
+    Simplified approach: compares most recent sales performance.
+    
     Handles:
-    - Missing performance data
+    - Missing performance data (returns neutral 50.0)
+    - Single performance record (most recent)
     - Invalid metrics
-    - Multiple performance indicators (sales, views, conversion, revenue)
+    
+    Args:
+        perf1: Performance dict with 'sales', 'views', 'conversion_rate', 'revenue'
+        perf2: Performance dict with 'sales', 'views', 'conversion_rate', 'revenue'
     
     Returns:
-        Similarity score 0-100
+        Similarity score 0-100 (100 = similar performance tier, 0 = very different)
     """
-    # Handle missing performance data
+    # Handle missing performance data - return neutral score (don't penalize)
     if not perf1 or not perf2:
-        return 0.0
+        return 50.0
     
     try:
-        # Extract metrics with defaults
+        # Extract sales as primary metric (simplified approach)
         sales1 = float(perf1.get('sales', 0))
         sales2 = float(perf2.get('sales', 0))
         
-        views1 = float(perf1.get('views', 0))
-        views2 = float(perf2.get('views', 0))
+        # If both have no sales, return neutral
+        if sales1 == 0 and sales2 == 0:
+            return 50.0
         
-        conversion1 = float(perf1.get('conversion_rate', 0))
-        conversion2 = float(perf2.get('conversion_rate', 0))
+        # If one has sales and other doesn't, penalize
+        if (sales1 == 0) != (sales2 == 0):
+            return 25.0
         
-        revenue1 = float(perf1.get('revenue', 0))
-        revenue2 = float(perf2.get('revenue', 0))
+        # Compare sales ratio (how similar are the performance tiers?)
+        # e.g., 100 sales vs 120 sales = 83% similar
+        sales_ratio = min(sales1, sales2) / max(sales1, sales2)
+        similarity = sales_ratio * 100
+        
+        return max(0.0, min(100.0, similarity))
         
     except (ValueError, TypeError, AttributeError):
-        return 0.0
-    
-    # Calculate similarity for each metric
-    similarities = []
-    
-    # Sales similarity
-    if sales1 > 0 and sales2 > 0:
-        sales_ratio = min(sales1, sales2) / max(sales1, sales2)
-        similarities.append(sales_ratio * 100)
-    
-    # Views similarity
-    if views1 > 0 and views2 > 0:
-        views_ratio = min(views1, views2) / max(views1, views2)
-        similarities.append(views_ratio * 100)
-    
-    # Conversion similarity
-    if conversion1 > 0 and conversion2 > 0:
-        conv_diff = abs(conversion1 - conversion2)
-        conv_sim = max(0, 100 - (conv_diff * 2))  # 50% diff = 0 similarity
-        similarities.append(conv_sim)
-    
-    # Revenue similarity
-    if revenue1 > 0 and revenue2 > 0:
-        revenue_ratio = min(revenue1, revenue2) / max(revenue1, revenue2)
-        similarities.append(revenue_ratio * 100)
-    
-    # Average of available metrics
-    if similarities:
-        return sum(similarities) / len(similarities)
-    
-    return 0.0
+        return 50.0  # Neutral on parsing errors
 
 
 # ============================================================================
@@ -1181,11 +1163,11 @@ def find_metadata_matches(
     product_id: int,
     threshold: float = 0.0,
     limit: int = 10,
-    sku_weight: float = 0.25,
-    name_weight: float = 0.40,
-    category_weight: float = 0.15,
+    sku_weight: float = 0.30,
+    name_weight: float = 0.30,
+    category_weight: float = 0.25,
     price_weight: float = 0.10,
-    performance_weight: float = 0.10,
+    performance_weight: float = 0.05,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
     match_against_all: bool = False
@@ -1211,10 +1193,10 @@ def find_metadata_matches(
         threshold: Minimum similarity score (0-100)
         limit: Maximum number of matches
         sku_weight: Weight for SKU similarity (default: 0.30)
-        name_weight: Weight for name similarity (default: 0.25)
-        category_weight: Weight for category match (default: 0.20)
-        price_weight: Weight for price similarity (default: 0.15)
-        performance_weight: Weight for performance similarity (default: 0.10)
+        name_weight: Weight for name similarity (default: 0.30)
+        category_weight: Weight for category match (default: 0.25)
+        price_weight: Weight for price similarity (default: 0.10)
+        performance_weight: Weight for performance similarity (default: 0.05)
         store_matches: Whether to store results in database
         skip_invalid_products: Continue on errors
     
@@ -1348,14 +1330,42 @@ def find_metadata_matches(
             price_sim = compute_price_similarity(query_price, cand_price)
             performance_sim = compute_performance_similarity(query_performance, cand_performance)
             
-            # Compute weighted combined similarity
+            # ASYMMETRIC SCORING: Rewards matches, neutral on mismatches
+            # - High name match (>70) → boost score significantly
+            # - Low name match (<30) → don't penalize, just neutral
+            # - SKU/category similar logic
+            # This prevents naming variations from unfairly penalizing good matches
+            
+            def apply_asymmetric_weight(similarity_score: float, weight: float, threshold: float = 50.0) -> float:
+                """
+                Apply asymmetric weighting: rewards matches above threshold, neutral below.
+                
+                Args:
+                    similarity_score: Raw similarity (0-100)
+                    weight: Weight to apply (0-1)
+                    threshold: Score above which to apply full weight (default: 50)
+                
+                Returns:
+                    Weighted contribution (0-100)
+                """
+                if similarity_score >= threshold:
+                    # Above threshold: apply full weight (reward the match)
+                    return similarity_score * weight
+                else:
+                    # Below threshold: apply reduced weight (don't penalize)
+                    # Use 50% of weight to stay neutral
+                    return similarity_score * (weight * 0.5)
+            
+            # Compute weighted combined similarity with asymmetric scoring
             combined_sim = (
-                sku_sim * sku_weight +
-                name_sim * name_weight +
-                category_sim * category_weight +
-                price_sim * price_weight +
-                performance_sim * performance_weight
+                apply_asymmetric_weight(sku_sim, sku_weight, threshold=40) +
+                apply_asymmetric_weight(name_sim, name_weight, threshold=50) +
+                apply_asymmetric_weight(category_sim, category_weight, threshold=50) +
+                apply_asymmetric_weight(price_sim, price_weight, threshold=60) +
+                apply_asymmetric_weight(performance_sim, performance_weight, threshold=60)
             )
+            
+
             
             # Create match result
             match_result = {
@@ -1757,11 +1767,11 @@ def batch_find_metadata_matches(
     product_ids: List[int],
     threshold: float = 0.0,
     limit: int = 10,
-    sku_weight: float = 0.20,
-    name_weight: float = 0.40,
-    category_weight: float = 0.15,
-    price_weight: float = 0.15,
-    performance_weight: float = 0.10,
+    sku_weight: float = 0.30,
+    name_weight: float = 0.30,
+    category_weight: float = 0.25,
+    price_weight: float = 0.10,
+    performance_weight: float = 0.05,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
     match_against_all: bool = False,

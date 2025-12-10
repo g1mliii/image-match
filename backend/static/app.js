@@ -360,6 +360,12 @@ async function processHistoricalCatalog() {
     const statusDiv = document.getElementById('historicalStatus');
     const processBtn = document.getElementById('processHistoricalBtn');
 
+    // Disable button immediately to prevent double-clicks
+    if (processBtn.disabled) {
+        console.warn('[GUARD] Historical catalog already processing, ignoring duplicate call');
+        return;
+    }
+    
     statusDiv.classList.add('show');
     processBtn.disabled = true;
     showLoadingSpinner(processBtn, true);
@@ -620,23 +626,6 @@ async function processHistoricalCatalog() {
                                 hasFeatures: true,  // Batch upload extracts features
                                 hasPriceHistory: false
                             });
-                            
-                            // Upload price history if present
-                            if (metadata.priceHistory && metadata.priceHistory.length > 0) {
-                                try {
-                                    const priceResponse = await fetchWithRetry(`/api/products/${result.product_id}/price-history`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ prices: metadata.priceHistory })
-                                    });
-                                    
-                                    if (!priceResponse.ok) {
-                                        console.warn(`Failed to upload price history for ${file.name}: ${priceResponse.status}`);
-                                    }
-                                } catch (error) {
-                                    console.warn(`Failed to upload price history for ${file.name}:`, error);
-                                }
-                            }
                         } else {
                             failedCount++;
                             const batchItemIdx = batchItems[resultIdx];
@@ -1083,23 +1072,6 @@ async function processNewProducts() {
                             hasFeatures: true,  // Batch upload extracts features
                             hasPriceHistory: false
                         });
-                        
-                        // Upload price history if present
-                        if (metadata.priceHistory && metadata.priceHistory.length > 0) {
-                            try {
-                                const priceResponse = await fetchWithRetry(`/api/products/${result.product_id}/price-history`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ prices: metadata.priceHistory })
-                                });
-                                
-                                if (!priceResponse.ok) {
-                                    console.warn(`Failed to upload price history for ${file.name}: ${priceResponse.status}`);
-                                }
-                            } catch (error) {
-                                console.warn(`Failed to upload price history for ${file.name}:`, error);
-                            }
-                        }
                     } else {
                         failedCount++;
                         failedItems.push({ row: originalIdx + 1, fileName: file.name, reason: result.error || 'Unknown error' });
@@ -1207,10 +1179,13 @@ function initMatching() {
 }
 
 async function startMatching() {
+    console.log('[MATCHING] startMatching() called');
     const threshold = parseInt(document.getElementById('thresholdSlider').value);
     const limit = parseInt(document.getElementById('limitSelect').value);
     const progressDiv = document.getElementById('matchProgress');
     const matchBtn = document.getElementById('matchBtn');
+    
+    console.log('[MATCHING] Threshold:', threshold, 'Limit:', limit);
     
     // Initialize dynamic filters with the matching parameters
     dynamicThreshold = threshold;
@@ -1219,16 +1194,20 @@ async function startMatching() {
     progressDiv.classList.add('show');
     matchBtn.disabled = true;
     showLoadingSpinner(matchBtn, true);
+    console.log('[MATCHING] UI updated, starting matching process');
 
     // Load new products from database if not in memory
     if (!newProducts || newProducts.length === 0) {
         console.log('[MATCHING] newProducts array empty, loading from database...');
         try {
+            console.log('[MATCHING] Fetching /api/catalog/products?type=new&limit=10000');
             // CRITICAL FIX: Only load NEW products (is_historical=false), not historical ones
             const response = await fetch('/api/catalog/products?type=new&limit=10000');
+            console.log('[MATCHING] Response received:', response.status, response.ok);
             if (!response.ok) throw new Error('Failed to load new products');
             
             const data = await response.json();
+            console.log('[MATCHING] Data received:', data.products ? data.products.length : 0, 'products');
             // Filter to ensure we only get new products (is_historical=false)
             newProducts = data.products
                 .filter(p => !p.is_historical)  // CRITICAL: Filter out historical products
@@ -1250,6 +1229,8 @@ async function startMatching() {
             matchBtn.disabled = false;
             return;
         }
+    } else {
+        console.log('[MATCHING] newProducts already in memory:', newProducts.length, 'products');
     }
 
     if (newProducts.length === 0) {
@@ -1308,12 +1289,14 @@ async function startMatching() {
             visualWeight = 0;
             metadataWeight = 1.0;
         } else if (effectiveMode === 'hybrid') {
-            // Mode 3: Hybrid matching
-            visualWeight = 0.5;
-            metadataWeight = 0.5;
+            // Mode 3: Hybrid matching - read from sliders
+            visualWeight = parseFloat(document.getElementById('hybridVisualWeightSlider').value) / 100;
+            metadataWeight = parseFloat(document.getElementById('hybridMetadataWeightSlider').value) / 100;
         }
         
         // Prepare batch request
+        // Note: Metadata sub-weights (SKU, name, category, etc.) use backend defaults
+        // The sliders in the UI are for display/documentation only
         const batchPayload = {
             product_ids: productIds,
             threshold: threshold,
@@ -1373,56 +1356,15 @@ async function startMatching() {
             const matches = result.matches || [];
             console.log(`[BATCH-MATCHING] Product ${product.id}: ${matches.length} matches found`);
             
-            // Fetch price and performance history for each match
+            // PERFORMANCE OPTIMIZATION: Don't fetch price/performance history upfront
+            // Fetch it lazily when user clicks on a match to view details
+            // This eliminates 322 HTTP requests (2 per match × 161 matches)
             for (const match of matches) {
-                // Fetch price history
-                try {
-                    const priceResponse = await fetchWithRetry(`/api/products/${match.product_id}/price-history`);
-                    if (priceResponse.ok) {
-                        const priceData = await priceResponse.json();
-                        match.priceHistory = priceData.price_history || [];
-                        match.priceStatistics = priceData.statistics;
-                    }
-                } catch (error) {
-                    console.warn(`Failed to fetch price history for match ${match.product_id}:`, error);
-                    match.priceHistory = [];
-                    match.priceStatistics = null;
-                }
-                
-                // Fetch performance history (simple format)
-                try {
-                    const perfResponse = await fetchWithRetry(`/api/products/${match.product_id}/performance-history`);
-                    if (perfResponse.ok) {
-                        const perfData = await perfResponse.json();
-                        // Extract just sales numbers for simple display
-                        const perfHistory = perfData.performance_history || [];
-                        // CRITICAL: Filter out invalid values (null, undefined, NaN) to prevent sparkline errors
-                        match.performanceHistory = perfHistory
-                            .map(p => p.sales)
-                            .filter(s => typeof s === 'number' && !isNaN(s) && isFinite(s));
-                        
-                        // Calculate simple statistics
-                        if (match.performanceHistory.length > 0) {
-                            const total = match.performanceHistory.reduce((sum, val) => sum + val, 0);
-                            const avg = total / match.performanceHistory.length;
-                            const latest = match.performanceHistory[0]; // Most recent
-                            const oldest = match.performanceHistory[match.performanceHistory.length - 1];
-                            const trend = latest > oldest ? 'up' : latest < oldest ? 'down' : 'stable';
-                            
-                            match.performanceStatistics = {
-                                total_sales: total,
-                                average_sales: Math.round(avg),
-                                sales_trend: trend
-                            };
-                        } else {
-                            match.performanceStatistics = null;
-                        }
-                    }
-                } catch (error) {
-                    console.warn(`Failed to fetch performance history for match ${match.product_id}:`, error);
-                    match.performanceHistory = [];
-                    match.performanceStatistics = null;
-                }
+                // Initialize as null - will be fetched on-demand when viewing details
+                match.priceHistory = null;
+                match.priceStatistics = null;
+                match.performanceHistory = null;
+                match.performanceStatistics = null;
             }
             
             matchResults.push({
@@ -1727,7 +1669,31 @@ async function showDetailedComparison(newProductId, matchedProductId) {
 
         // Find the match details
         const matchResult = matchResults.find(r => r.product.id === newProductId);
-        const matchDetails = matchResult?.matches.find(m => m.product_id === matchedProductId);
+        let matchDetails = matchResult?.matches.find(m => m.product_id === matchedProductId);
+
+        // LAZY LOADING: Fetch price/performance history on-demand if not already loaded
+        if (matchDetails && !matchDetails.priceHistory && !matchDetails.performanceHistory) {
+            try {
+                const [priceResp, perfResp] = await Promise.all([
+                    fetchWithRetry(`/api/products/${matchedProductId}/price-history`).catch(() => null),
+                    fetchWithRetry(`/api/products/${matchedProductId}/performance-history`).catch(() => null)
+                ]);
+
+                if (priceResp?.ok) {
+                    const priceData = await priceResp.json();
+                    matchDetails.priceHistory = priceData.history || null;
+                    matchDetails.priceStatistics = priceData.statistics || null;
+                }
+
+                if (perfResp?.ok) {
+                    const perfData = await perfResp.json();
+                    matchDetails.performanceHistory = perfData.history || null;
+                    matchDetails.performanceStatistics = perfData.statistics || null;
+                }
+            } catch (error) {
+                console.warn('Failed to fetch price/performance history:', error);
+            }
+        }
 
         // Detect if we're in Mode 2 (metadata-only)
         const isMetadataMode = newMode === 'metadata';
@@ -2406,6 +2372,9 @@ function initLazyLoading() {
                 const src = img.getAttribute('data-src');
                 
                 if (src) {
+                    // Add loading spinner overlay
+                    img.classList.add('image-loading');
+                    
                     // Check if it's an API endpoint (needs blob URL for tracking)
                     if (src.startsWith('/api/products/')) {
                         // Create tracked blob URL to prevent memory leaks
@@ -2413,17 +2382,24 @@ function initLazyLoading() {
                             .then(blobUrl => {
                                 img.src = blobUrl;
                                 img.removeAttribute('data-src');
+                                // Remove loading state when image loads
+                                img.onload = () => img.classList.remove('image-loading');
+                                img.onerror = () => img.classList.remove('image-loading');
                             })
                             .catch(error => {
                                 console.error('Failed to load image:', error);
                                 // Fallback to direct URL
                                 img.src = src;
                                 img.removeAttribute('data-src');
+                                img.classList.remove('image-loading');
                             });
                     } else {
                         // For non-API images, load directly
                         img.src = src;
                         img.removeAttribute('data-src');
+                        // Remove loading state when image loads
+                        img.onload = () => img.classList.remove('image-loading');
+                        img.onerror = () => img.classList.remove('image-loading');
                     }
                     
                     // Stop observing this image
@@ -3093,12 +3069,12 @@ function resetWeights() {
     }
     
     if (metadataSection.style.display !== 'none') {
-        // Reset Mode 2 (Metadata)
+        // Reset Mode 2 (Metadata) - Asymmetric scoring with name-heavy weighting
         document.getElementById('skuWeightSlider').value = 30;
-        document.getElementById('nameWeightSlider').value = 25;
-        document.getElementById('categoryWeightSlider').value = 20;
-        document.getElementById('priceWeightSlider').value = 15;
-        document.getElementById('performanceWeightSlider').value = 10;
+        document.getElementById('nameWeightSlider').value = 30;
+        document.getElementById('categoryWeightSlider').value = 25;
+        document.getElementById('priceWeightSlider').value = 10;
+        document.getElementById('performanceWeightSlider').value = 5;
         updateMetadataWeights();
     }
     
@@ -3115,10 +3091,10 @@ function resetWeights() {
         updateHybridVisualSubWeights();
         
         document.getElementById('hybridSkuWeightSlider').value = 30;
-        document.getElementById('hybridNameWeightSlider').value = 25;
-        document.getElementById('hybridCategoryWeightSlider').value = 20;
-        document.getElementById('hybridPriceWeightSlider').value = 15;
-        document.getElementById('hybridPerformanceWeightSlider').value = 10;
+        document.getElementById('hybridNameWeightSlider').value = 30;
+        document.getElementById('hybridCategoryWeightSlider').value = 25;
+        document.getElementById('hybridPriceWeightSlider').value = 10;
+        document.getElementById('hybridPerformanceWeightSlider').value = 5;
         updateHybridMetadataSubWeights();
     }
     

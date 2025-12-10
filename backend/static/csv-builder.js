@@ -261,9 +261,18 @@ function handleImageFiles(files) {
     const displayLimit = 50;
     const hasMore = imageFiles.length > displayLimit;
     
+    // Show destination selector if not from main app
+    const destinationSection = !state.mainAppSource ? `
+        <div style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+            <strong>Destination:</strong> <span id="destinationLabel">${state.mainAppSource || 'Not set'}</span>
+            <button class="btn-small" onclick="showDestinationSelector()" style="margin-left: 10px;">SELECT</button>
+        </div>
+    ` : '';
+    
     info.innerHTML = `
         <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
         <h4>✓ ${imageFiles.length} images loaded</h4>
+        ${destinationSection}
         ${categorySummary}
         <div class="file-list" id="csvBuilderFileList">
             ${state.products.slice(0, displayLimit).map(p => 
@@ -2104,6 +2113,10 @@ function checkForMainAppData() {
         info.innerHTML = `
             <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
             <h4>✓ ${files.length} images loaded from Main App</h4>
+            <div style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                <strong>Destination:</strong> <span id="destinationLabel">${source === 'historical' ? 'Historical Products' : 'New Products'}</span>
+                <button class="btn-small" onclick="changeDestination()" style="margin-left: 10px;">CHANGE</button>
+            </div>
             ${categorySummary}
             <div class="file-list" id="csvBuilderFileList">
                 ${state.products.slice(0, displayLimit).map(p => 
@@ -2122,12 +2135,12 @@ function checkForMainAppData() {
         
         document.getElementById('nextToLink').disabled = false;
         
-        // Add "Send to App" button in Step 4
+        // Add "Send to App" button in Step 5
         addSendToAppButton(source);
         
         showToast(`${files.length} images loaded from Main App. Add metadata and send back!`, 'success');
         
-        // Clear sessionStorage
+        // Clear sessionStorage to prevent memory leaks
         sessionStorage.removeItem('csvBuilderFiles');
         sessionStorage.removeItem('csvBuilderSource');
         
@@ -2159,12 +2172,118 @@ function addSendToAppButton(source) {
     }, 100);
 }
 
-// Send CSV data back to main app
+// Show destination selector modal
+function showDestinationSelector() {
+    const modal = document.createElement('div');
+    modal.id = 'destinationModal';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+    `;
+    
+    modal.innerHTML = `
+        <div style="background: white; padding: 30px; border-radius: 8px; max-width: 400px; text-align: center;">
+            <h3>Select Destination</h3>
+            <p>Where should this CSV be sent?</p>
+            <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: center;">
+                <button class="btn" onclick="setDestination('historical'); document.getElementById('destinationModal').remove();">
+                    Historical Products
+                </button>
+                <button class="btn" onclick="setDestination('new'); document.getElementById('destinationModal').remove();">
+                    New Products
+                </button>
+            </div>
+            <button class="btn" onclick="document.getElementById('destinationModal').remove();" style="margin-top: 10px; width: 100%;">
+                Cancel
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+// Set destination and update UI
+function setDestination(section) {
+    state.mainAppSource = section;
+    const label = section === 'historical' ? 'Historical Products' : 'New Products';
+    const destinationLabel = document.getElementById('destinationLabel');
+    if (destinationLabel) {
+        destinationLabel.textContent = label;
+    }
+    showToast(`Destination set to: ${label}`, 'success');
+}
+
+// Change destination (for main app uploads)
+function changeDestination() {
+    showDestinationSelector();
+}
+
+// Send CSV data back to main app with confirmation
 function sendToMainApp() {
     if (!window.opener) {
         showToast('Main app window not found. Please download CSV and upload manually.', 'error');
         return;
     }
+    
+    // If no destination set, ask user
+    if (!state.mainAppSource) {
+        showToast('Please select a destination first', 'warning');
+        showDestinationSelector();
+        return;
+    }
+    
+    // Show confirmation modal
+    const modal = document.createElement('div');
+    modal.id = 'confirmSendModal';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+    `;
+    
+    const destinationLabel = state.mainAppSource === 'historical' ? 'Historical Products' : 'New Products';
+    
+    modal.innerHTML = `
+        <div style="background: white; padding: 30px; border-radius: 8px; max-width: 400px; text-align: center;">
+            <h3>Send CSV to Main App?</h3>
+            <p>Destination: <strong>${destinationLabel}</strong></p>
+            <p style="font-size: 14px; color: #666;">This will populate the ${destinationLabel.toLowerCase()} section in the main app.</p>
+            <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: center;">
+                <button class="btn" onclick="confirmSendToMainApp();">
+                    SEND
+                </button>
+                <button class="btn" onclick="document.getElementById('confirmSendModal').remove(); showDestinationSelector();">
+                    CHANGE
+                </button>
+                <button class="btn" onclick="document.getElementById('confirmSendModal').remove();">
+                    CANCEL
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+// Confirm and actually send
+function confirmSendToMainApp() {
+    const modal = document.getElementById('confirmSendModal');
+    if (modal) modal.remove();
     
     const csv = generateCSV();
     const source = state.mainAppSource;

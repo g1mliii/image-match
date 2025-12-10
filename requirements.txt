@@ -21,8 +21,9 @@
 
 # Web Framework (Required for Flask app)
 Flask==3.0.0
-Flask-CORS==4.0.0
-Werkzeug>=3.0.0
+Flask-CORS==6.0.0
+Werkzeug>=3.1.4
+urllib3>=2.6.0
 
 # Core Scientific Computing
 numpy>=1.26.2
