@@ -9,12 +9,12 @@ python setup_gpu.py
 ```
 
 This script automatically:
-- ✅ Detects your GPU (AMD/NVIDIA/Apple Silicon)
-- ✅ Checks Python version compatibility
-- ✅ Installs PyTorch with GPU support
-- ✅ Installs all dependencies
-- ✅ Verifies GPU is working
-- ✅ Runs performance benchmark
+- Detects your GPU (AMD/NVIDIA/Apple Silicon)
+- Checks Python version compatibility
+- Installs PyTorch with GPU support
+- Installs all dependencies
+- Verifies GPU is working
+- Runs performance benchmark
 
 ---
 
@@ -41,11 +41,11 @@ This script automatically:
    - Download from: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html
    - Run installer as Administrator
    - Select components:
-     - ✅ HIP Core (Required)
-     - ✅ Libraries (Required)
-     - ✅ Runtime Compiler (Required)
-     - ✅ Ray Tracing (Optional)
-     - ✅ VS plugin (Optional)
+     - HIP Core (Required)
+     - Libraries (Required)
+     - Runtime Compiler (Required)
+     - Ray Tracing (Optional)
+     - VS plugin (Optional)
    - Restart computer after installation
 
 3. **Run setup script with Python 3.12**:
@@ -239,7 +239,7 @@ Batch Processing:
   Throughput: 193.0 images/sec
   Speedup vs single: 10.2x
 
-🚀 EXCELLENT (High-end GPU)
+EXCELLENT (High-end GPU)
 ```
 
 ---
@@ -254,7 +254,7 @@ python -m pytest backend/tests/test_clip.py backend/tests/test_gpu_support.py ba
 python -m pytest backend/tests/test_clip.py::TestGPUDetection::test_detect_device -v
 ```
 
-**Expected:** All tests should pass ✅
+**Expected:** All tests should pass
 
 ---
 
@@ -338,17 +338,17 @@ This is automatically done by `setup_gpu.py` for AMD GPUs.
 
 | GPU Type | Throughput | Rating | Notes |
 |----------|-----------|--------|-------|
-| **AMD RX 9070 XT** | 193 img/s | 🚀 Excellent | ROCm 6.4, Python 3.12 |
-| **NVIDIA RTX 4090** | 250-300 img/s | 🚀 Excellent | CUDA 12.4 |
-| **NVIDIA RTX 3080** | 150-200 img/s | 🚀 Excellent | CUDA 12.4 |
-| **Apple M3 Max** | 100-150 img/s | ✅ Very Good | MPS |
-| **Apple M2** | 50-100 img/s | ✅ Very Good | MPS |
-| **AMD RX 6700 XT** | 80-120 img/s | ✅ Very Good | ROCm 6.4 |
-| **NVIDIA RTX 3060** | 80-120 img/s | ✅ Very Good | CUDA 12.4 |
-| **Intel Arc A770** | 60-80 img/s | ✅ Good | Intel Extension |
-| **Intel Iris Xe** | 30-50 img/s | 👍 Good | Intel Extension |
-| **CPU (Ryzen 9)** | 10-20 img/s | 👍 Acceptable | No GPU |
-| **CPU (Intel i7)** | 5-15 img/s | ⚠️ Slow | No GPU |
+| **AMD RX 9070 XT** | 193 img/s | Excellent | ROCm 6.4, Python 3.12 |
+| **NVIDIA RTX 4090** | 250-300 img/s | Excellent | CUDA 12.4 |
+| **NVIDIA RTX 3080** | 150-200 img/s | Excellent | CUDA 12.4 |
+| **Apple M3 Max** | 100-150 img/s | Very Good | MPS |
+| **Apple M2** | 50-100 img/s | Very Good | MPS |
+| **AMD RX 6700 XT** | 80-120 img/s | Very Good | ROCm 6.4 |
+| **NVIDIA RTX 3060** | 80-120 img/s | Very Good | CUDA 12.4 |
+| **Intel Arc A770** | 60-80 img/s | Good | Intel Extension |
+| **Intel Iris Xe** | 30-50 img/s | Good | Intel Extension |
+| **CPU (Ryzen 9)** | 10-20 img/s | Acceptable | No GPU |
+| **CPU (Intel i7)** | 5-15 img/s | Slow | No GPU |
 
 ---
 

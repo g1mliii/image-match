@@ -1,29 +1,29 @@
 # Pull Request
 
-## 📝 Description
+## Description
 <!-- Provide a clear description of what this PR does -->
 
-## 🔗 Related Issues
+## Related Issues
 <!-- Link to related issues using #issue_number -->
 Fixes #
 Related to #
 
-## 🎯 Type of Change
+## Type of Change
 <!-- Mark the relevant option with an 'x' -->
-- [ ] 🐛 Bug fix (non-breaking change which fixes an issue)
-- [ ] ✨ New feature (non-breaking change which adds functionality)
-- [ ] 💥 Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] 📝 Documentation update
-- [ ] 🎨 UI/UX improvement
-- [ ] ⚡ Performance improvement
-- [ ] ♻️ Code refactoring
-- [ ] 🧪 Test addition or update
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+- [ ] UI/UX improvement
+- [ ] Performance improvement
+- [ ] Code refactoring
+- [ ] Test addition or update
 
-## 🧪 Testing
+## Testing
 <!-- Describe the tests you ran and how to reproduce them -->
 
 **Test Configuration:**
-- OS: 
+- OS:
 - Python Version:
 - CatalogMatch Version:
 
@@ -32,7 +32,7 @@ Related to #
 - [ ] Test case 2
 - [ ] Edge cases tested
 
-## 📸 Screenshots
+## Screenshots
 <!-- If applicable, add screenshots to demonstrate the changes -->
 
 **Before:**
@@ -41,7 +41,7 @@ Related to #
 **After:**
 
 
-## ✅ Checklist
+## Checklist
 <!-- Mark completed items with an 'x' -->
 - [ ] My code follows the project's code style (PEP 8)
 - [ ] I have performed a self-review of my code
@@ -52,21 +52,18 @@ Related to #
 - [ ] New and existing unit tests pass locally with my changes
 - [ ] Any dependent changes have been merged and published
 
-## 📚 Documentation
+## Documentation
 <!-- List any documentation that was added or updated -->
 - [ ] README.md updated
 - [ ] Code comments added
 - [ ] Website docs updated
 - [ ] CONTRIBUTING.md updated (if process changed)
 
-## ⚠️ Breaking Changes
+## Breaking Changes
 <!-- If this PR introduces breaking changes, describe them here -->
 
-## 🔄 Migration Guide
+## Migration Guide
 <!-- If users need to take action, provide a migration guide -->
 
-## 📝 Additional Notes
+## Additional Notes
 <!-- Any additional information that reviewers should know -->
-
-## 🙏 Acknowledgments
-<!-- Credit any contributors, resources, or inspiration -->

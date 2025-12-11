@@ -7,13 +7,13 @@ The Product Matching Service implements intelligent product matching with catego
 **Key Feature: Production-Ready Error Handling**
 
 This service is designed to handle messy real-world data gracefully:
-- ✅ Corrupted or missing image features (NaN, Inf, empty arrays)
-- ✅ Missing metadata fields (NULL names, SKUs, categories)
-- ✅ Wrong data formatting and type mismatches
-- ✅ Unopenable or corrupted images
-- ✅ Database errors and connection issues
-- ✅ Mixed good and bad data in the same catalog
-- ✅ **No file size limits** - handles large images gracefully
+- Corrupted or missing image features (NaN, Inf, empty arrays)
+- Missing metadata fields (NULL names, SKUs, categories)
+- Wrong data formatting and type mismatches
+- Unopenable or corrupted images
+- Database errors and connection issues
+- Mixed good and bad data in the same catalog
+- **No file size limits** - handles large images gracefully
 
 ## Features
 

@@ -8,11 +8,11 @@ CatalogMatch is a desktop application that helps businesses compare new products
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/license-Proprietary-red)
 
-## 🌐 Website
+## Website
 
 Visit our website: **https://g1mliii.github.io/image-match/**
 
-## ✨ Features
+## Features
 
 - **Visual Similarity Matching** - Compare products based on color, shape, and texture
 - **Category Filtering** - Match products only within the same category
@@ -22,7 +22,7 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 - **Detailed Scoring** - See similarity breakdowns by feature type
 - **Side-by-Side Comparison** - Visual comparison of matched products
 
-## 🚀 Quick Start
+## Quick Start
 
 1. **Download** the app from [our website](https://g1mliii.github.io/image-match/download.html)
 2. **Install** by running the executable (Windows only)
@@ -30,7 +30,7 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 4. **Match** new products against your catalog
 5. **Review** results and export to CSV
 
-## 📚 Documentation
+## Documentation
 
 ### Getting Started
 - **[INSTALLATION.md](INSTALLATION.md)** - Complete installation guide for all platforms
@@ -46,7 +46,7 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 - **[Database Design](backend/docs/DATABASE_DESIGN.md)** - Database schema and design
 - **[Matching Service](backend/docs/MATCHING_SERVICE.md)** - Matching algorithm details
 
-## 📋 System Requirements
+## System Requirements
 
 ### Windows
 - Windows 10 or later (64-bit)
@@ -73,25 +73,25 @@ cd gpu
 python setup_gpu.py
 ```
 
-## 💰 Pricing
+## Pricing
 
 - **Free**: Up to 50 products
 - **Pro**: $29 one-time payment for unlimited products
 
 [View full pricing details](https://g1mliii.github.io/image-match/pricing.html)
 
-## 📚 Documentation
+## More Information
 
 Full documentation is available at: https://g1mliii.github.io/image-match/docs.html
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 - **Backend**: Python, Flask, OpenCV, NumPy
 - **Frontend**: HTML, CSS (Tailwind), JavaScript
 - **Database**: SQLite
 - **Desktop**: PyWebView
 
-## 📦 What's Included
+## What's Included
 
 - Visual similarity engine with color, shape, and texture analysis
 - Category-based filtering system
@@ -100,20 +100,20 @@ Full documentation is available at: https://g1mliii.github.io/image-match/docs.h
 - Local SQLite database
 - Desktop GUI application
 
-## 🔒 Privacy & Security
+## Privacy & Security
 
 - **100% Offline** - All processing happens on your computer
 - **No Cloud Storage** - Your data never leaves your machine
 - **Local Database** - SQLite database stored in your app data folder
 - **No Tracking** - We don't collect any usage data
 
-## 📧 Support
+## Support
 
 - **Documentation**: https://g1mliii.github.io/image-match/docs.html
 - **Bug Reports**: https://github.com/g1mliii/image-match/issues
 - **Business Inquiries**: info@anchored.site
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [ ] macOS support
 - [ ] Price history tracking
@@ -122,14 +122,14 @@ Full documentation is available at: https://g1mliii.github.io/image-match/docs.h
 - [ ] GPU acceleration
 - [ ] API access for Pro users
 
-## 📄 License
+## License
 
 Proprietary software. See [Terms of Service](https://g1mliii.github.io/image-match/terms.html) for details.
 
 - **Free Version**: Personal use only, up to 50 products
 - **Pro Version**: Commercial use allowed, unlimited products
 
-## 🏢 About
+## About
 
 CatalogMatch is developed to help businesses make smarter inventory decisions through visual product comparison. Whether you're managing e-commerce inventory, retail stock, or product catalogs, CatalogMatch helps you quickly identify similar items and avoid duplicate purchases.
 
