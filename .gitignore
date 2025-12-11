@@ -68,12 +68,32 @@ package.json
 .vscode/
 .idea/
 
-# Internal documentation
+# Internal documentation (root level)
 ERROR_HANDLING_IMPLEMENTATION.md
 PROJECT_STRUCTURE.md
 SETUP_SIMPLE.md
 ORGANIZATION_SUMMARY.md
 QUICK_REFERENCE.md
+WORKSPACE_STRUCTURE.md
+QUICK_NAVIGATION.md
 
-# Keep only public-facing files in docs/
-# (index.html, pricing.html, download.html, docs.html, contact.html, 404.html, styles.css, scripts.js, sitemap.xml, robots.txt, _config.yml)
+# Backend docs (excessive/AI-generated)
+backend/BRUTALIST_UI.md
+backend/docs/IMPLEMENTATION_SUMMARY.md
+backend/docs/FUZZY_CATEGORY_MATCHING_SUMMARY.md
+backend/docs/PERFORMANCE_OPTIMIZATIONS.md
+backend/docs/SIMILARITY_ERROR_HANDLING.md
+backend/docs/IMAGE_PROCESSING_ERRORS.md
+backend/docs/REAL_WORLD_DATA_HANDLING.md
+backend/docs/SKU_IMPLEMENTATION.md
+backend/docs/UI_FEATURES_GUIDE.md
+backend/docs/PRICE_HISTORY_GUIDE.md
+backend/docs/START_SERVER.md
+backend/static/old-gradient-ui/
+
+# GPU docs (redundant)
+gpu/INTEL_GPU_SETUP.md
+gpu/WORKFLOW_INTEGRATION.md
+
+# Sample data docs
+sample-data/MODE2_TEST_EXPECTED_RESULTS.md

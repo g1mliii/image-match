@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to CatalogMatch! This document provides guidelines for contributing to the project.
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -35,7 +35,7 @@ Thank you for your interest in contributing to CatalogMatch! This document provi
    python main.py
    ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 image-match/
@@ -50,7 +50,7 @@ image-match/
 └── requirements.txt  # Python dependencies
 ```
 
-## 🐛 Reporting Bugs
+## Reporting Bugs
 
 Before creating a bug report, please check existing issues to avoid duplicates.
 
@@ -64,7 +64,7 @@ Before creating a bug report, please check existing issues to avoid duplicates.
 
 **Create an issue:** https://github.com/g1mliii/image-match/issues/new
 
-## 💡 Suggesting Features
+## Suggesting Features
 
 We welcome feature suggestions! Please:
 1. Check if the feature has already been requested
@@ -72,7 +72,7 @@ We welcome feature suggestions! Please:
 3. Explain why it would be valuable
 4. Provide examples if possible
 
-## 🔧 Pull Request Process
+## Pull Request Process
 
 ### Before Submitting
 
@@ -105,7 +105,7 @@ We welcome feature suggestions! Please:
    - Keep PRs focused and reasonably sized
    - Be open to feedback
 
-## 🎨 Code Style
+## Code Style
 
 ### Python
 - Follow PEP 8 style guide
@@ -135,21 +135,21 @@ def calculate_similarity(image1: np.ndarray, image2: np.ndarray) -> float:
 - Add comments for complex logic
 - Keep functions pure when possible
 
-## 🧪 Testing
+## Testing
 
 - Write tests for new features
 - Ensure existing tests pass
 - Test with real-world data
 - Test edge cases (empty inputs, large files, etc.)
 
-## 📝 Documentation
+## Documentation
 
 - Update README.md for user-facing changes
 - Update code comments for implementation changes
 - Update website docs for feature additions
 - Keep documentation clear and concise
 
-## 🏗️ Development Guidelines
+## Development Guidelines
 
 ### Adding New Features
 
@@ -174,7 +174,7 @@ def calculate_similarity(image1: np.ndarray, image2: np.ndarray) -> float:
 - Log errors appropriately
 - Don't expose sensitive information
 
-## 🔒 Security
+## Security
 
 - Never commit sensitive data (API keys, passwords)
 - Validate all user inputs
@@ -183,11 +183,11 @@ def calculate_similarity(image1: np.ndarray, image2: np.ndarray) -> float:
 
 **Report security issues privately to:** info@anchored.site
 
-## 📄 License
+## License
 
 By contributing, you agree that your contributions will be licensed under the same license as the project (see LICENSE file).
 
-## 🤝 Code of Conduct
+## Code of Conduct
 
 ### Our Standards
 
@@ -204,13 +204,13 @@ By contributing, you agree that your contributions will be licensed under the sa
 - Personal or political attacks
 - Publishing others' private information
 
-## 💬 Communication
+## Communication
 
 - **GitHub Issues** - Bug reports and feature requests
 - **Pull Requests** - Code contributions and discussions
 - **Email** - info@anchored.site for private matters
 
-## 🎯 Priority Areas
+## Priority Areas
 
 We're especially interested in contributions for:
 
@@ -222,14 +222,14 @@ We're especially interested in contributions for:
 - [ ] Documentation improvements
 - [ ] Test coverage
 
-## 📚 Resources
+## Resources
 
 - [Python Documentation](https://docs.python.org/3/)
 - [Flask Documentation](https://flask.palletsprojects.com/)
 - [OpenCV Documentation](https://docs.opencv.org/)
 - [Git Workflow Guide](https://guides.github.com/introduction/flow/)
 
-## ❓ Questions?
+## Questions?
 
 If you have questions about contributing:
 1. Check existing issues and discussions
@@ -239,6 +239,6 @@ If you have questions about contributing:
 
 ---
 
-**Thank you for contributing to CatalogMatch!** 🎉
+**Thank you for contributing to CatalogMatch!**
 
 Every contribution, no matter how small, helps make this project better.

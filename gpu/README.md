@@ -40,16 +40,16 @@ python verify_setup.py
 
 ## Supported GPUs
 
-- ✅ **AMD Radeon RX 6000/7000/9000** (ROCm 6.4, Python 3.12)
-- ✅ **NVIDIA GeForce/RTX** (CUDA 12.4, Python 3.8+)
-- ✅ **Apple Silicon M1/M2/M3/M4/M5** (MPS, Python 3.8+)
-- ✅ **CPU Fallback** (No GPU required)
+- **AMD Radeon RX 6000/7000/9000** (ROCm 6.4, Python 3.12)
+- **NVIDIA GeForce/RTX** (CUDA 12.4, Python 3.8+)
+- **Apple Silicon M1/M2/M3/M4/M5** (MPS, Python 3.8+)
+- **CPU Fallback** (No GPU required)
 
 ## Performance
 
 | GPU | Throughput | Rating |
 |-----|-----------|--------|
-| AMD RX 9070 XT | 193 img/s | 🚀 Excellent |
-| NVIDIA RTX 4090 | 250-300 img/s | 🚀 Excellent |
-| Apple M3 Max | 100-150 img/s | ✅ Very Good |
-| CPU (Ryzen 9) | 10-20 img/s | 👍 Good |
+| AMD RX 9070 XT | 193 img/s | Excellent |
+| NVIDIA RTX 4090 | 250-300 img/s | Excellent |
+| Apple M3 Max | 100-150 img/s | Very Good |
+| CPU (Ryzen 9) | 10-20 img/s | Good |

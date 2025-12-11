@@ -72,10 +72,10 @@ Navigate to:
 - **Windows/Linux:** http://127.0.0.1:5000
 
 Check the GPU status indicator in the top right:
-- ⚡ **AMD GPU Active** - ROCm working
-- ⚡ **NVIDIA GPU Active** - CUDA working
-- ⚡ **Apple Silicon Active** - MPS working
-- 💻 **CPU Mode** - No GPU detected
+- **AMD GPU Active** - ROCm working
+- **NVIDIA GPU Active** - CUDA working
+- **Apple Silicon Active** - MPS working
+- **CPU Mode** - No GPU detected
 
 ---
 
