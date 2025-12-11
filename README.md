@@ -93,7 +93,7 @@ Full documentation is available at: https://g1mliii.github.io/image-match/docs.h
 
 ## What's Included
 
-- Visual similarity engine with color, shape, and texture analysis
+- Visual similarity Powered by CLIP
 - Category-based filtering system
 - Batch upload and processing
 - CSV metadata import/export

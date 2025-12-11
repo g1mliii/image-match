@@ -1,7 +1,5 @@
 # Installation Guide
 
-## Quick Start (Recommended)
-
 ### Step 1: Install Python
 
 **AMD GPU Users (Windows):**

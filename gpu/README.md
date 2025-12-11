@@ -52,4 +52,3 @@ python verify_setup.py
 | AMD RX 9070 XT | 193 img/s | Excellent |
 | NVIDIA RTX 4090 | 250-300 img/s | Excellent |
 | Apple M3 Max | 100-150 img/s | Very Good |
-| CPU (Ryzen 9) | 10-20 img/s | Good |

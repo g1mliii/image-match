@@ -6,10 +6,8 @@ Thank you for your interest in contributing to CatalogMatch! This document provi
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.12 or higher
 - Git
-- Windows 10+ (for desktop app testing)
-- Basic knowledge of Python, Flask, and OpenCV
 
 ### Development Setup
 

@@ -49,6 +49,27 @@ python scripts/reset_db.py
 
 **Warning:** This deletes ALL data! Use with caution.
 
+### `init_claude.py`
+Generates consolidated project context for Claude Code AI assistant.
+
+**Usage:**
+```bash
+python scripts/init_claude.py
+```
+
+**What it does:**
+- Reads all specification files from `.kiro/steering/` and `.kiro/specs/`
+- Generates `.claude/context.md` with complete project information
+- Includes task status, architecture, tech stack, and key decisions
+- Lists all incomplete tasks from `tasks.md`
+
+**When to run:**
+- After updating kiro specification files
+- Before starting a new AI coding session
+- When onboarding new contributors
+
+**Output:** `.claude/context.md` - Single consolidated context file (~20KB)
+
 ## When to Use These Scripts
 
 ### After Installation
@@ -59,7 +80,10 @@ python scripts/verify_dependencies.py
 # 2. Pre-download CLIP model (optional)
 python scripts/download_clip_model.py
 
-# 3. Start the app
+# 3. Generate Claude Code context (for AI development)
+python scripts/init_claude.py
+
+# 4. Start the app
 python backend/app.py
 ```
 
