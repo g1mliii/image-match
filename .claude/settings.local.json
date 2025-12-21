@@ -1,6 +1,19 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python main.py:*)",
+      "Bash(cd:*)",
+      "Bash(dir \"C:\\Users\\subai\\Desktop\\image match\\backend\\uploads\")",
+      "Bash(powershell -Command:*)",
+      "Bash(grep:*)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(dir /a nul)",
+      "Bash(del \"\\?\\C:\\Users\\subai\\Desktop\\image match\\nul\")",
+      "Bash(cmd.exe /c \"del /F nul\")"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "supabase"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

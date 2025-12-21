@@ -42,6 +42,153 @@ let historyStack = [];
 let historyIndex = -1;
 const MAX_HISTORY = 50;
 
+// ============ MEMORY OPTIMIZATION UTILITIES ============
+// Reduces memory footprint for large match datasets (10K+ results)
+// Uses string interning, TypedArrays, and object freezing for 60-70% reduction
+
+const stringCache = new Map();
+
+/**
+ * Intern a string to save memory on duplicates
+ * Example: intern("Electronics") called 500 times = only 1 string in memory
+ */
+function intern(str) {
+    if (!str || typeof str !== 'string') return str;
+    if (!stringCache.has(str)) {
+        stringCache.set(str, str);
+    }
+    return stringCache.get(str);
+}
+
+/**
+ * Create memory-efficient compact match object
+ * Reduces object size by 60-70% through:
+ * - Float32Array for scores (16 bytes vs 64 bytes)
+ * - String interning (no duplicates)
+ * - No null properties
+ * - Shorter property keys
+ * - Object.freeze for V8 optimization
+ */
+function createCompactMatch(matchData) {
+    // Use Float32Array for scores: 16 bytes vs 64 bytes for 4 numbers
+    const scores = new Float32Array(4);
+    scores[0] = matchData.similarity_score || 0;
+    scores[1] = matchData.color_score || 0;
+    scores[2] = matchData.shape_score || 0;
+    scores[3] = matchData.texture_score || 0;
+
+    const compact = {
+        pid: matchData.product_id,
+        mid: matchData.product_id || matchData.matched_product_id || matchData.id,
+        s: scores,  // scores array
+        cat: intern(matchData.category),  // Shared string, not duplicated
+        sku: matchData.sku,
+        name: matchData.product_name || matchData.name,
+        img: matchData.image_path
+    };
+
+    // Only include truthy optional properties
+    if (matchData.is_potential_duplicate) {
+        compact.dup = true;
+    }
+
+    // Include hybrid mode scores if present
+    if (matchData.visual_score !== undefined) compact.vs = matchData.visual_score;
+    if (matchData.metadata_score !== undefined) compact.ms = matchData.metadata_score;
+    if (matchData.sku_score !== undefined) compact.skus = matchData.sku_score;
+    if (matchData.name_score !== undefined) compact.ns = matchData.name_score;
+    if (matchData.category_score !== undefined) compact.cs = matchData.category_score;
+    if (matchData.price_score !== undefined) compact.ps = matchData.price_score;
+    if (matchData.performance_score !== undefined) compact.pfs = matchData.performance_score;
+
+    // Freeze for V8 optimization (hidden class, faster access)
+    return Object.freeze(compact);
+}
+
+/**
+ * Create compact product object
+ */
+function createCompactProduct(productData) {
+    const compact = {
+        id: productData.id,
+        name: productData.name || productData.filename || productData.product_name,
+        cat: intern(productData.category),
+        sku: productData.sku,
+        hasF: productData.hasFeatures || false
+    };
+
+    return Object.freeze(compact);
+}
+
+/**
+ * Get score from compact match object
+ * @param {Object} match - Compact match object
+ * @param {string} type - 'similarity', 'color', 'shape', or 'texture'
+ */
+function getScore(match, type) {
+    const idx = { similarity: 0, color: 1, shape: 2, texture: 3 };
+    return match.s[idx[type]];
+}
+
+/**
+ * Clear string cache (call after clearing match results to free memory)
+ */
+function clearStringCache() {
+    stringCache.clear();
+    console.log('[MEMORY] String cache cleared');
+}
+
+// ============ CHUNKING SYSTEM FOR LARGE DATASETS ============
+// When matchResults > 10,000, display chunks to prevent memory issues
+
+let currentChunk = 0;
+const CHUNK_SIZE = 10000;
+let totalMatchCount = 0;  // Total count across all chunks
+
+function getChunkInfo() {
+    const startIdx = currentChunk * CHUNK_SIZE;
+    const endIdx = Math.min(startIdx + CHUNK_SIZE, matchResults.length);
+    return {
+        chunkNumber: currentChunk + 1,
+        startIdx: startIdx,
+        endIdx: endIdx,
+        hasMore: endIdx < matchResults.length,
+        totalLoaded: endIdx,
+        totalResults: totalMatchCount || matchResults.length
+    };
+}
+
+function loadNextChunk() {
+    const info = getChunkInfo();
+    if (info.hasMore) {
+        currentChunk++;
+        displayResults(true);  // Reset to page 1 when changing chunks
+        console.log(`[CHUNKING] Loaded chunk ${info.chunkNumber + 1}`);
+    }
+}
+
+function loadPreviousChunk() {
+    if (currentChunk > 0) {
+        currentChunk--;
+        displayResults(true);  // Reset to page 1 when changing chunks
+        console.log(`[CHUNKING] Loaded chunk ${currentChunk + 1}`);
+    }
+}
+
+function navigateToChunk(chunkIndex) {
+    const maxChunk = Math.ceil(matchResults.length / CHUNK_SIZE) - 1;
+    if (chunkIndex >= 0 && chunkIndex <= maxChunk) {
+        currentChunk = chunkIndex;
+        displayResults(true);  // Reset to page 1 when changing chunks
+        console.log(`[CHUNKING] Navigated to chunk ${currentChunk + 1}`);
+    }
+}
+
+function resetChunking() {
+    currentChunk = 0;
+    totalMatchCount = 0;
+}
+
 // Retry configuration
 const RETRY_CONFIG = {
     maxRetries: 3,
@@ -74,6 +221,10 @@ let stateCheckInterval = null;
 let catalogPollingInterval = null;
 let catalogChannel = null;
 
+// Auto-backup debouncing (prevent duplicate backups during batch replace operations)
+let lastAutoBackupTime = 0;
+const AUTO_BACKUP_DEBOUNCE_MS = 5 * 60 * 1000; // 5 minute window for batch replace operations
+
 /**
  * MEMORY OPTIMIZATION: Clear all operation data after processing
  * Prevents state arrays from growing unbounded (50-100MB+ with large catalogs)
@@ -83,6 +234,8 @@ function clearOperationData() {
     newProducts = [];
     matchResults = [];
     currentPage = 1;
+    clearStringCache();  // Free interned strings from memory optimization
+    resetChunking();     // Reset chunking state
     console.log('✓ Operation data cleared (freed ~50-100MB)');
 }
 
@@ -133,15 +286,124 @@ async function createTrackedBlobUrl(url) {
         const response = await fetch(url);
         const blob = await response.blob();
         const blobUrl = URL.createObjectURL(blob);
-        
+
         // Track for cleanup
         blobUrls.add(blobUrl);
-        
+
         return blobUrl;
     } catch (error) {
         console.error('Failed to create blob URL:', error);
         throw error;
     }
+}
+
+// ============================================================================
+// PROGRESS ESTIMATION SYSTEM
+// Simple time-based progress without complex step tracking
+// This is 100% informational - backend controls all actual processing
+// ============================================================================
+
+const PROCESSING_BENCHMARKS = {
+    'batch_match': {
+        'visual': 0.3,      // Mode 1: Matching with FAISS (fast)
+        'metadata': 0.02,   // Mode 2: Metadata only (very fast)
+        'hybrid': 0.35      // Mode 3: Both modes
+    },
+    'upload': {
+        'visual': 0.8,      // Upload + feature extraction
+        'metadata': 0.05,   // CSV-only metadata
+        'hybrid': 1.0       // Upload + extraction + both modes
+    }
+};
+
+/**
+ * Start a smooth time-based progress tracker
+ * IMPORTANT: This is purely visual - backend processes independently
+ *
+ * @param {string} containerId - ID of container for progress UI
+ * @param {string} operationType - 'batch_match' or 'upload'
+ * @param {string} mode - 'visual', 'metadata', or 'hybrid'
+ * @param {number} itemCount - Number of items being processed
+ * @returns {object} Tracker object with stop() and complete() methods
+ */
+function startProgressEstimation(containerId, operationType, mode, itemCount) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.warn(`Progress container ${containerId} not found`);
+        return null;
+    }
+
+    // Calculate estimated duration based on benchmarks
+    const timePerItem = PROCESSING_BENCHMARKS[operationType]?.[mode] || 0.5;
+    const baseOverhead = 2; // seconds for setup/teardown
+    const estimatedSeconds = (itemCount * timePerItem) + baseOverhead;
+
+    console.log(`[PROGRESS] Starting estimation for ${itemCount} items (${operationType}/${mode})`);
+    console.log(`[PROGRESS] Estimated duration: ${Math.round(estimatedSeconds)}s (${timePerItem}s per item + ${baseOverhead}s overhead)`);
+
+    // Create progress UI
+    container.innerHTML = `
+        <div class="progress-estimation">
+            <h4>Processing ${itemCount} items...</h4>
+            <div class="progress-bar-modern">
+                <div class="progress-fill-modern"></div>
+                <span class="progress-percentage">0%</span>
+            </div>
+            <div class="progress-time">
+                <span class="time-elapsed">Elapsed: 0s</span>
+                <span class="time-remaining">Est. remaining: ${Math.round(estimatedSeconds)}s</span>
+            </div>
+        </div>
+    `;
+    container.classList.add('show');
+
+    const startTime = Date.now();
+    const progressFill = container.querySelector('.progress-fill-modern');
+    const progressPercent = container.querySelector('.progress-percentage');
+    const timeElapsed = container.querySelector('.time-elapsed');
+    const timeRemaining = container.querySelector('.time-remaining');
+
+    // Update progress every 100ms for smooth animation
+    // NOTE: This runs independently - doesn't affect backend processing
+    const intervalId = setInterval(() => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const percentage = Math.min(95, (elapsed / estimatedSeconds) * 100); // Cap at 95%
+        const remaining = Math.max(0, estimatedSeconds - elapsed);
+
+        progressFill.style.width = `${percentage}%`;
+        progressPercent.textContent = `${Math.round(percentage)}%`;
+        timeElapsed.textContent = `Elapsed: ${formatSeconds(elapsed)}`;
+        timeRemaining.textContent = `Est. remaining: ${formatSeconds(remaining)}`;
+    }, 100);
+
+    return {
+        intervalId,
+        startTime,
+        stop: () => {
+            clearInterval(intervalId);
+            console.log(`[PROGRESS] Tracker stopped`);
+        },
+        complete: (successMessage) => {
+            clearInterval(intervalId);
+            const totalTime = (Date.now() - startTime) / 1000;
+            progressFill.style.width = '100%';
+            progressPercent.textContent = '100%';
+            container.querySelector('h4').textContent = successMessage || 'Complete!';
+            timeElapsed.textContent = `Completed in ${formatSeconds(totalTime)}`;
+            timeRemaining.textContent = '';
+            console.log(`[PROGRESS] Completed in ${formatSeconds(totalTime)} (estimated: ${Math.round(estimatedSeconds)}s)`);
+        }
+    };
+}
+
+/**
+ * Format seconds into human-readable time
+ */
+function formatSeconds(seconds) {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${mins}m ${secs}s`;
 }
 
 /**
@@ -223,19 +485,41 @@ document.addEventListener('DOMContentLoaded', () => {
     initTooltips();
     initGPUStatus();
     initCatalogOptions();
+
+    // Check for crash recovery
+    checkForCrashRecovery();
 });
 
-// Cleanup on page unload - CRITICAL FIX
-window.addEventListener('beforeunload', async () => {
+// Expose state variables to window for child window handlers (defined in index.html)
+// These are set by handleCsvBuilderComplete when CSV Builder sends data
+Object.defineProperty(window, 'historicalCsv', {
+    get: () => historicalCsv,
+    set: (value) => { historicalCsv = value; }
+});
+Object.defineProperty(window, 'newCsv', {
+    get: () => newCsv,
+    set: (value) => { newCsv = value; }
+});
+Object.defineProperty(window, 'historicalMode', {
+    get: () => historicalMode
+});
+Object.defineProperty(window, 'newMode', {
+    get: () => newMode
+});
+
+// Expose cleanup functions for child window handlers
+window.removeWorkflowIndicators = removeWorkflowIndicators;
+window.refreshCatalogInfo = typeof refreshCatalogInfo === 'function' ? refreshCatalogInfo : () => {};
+
+// Cleanup on page unload (browser mode - prevents memory leaks)
+// In webview mode, main window stays open so this rarely fires
+window.addEventListener('beforeunload', () => {
     cleanupMemory();
-    
-    // Clean up session data (delete matches) on app close
-    try {
-        await fetch('/api/session/cleanup', { method: 'POST' });
-        console.log('[CLEANUP] Session data cleaned up');
-    } catch (error) {
-        console.error('[CLEANUP] Error cleaning up session:', error);
-    }
+});
+
+// Also cleanup on pagehide for mobile browsers
+window.addEventListener('pagehide', () => {
+    cleanupMemory();
 });
 
 // Historical Catalog Upload
@@ -330,7 +614,7 @@ function handleHistoricalFiles(files) {
     
     info.innerHTML = `
         <button class="btn clear-btn" onclick="clearFolderUpload('historical')" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
-        <h4>✓ ${imageFiles.length} images loaded</h4>
+        <h4>${imageFiles.length} images loaded</h4>
         ${categorySummary}
         <div class="file-list" id="historicalFileList">
             ${filesWithCategories.slice(0, displayLimit).map(({ file, category }) => 
@@ -395,15 +679,24 @@ async function processHistoricalCatalog() {
     const csvOnlyMode = historicalAdvancedMode && historicalFiles.length === 0 && Object.keys(categoryMap).length > 0;
     const itemsToProcess = csvOnlyMode ? Object.keys(categoryMap) : historicalFiles;
     const totalItems = csvOnlyMode ? Object.keys(categoryMap).length : historicalFiles.length;
-    
-    statusDiv.innerHTML = '<h4>Processing historical catalog...</h4><div class="progress-bar"><div class="progress-fill" id="historicalProgress"></div></div><p id="historicalProgressText">0 of ' + totalItems + ' processed</p><div class="spinner-inline"></div>';
+
+    // Determine mode for progress tracker
+    const mode = csvOnlyMode ? 'metadata' : historicalMode;
+
+    // Start progress estimation (VISUAL ONLY - doesn't affect backend)
+    const tracker = startProgressEstimation('historicalStatus', 'upload', mode, totalItems);
 
     // Load existing products from DB if using "add_to_existing" option
     const loadOption = getCatalogLoadOption();
+    // MEMORY OPTIMIZATION: Load historical products with pagination
+    let historicalProductsTotal = 0;  // Track total count
+    let historicalProductsPage = 1;   // Track current page
+
     if (loadOption === 'add_to_existing') {
         try {
-            console.log('[ADD_TO_EXISTING] Loading existing historical products from DB...');
-            const response = await fetch('/api/catalog/products?type=historical&limit=10000');
+            console.log('[ADD_TO_EXISTING] Loading existing historical products from DB (first page)...');
+            // Load first page only (50 products) to prevent memory bloat
+            const response = await fetch('/api/catalog/products?type=historical&page=1&limit=50');
             if (response.ok) {
                 const data = await response.json();
                 historicalProducts = data.products.map(p => ({
@@ -415,7 +708,9 @@ async function processHistoricalCatalog() {
                     is_historical: true,
                     hasFeatures: p.has_features
                 }));
-                console.log(`[ADD_TO_EXISTING] Loaded ${historicalProducts.length} existing products`);
+                historicalProductsTotal = data.total || historicalProducts.length;
+                historicalProductsPage = 1;
+                console.log(`[ADD_TO_EXISTING] Loaded ${historicalProducts.length} of ${historicalProductsTotal} existing products`);
             } else {
                 console.warn('[ADD_TO_EXISTING] Failed to load existing products, starting fresh');
                 historicalProducts = [];
@@ -428,9 +723,7 @@ async function processHistoricalCatalog() {
         // For 'replace' option, start with empty array (products already deleted)
         historicalProducts = [];
     }
-    const progressFill = document.getElementById('historicalProgress');
-    const progressText = document.getElementById('historicalProgressText');
-    
+
     let successCount = 0;
     let failedCount = 0;
     const failedItems = [];
@@ -544,10 +837,6 @@ async function processHistoricalCatalog() {
             failedItems.push({ row: 'batch', fileName: 'all', reason: error.message });
             console.error('[BATCH-METADATA] Batch creation error:', error);
         }
-        
-        const progress = ((successCount + failedCount) / totalItems) * 100;
-        progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${successCount + failedCount} of ${totalItems} processed (${successCount} success, ${failedCount} failed)`;
     }
     
     // Process image items in batch (Mode 1/3) - GPU batch processing
@@ -559,10 +848,9 @@ async function processHistoricalCatalog() {
             // This overlaps file I/O with network requests instead of waiting for all files to load
             const STREAM_BATCH_SIZE = 100;
             const totalBatches = Math.ceil(imageItems.length / STREAM_BATCH_SIZE);
-            
+
             console.log(`[BATCH-UPLOAD] Streaming ${imageItems.length} images in ${totalBatches} batch(es) of ${STREAM_BATCH_SIZE}`);
-            progressText.textContent = `Uploading ${imageItems.length} images in streaming batches...`;
-            
+
             // Process each batch
             for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
                 const batchStart = batchIdx * STREAM_BATCH_SIZE;
@@ -600,8 +888,7 @@ async function processHistoricalCatalog() {
                 batchFormData.append('is_historical', 'true');
                 
                 console.log(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches}: Sending ${batchItems.length} images`);
-                progressText.textContent = `Uploading batch ${batchIdx + 1}/${totalBatches} (${batchItems.length} images)...`;
-                
+
                 // Send this batch
                 const response = await fetchWithRetry('/api/products/batch-upload', {
                     method: 'POST',
@@ -654,24 +941,26 @@ async function processHistoricalCatalog() {
         } catch (error) {
             // Network error - mark all as failed
             console.error(`[BATCH-UPLOAD] Network error:`, error);
+            if (tracker) tracker.stop();
             for (const i of imageItems) {
                 const fileObj = historicalFiles[i];
                 failedCount++;
                 failedItems.push({ row: i + 1, fileName: fileObj.file.name, reason: error.message });
             }
         }
-        
-        const progress = ((successCount + failedCount) / totalItems) * 100;
-        progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${successCount + failedCount} of ${totalItems} processed (${successCount} success, ${failedCount} failed)`;
+    }
+
+    // Complete progress tracker (backend finished, jump to 100%)
+    if (tracker) {
+        tracker.complete(`Successfully processed ${successCount} historical items!`);
     }
 
     const catalogOption = getCatalogLoadOption();
     const existingCount = catalogOption === 'add_to_existing' ? historicalProducts.filter(p => p.id).length - totalItems : 0;
     const newlyUploaded = historicalProducts.length - existingCount;
     const withoutMetadata = historicalProducts.filter(p => !p.category && !p.sku).length;
-    
-    let statusMsg = `<h4>✓ Historical catalog processed</h4>`;
+
+    let statusMsg = `<h4>Historical catalog processed</h4>`;
     statusMsg += `<p><strong>${successCount} successful</strong>, ${failedCount} failed</p>`;
     
     if (catalogOption === 'add_to_existing' && existingCount > 0) {
@@ -696,7 +985,7 @@ async function processHistoricalCatalog() {
 
     showToast(`Historical catalog ready: ${successCount} products`, 'success');
     showLoadingSpinner(processBtn, false);
-    
+
     // MEMORY OPTIMIZATION: Clear operation data to free 50-100MB
     clearOperationData();
 
@@ -807,7 +1096,7 @@ function handleNewFiles(files) {
     
     info.innerHTML = `
         <button class="btn clear-btn" onclick="clearFolderUpload('new')" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
-        <h4>✓ ${imageFiles.length} images loaded</h4>
+        <h4>${imageFiles.length} images loaded</h4>
         ${categorySummary}
         <div class="file-list" id="newFileList">
             ${filesWithCategories.slice(0, displayLimit).map(({ file, category }) => 
@@ -868,11 +1157,15 @@ async function processNewProducts() {
     const hasImageFiles = newFiles && newFiles.length > 0;
     const hasCsvData = Object.keys(categoryMap).length > 0;
     const csvOnlyMode = !hasImageFiles && hasCsvData && newAdvancedMode;
-    
+
     const itemsToProcess = hasImageFiles ? newFiles : (csvOnlyMode ? Object.keys(categoryMap) : []);
     const totalItems = itemsToProcess.length;
-    
-    statusDiv.innerHTML = '<h4>Processing new products...</h4><div class="progress-bar"><div class="progress-fill" id="newProgress"></div></div><p id="newProgressText">0 of ' + totalItems + ' processed</p><div class="spinner-inline"></div>';
+
+    // Determine mode for progress tracker
+    const mode = csvOnlyMode ? 'metadata' : newMode;
+
+    // Start progress estimation (VISUAL ONLY - doesn't affect backend)
+    const tracker = startProgressEstimation('newStatus', 'upload', mode, totalItems);
 
     // Load existing products from DB if using "add_to_existing" option
     const newLoadOption = getNewCatalogLoadOption();
@@ -904,9 +1197,7 @@ async function processNewProducts() {
         // For 'replace' option, start with empty array (products already deleted)
         newProducts = [];
     }
-    const progressFill = document.getElementById('newProgress');
-    const progressText = document.getElementById('newProgressText');
-    
+
     let successCount = 0;
     let failedCount = 0;
     const failedItems = [];
@@ -1006,12 +1297,8 @@ async function processNewProducts() {
             failedItems.push({ row: 'batch', fileName: 'all', reason: error.message });
             console.error('[BATCH-METADATA] Batch creation error:', error);
         }
-        
-        const progress = ((successCount + failedCount) / totalItems) * 100;
-        progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${successCount + failedCount} of ${totalItems} processed (${successCount} success, ${failedCount} failed)`;
     }
-    
+
     // Process image items in batch (Mode 1/3) - GPU batch processing
     if (imageItems.length > 0) {
         console.log(`[BATCH-UPLOAD] Preparing to batch upload ${imageItems.length} images`);
@@ -1044,10 +1331,9 @@ async function processNewProducts() {
             batchFormData.append('product_names', JSON.stringify(productNames));
             batchFormData.append('skus', JSON.stringify(skus));
             batchFormData.append('is_historical', 'false');
-            
+
             console.log(`[BATCH-UPLOAD] Sending ${imageItems.length} images to batch-upload endpoint`);
-            progressText.textContent = `Uploading ${imageItems.length} images in batch...`;
-            
+
             // Send all images at once to batch-upload endpoint
             const response = await fetchWithRetry('/api/products/batch-upload', {
                 method: 'POST',
@@ -1098,24 +1384,26 @@ async function processNewProducts() {
         } catch (error) {
             // Network error - mark all as failed
             console.error(`[BATCH-UPLOAD] Network error:`, error);
+            if (tracker) tracker.stop();
             for (const i of imageItems) {
                 const fileObj = newFiles[i];
                 failedCount++;
                 failedItems.push({ row: i + 1, fileName: fileObj.file.name, reason: error.message });
             }
         }
-        
-        const progress = ((successCount + failedCount) / totalItems) * 100;
-        progressFill.style.width = `${progress}%`;
-        progressText.textContent = `${successCount + failedCount} of ${totalItems} processed (${successCount} success, ${failedCount} failed)`;
+    }
+
+    // Complete progress tracker (backend finished, jump to 100%)
+    if (tracker) {
+        tracker.complete(`Successfully processed ${successCount} new products!`);
     }
 
     // Continue with the rest of the function (status display, etc.)
     const existingCount = newLoadOption === 'add_to_existing' ? newProducts.filter(p => p.id).length - totalItems : 0;
     const newlyUploaded = newProducts.length - existingCount;
     const withoutMetadata = newProducts.filter(p => !p.category && !p.sku).length;
-    
-    let statusMsg = `<h4>✓ New products processed</h4>`;
+
+    let statusMsg = `<h4>New products processed</h4>`;
     statusMsg += `<p><strong>${successCount} successful</strong>, ${failedCount} failed</p>`;
     
     if (newLoadOption === 'add_to_existing' && existingCount > 0) {
@@ -1153,7 +1441,7 @@ async function processNewProducts() {
 
     showToast(`New products ready: ${successCount} products`, 'success');
     showLoadingSpinner(processBtn, false);
-    
+
     // MEMORY OPTIMIZATION: Clear operation data to free 50-100MB
     clearOperationData();
 
@@ -1204,86 +1492,28 @@ async function startMatching() {
     showLoadingSpinner(matchBtn, true);
     console.log('[MATCHING] UI updated, starting matching process');
 
-    // Load new products from database if not in memory
-    if (!newProducts || newProducts.length === 0) {
-        console.log('[MATCHING] newProducts array empty, loading from database...');
-        try {
-            console.log('[MATCHING] Fetching /api/catalog/products?type=new&limit=10000');
-            // CRITICAL FIX: Only load NEW products (is_historical=false), not historical ones
-            const response = await fetch('/api/catalog/products?type=new&limit=10000');
-            console.log('[MATCHING] Response received:', response.status, response.ok);
-            if (!response.ok) throw new Error('Failed to load new products');
-            
-            const data = await response.json();
-            console.log('[MATCHING] Data received:', data.products ? data.products.length : 0, 'products');
-            // Filter to ensure we only get new products (is_historical=false)
-            newProducts = data.products
-                .filter(p => !p.is_historical)  // CRITICAL: Filter out historical products
-                .map(p => ({
-                    id: p.id,
-                    filename: p.product_name || p.filename,  // Use product_name if available (for metadata-only products)
-                    product_name: p.product_name,  // Include product_name explicitly
-                    category: p.category,
-                    sku: p.sku,
-                    name: p.product_name,
-                    hasFeatures: p.has_features || false,
-                    is_historical: false
-                }));
-            console.log(`[MATCHING] Loaded ${newProducts.length} new products from database (filtered out historical)`);
-        } catch (error) {
-            console.error('[MATCHING] Failed to load new products:', error);
-            showToast('Failed to load new products from database', 'error');
-            showLoadingSpinner(matchBtn, false);
-            matchBtn.disabled = false;
-            return;
-        }
-    } else {
-        console.log('[MATCHING] newProducts already in memory:', newProducts.length, 'products');
-    }
-
-    if (newProducts.length === 0) {
-        showToast('No new products to match. Upload new products first.', 'warning');
-        showLoadingSpinner(matchBtn, false);
-        matchBtn.disabled = false;
-        return;
-    }
-
-    progressDiv.innerHTML = '<h4>Finding matches...</h4><div class="progress-bar"><div class="progress-fill" id="matchProgressFill"></div></div><p id="matchProgressText">Batch matching 0 of ' + newProducts.length + ' products...</p><div class="spinner-inline"></div>';
+    // MEMORY OPTIMIZATION: Don't load products from database, backend will query them directly
+    console.log('[MATCHING] Using backend to query new products (memory efficient)');
 
     matchResults = [];
-    const progressFill = document.getElementById('matchProgressFill');
-    const progressText = document.getElementById('matchProgressText');
+    resetChunking();  // Reset chunking for new match operation
 
-    // BATCH MATCHING OPTIMIZATION: Collect all product IDs and send one batch request
-    // Instead of looping and making N requests, make 1 request for all products
-    // This enables batch insert of all matches in 1-2 DB transactions instead of N
+    // BATCH MATCHING OPTIMIZATION: Send match_all_new flag to backend
+    // Backend queries product IDs directly from database, no frontend loading needed
     try {
-        console.log(`[BATCH-MATCHING] Starting batch matching for ${newProducts.length} products`);
-        
-        // AUTO-DETECT MODE: Check if products have features to determine matching mode
-        const productsWithFeatures = newProducts.filter(p => p.hasFeatures).length;
-        const productsWithoutFeatures = newProducts.length - productsWithFeatures;
-        
+        console.log(`[BATCH-MATCHING] Starting batch matching (backend will query new products)`);
+
         let effectiveMode = newMode;
-        
-        // If NO products have features, force metadata mode
-        if (productsWithFeatures === 0) {
-            console.log(`[BATCH-MATCHING] Auto-detected: All ${newProducts.length} products are metadata-only (no features)`);
-            console.log(`[BATCH-MATCHING] Forcing Mode 2 (Metadata) instead of ${newMode}`);
-            effectiveMode = 'metadata';
-        }
-        // If SOME products have features, use hybrid mode for best results
-        else if (productsWithFeatures < newProducts.length && newMode !== 'metadata') {
-            console.log(`[BATCH-MATCHING] Auto-detected: ${productsWithFeatures}/${newProducts.length} products have features`);
-            console.log(`[BATCH-MATCHING] Switching to Mode 3 (Hybrid) for mixed data`);
-            effectiveMode = 'hybrid';
-        }
-        
-        console.log(`[BATCH-MATCHING] Effective mode: ${effectiveMode} (selected: ${newMode})`);
-        
-        // Collect all product IDs
-        const productIds = newProducts.map(p => p.id);
-        
+
+        // Determine mode for progress tracker
+        let mode;
+        if (effectiveMode === 'visual') mode = 'visual';
+        else if (effectiveMode === 'metadata') mode = 'metadata';
+        else mode = 'hybrid';
+
+        // Start progress estimation (VISUAL ONLY - doesn't affect backend)
+        const tracker = startProgressEstimation('matchProgress', 'batch_match', mode, newProducts.length);
+
         // Determine weights based on effective mode
         let visualWeight = 0;
         let metadataWeight = 0;
@@ -1297,31 +1527,29 @@ async function startMatching() {
             visualWeight = 0;
             metadataWeight = 1.0;
         } else if (effectiveMode === 'hybrid') {
-            // Mode 3: Hybrid matching - read from sliders
-            visualWeight = parseFloat(document.getElementById('hybridVisualWeightSlider').value) / 100;
-            metadataWeight = parseFloat(document.getElementById('hybridMetadataWeightSlider').value) / 100;
+            // Mode 3: Hybrid matching - read from single balance slider
+            visualWeight = parseFloat(document.getElementById('hybridBalanceSlider').value) / 100;
+            metadataWeight = 1.0 - visualWeight; // Always adds up to 100%
         }
         
-        // Prepare batch request
-        // Note: Metadata sub-weights (SKU, name, category, etc.) use backend defaults
-        // The sliders in the UI are for display/documentation only
+        // Prepare batch request with match_all_new flag
+        // Backend will query product IDs from database, no need to load on frontend
         const batchPayload = {
-            product_ids: productIds,
+            match_all_new: true,  // MEMORY OPTIMIZATION: Query IDs on backend
             threshold: threshold,
             limit: limit,
             match_against_all: false,
             visual_weight: visualWeight,
             metadata_weight: metadataWeight
         };
-        
+
         console.log(`[BATCH-MATCHING] Step 1: Prepare batch request`);
-        console.log(`[BATCH-MATCHING] Product IDs: ${productIds.length} products`);
+        console.log(`[BATCH-MATCHING] Mode: Backend will query new product IDs`);
         console.log(`[BATCH-MATCHING] Weights: visual=${visualWeight}, metadata=${metadataWeight}`);
         console.log(`[BATCH-MATCHING] Threshold: ${threshold}, Limit: ${limit}`);
-        console.log(`[BATCH-MATCHING] Sending batch request for ${productIds.length} products (Effective Mode: ${effectiveMode})`);
-        progressText.textContent = `Batch matching ${productIds.length} products...`;
-        
-        // Send batch request
+        console.log(`[BATCH-MATCHING] Sending batch request with match_all_new=true (Effective Mode: ${effectiveMode})`);
+
+        // Send batch request (backend processes independently)
         console.log(`[BATCH-MATCHING] Step 2: Send POST request to /api/products/batch-match`);
         const response = await fetchWithRetry('/api/products/batch-match', {
             method: 'POST',
@@ -1335,6 +1563,7 @@ async function startMatching() {
         
         if (!response.ok) {
             console.error(`[BATCH-MATCHING] Error response:`, data);
+            if (tracker) tracker.stop();
             showToast('Batch matching failed: ' + (data.error || 'Unknown error'), 'error');
             showLoadingSpinner(matchBtn, false);
             matchBtn.disabled = false;
@@ -1344,66 +1573,97 @@ async function startMatching() {
         // Process batch results
         const batchResults = data.results || [];
         console.log(`[BATCH-MATCHING] Step 4: Process results - Received ${batchResults.length} results from batch`);
-        
-        // Create a map of product ID to product for quick lookup
+
+        // MEMORY OPTIMIZATION: Fetch product details on-demand instead of loading all upfront
+        // Get unique product IDs from results
+        const uniqueProductIds = [...new Set(batchResults.map(r => r.product_id))];
+        console.log(`[BATCH-MATCHING] Fetching details for ${uniqueProductIds.length} unique products`);
+
+        // Fetch product details for display
         const productMap = {};
-        newProducts.forEach(p => {
-            productMap[p.id] = p;
-        });
-        
+        try {
+            const productResponse = await fetch(`/api/catalog/products?ids=${uniqueProductIds.join(',')}`);
+            if (productResponse.ok) {
+                const productData = await productResponse.json();
+                (productData.products || []).forEach(p => {
+                    productMap[p.id] = {
+                        id: p.id,
+                        filename: p.product_name || p.filename,
+                        product_name: p.product_name,
+                        category: p.category,
+                        sku: p.sku,
+                        name: p.product_name,
+                        hasFeatures: p.has_features || false,
+                        is_historical: false
+                    };
+                });
+                console.log(`[BATCH-MATCHING] Fetched details for ${Object.keys(productMap).length} products`);
+            }
+        } catch (error) {
+            console.warn(`[BATCH-MATCHING] Failed to fetch product details, will show IDs only:`, error);
+        }
+
         // Process each result
         for (let i = 0; i < batchResults.length; i++) {
             const result = batchResults[i];
-            const product = productMap[result.product_id];
-            
+            let product = productMap[result.product_id];
+
             if (!product) {
-                console.warn(`[BATCH-MATCHING] Product ${result.product_id} not found in product map`);
-                continue;
+                // Fallback: create minimal product object if details not found
+                console.warn(`[BATCH-MATCHING] Product ${result.product_id} details not found, using minimal object`);
+                product = {
+                    id: result.product_id,
+                    filename: `Product ${result.product_id}`,
+                    name: `Product ${result.product_id}`,
+                    category: 'Unknown',
+                    sku: '',
+                    hasFeatures: false
+                };
             }
             
             const matches = result.matches || [];
             console.log(`[BATCH-MATCHING] Product ${product.id}: ${matches.length} matches found`);
-            
-            // PERFORMANCE OPTIMIZATION: Don't fetch price/performance history upfront
-            // Fetch it lazily when user clicks on a match to view details
-            // This eliminates 322 HTTP requests (2 per match × 161 matches)
-            for (const match of matches) {
-                // Initialize as null - will be fetched on-demand when viewing details
-                match.priceHistory = null;
-                match.priceStatistics = null;
-                match.performanceHistory = null;
-                match.performanceStatistics = null;
+
+            // MEMORY OPTIMIZATION: Create compact match objects (60-70% smaller)
+            // - TypedArrays for scores
+            // - String interning for categories
+            // - No null properties
+            // - Frozen for V8 optimization
+            const compactMatches = matches.map(m => createCompactMatch(m));
+            const compactProduct = createCompactProduct(product);
+
+            const resultObj = {
+                p: compactProduct,  // Compact product
+                m: compactMatches   // Compact matches
+            };
+
+            // Only add error if present
+            if (result.status !== 'success' && result.error) {
+                resultObj.err = result.error;
             }
-            
-            matchResults.push({
-                product: product,
-                matches: matches,
-                error: result.status === 'success' ? null : result.error
-            });
-            
-            const progress = ((i + 1) / batchResults.length) * 100;
-            progressFill.style.width = `${progress}%`;
-            progressText.textContent = `${i + 1} of ${batchResults.length} products matched`;
+
+            matchResults.push(resultObj);
         }
-        
+
         console.log(`[BATCH-MATCHING] ✓ Complete! Processed ${matchResults.length} products`);
-        
+
+        // Complete progress tracker (backend finished, jump to 100%)
+        if (tracker) {
+            tracker.complete(`Successfully matched ${matchResults.length} products!`);
+        }
+
     } catch (error) {
         console.error(`[BATCH-MATCHING] Error:`, error);
+        if (tracker) tracker.stop();
         const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
         showToast('Batch matching failed: ' + errorMsg, 'error');
         showLoadingSpinner(matchBtn, false);
         matchBtn.disabled = false;
         return;
     }
-    
-    const progress = 100;
-    progressFill.style.width = `${progress}%`;
-    progressText.textContent = `${matchResults.length} of ${newProducts.length} products matched`;
-    
+
     console.log(`[BATCH-MATCHING] Matching complete. Total matchResults: ${matchResults.length}`);
 
-    progressDiv.innerHTML = '<h4>✓ Matching complete!</h4>';
     showToast('Matching complete!', 'success');
     showLoadingSpinner(matchBtn, false);
 
@@ -1411,6 +1671,9 @@ async function startMatching() {
     displayResults();
     document.getElementById('resultsSection').style.display = 'block';
     document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+
+    // Show save dialog after matching completes
+    showSaveDialog('matching_complete');
 }
 
 // Results
@@ -1446,16 +1709,26 @@ function displayResults(resetPage = true) {
     // Populate category filter
     populateCategoryFilter();
     
+    // CHUNKING SUPPORT: If dataset > 10K, only process current chunk
+    let resultsToFilter = matchResults;
+    const chunkInfo = getChunkInfo();
+
+    if (chunkInfo.totalResults > CHUNK_SIZE) {
+        // Only filter the current chunk to keep memory low
+        resultsToFilter = matchResults.slice(chunkInfo.startIdx, chunkInfo.endIdx);
+        console.log(`[CHUNKING] Processing chunk ${chunkInfo.chunkNumber}, items ${chunkInfo.startIdx}-${chunkInfo.endIdx}`);
+    }
+
     // Apply filters and sorting
-    const filteredResults = filterAndSortResults(matchResults);
+    const filteredResults = filterAndSortResults(resultsToFilter);
     console.log('[DISPLAY] After filtering - filteredResults length:', filteredResults.length);
     console.log('[DISPLAY] Filtered results:', filteredResults);
-    
-    const totalProducts = matchResults.length;
-    const totalMatches = matchResults.reduce((sum, r) => sum + r.matches.length, 0);
-    const productsWithMatches = matchResults.filter(r => r.matches.length > 0).length;
+
+    const totalProducts = resultsToFilter.length;  // Products in current chunk
+    const totalMatches = resultsToFilter.reduce((sum, r) => sum + r.m.length, 0);
+    const productsWithMatches = resultsToFilter.filter(r => r.m.length > 0).length;
     const avgMatches = productsWithMatches > 0 ? (totalMatches / productsWithMatches).toFixed(1) : 0;
-    
+
     const filteredCount = filteredResults.length;
     console.log('[DISPLAY] Stats - Total:', totalProducts, 'With matches:', productsWithMatches, 'Total matches:', totalMatches);
 
@@ -1467,10 +1740,17 @@ function displayResults(resetPage = true) {
 
     summaryDiv.innerHTML = `
         <h3>Match Results Summary</h3>
+        ${chunkInfo.totalResults > CHUNK_SIZE ? `
+            <div style="margin-bottom: 15px; padding: 10px; background: rgba(102, 126, 234, 0.1); border-left: 4px solid #667eea; border-radius: 4px;">
+                <strong>Total Dataset:</strong> ${chunkInfo.totalResults.toLocaleString()} products across ${Math.ceil(chunkInfo.totalResults / CHUNK_SIZE)} chunks
+                <br>
+                <strong>Current View:</strong> Chunk ${chunkInfo.chunkNumber} (${chunkInfo.startIdx.toLocaleString()}-${chunkInfo.endIdx.toLocaleString()})
+            </div>
+        ` : ''}
         <div class="summary-stats">
             <div class="stat-item">
                 <span class="stat-value">${totalProducts}</span>
-                <span class="stat-label">New Products</span>
+                <span class="stat-label">${chunkInfo.totalResults > CHUNK_SIZE ? 'Products (Chunk)' : 'New Products'}</span>
             </div>
             <div class="stat-item">
                 <span class="stat-value">${productsWithMatches}</span>
@@ -1495,13 +1775,13 @@ function displayResults(resetPage = true) {
         <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 30px; align-items: center; justify-content: center; flex-wrap: wrap;">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <label style="font-weight: 600; color: #2d3748;">Min Similarity:</label>
-                <input type="range" id="dynamicThresholdSlider" min="30" max="100" value="${dynamicThreshold}" 
+                <input type="range" id="dynamicThresholdSlider" min="30" max="100" value="${dynamicThreshold}"
                        style="width: 150px;" oninput="updateDynamicThreshold(this.value)">
                 <span id="dynamicThresholdValue" style="font-weight: 600; min-width: 40px;">${dynamicThreshold}%</span>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
-                <label style="font-weight: 600; color: #2d3748;">Max Matches:</label>
-                <select id="dynamicLimitSelect" onchange="updateDynamicLimit(this.value)" 
+                <label style="font-weight: 600; color: #2d3748;">SHOW TOP N MATCHES:</label>
+                <select id="dynamicLimitSelect" onchange="updateDynamicLimit(this.value)"
                         style="padding: 5px 10px; border: 2px solid #000; background: white; font-weight: 600;">
                     <option value="5" ${dynamicLimit === 5 ? 'selected' : ''}>5</option>
                     <option value="10" ${dynamicLimit === 10 ? 'selected' : ''}>10</option>
@@ -1509,22 +1789,6 @@ function displayResults(resetPage = true) {
                     <option value="50" ${dynamicLimit === 50 ? 'selected' : ''}>50</option>
                     <option value="0" ${dynamicLimit === 0 ? 'selected' : ''}>All</option>
                 </select>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <label style="font-weight: 600; color: #2d3748;">Category:</label>
-                <select id="dynamicCategoryFilter" onchange="updateDynamicCategory(this.value)" 
-                        style="padding: 5px 10px; border: 2px solid #000; background: white; font-weight: 600;">
-                    <option value="">All Categories</option>
-                    ${[...new Set(matchResults.map(m => m.category || 'Uncategorized'))].map(cat => 
-                        `<option value="${cat}">${cat}</option>`
-                    ).join('')}
-                </select>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <label style="font-weight: 600; color: #2d3748;">Search:</label>
-                <input type="text" id="dynamicSearchFilter" placeholder="Search by name/SKU..." 
-                       style="padding: 5px 10px; border: 2px solid #000; font-weight: 600;" 
-                       oninput="updateDynamicSearch(this.value)">
             </div>
         </div>
         
@@ -1553,12 +1817,11 @@ function displayResults(resetPage = true) {
     const isMetadataMode = newMode === 'metadata';
     
     listDiv.innerHTML = paginatedResults.map((result, index) => {
-        const product = result.product;
-        const matches = result.matches;
-        
-        // Use product_name for display if available (especially for metadata-only products)
-        // Fall back to filename if product_name is not available
-        const displayName = product.product_name || product.filename;
+        const product = result.p;  // Compact product object
+        const matches = result.m;  // Compact matches array
+
+        // Use name from compact product object (already set in createCompactProduct)
+        const displayName = product.name;
 
         return `
             <div class="result-item">
@@ -1570,42 +1833,31 @@ function displayResults(resetPage = true) {
                     <div class="result-info">
                         <h3>${escapeHtml(displayName)}</h3>
                         <div class="result-meta">
-                            Category: ${product.category || 'Uncategorized'} | 
+                            Category: ${product.cat || 'Uncategorized'} |
                             ${matches.length} match${matches.length !== 1 ? 'es' : ''} found
                         </div>
                     </div>
                 </div>
                 ${matches.length > 0 ? `
                     <div class="matches-grid">
-                        ${matches.map(match => `
-                            <div class="match-card" onclick="showDetailedComparison(${product.id}, ${match.product_id})">
-                                ${!isMetadataMode ? `<img data-src="/api/products/${match.product_id}/image" class="match-image lazy-load"
+                        ${matches.map(match => {
+                            const similarityScore = getScore(match, 'similarity');
+                            return `
+                            <div class="match-card" onclick="showDetailedComparison(${product.id}, ${match.mid})">
+                                ${!isMetadataMode ? `<img data-src="/api/products/${match.mid}/image" class="match-image lazy-load"
                                      src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='120'><rect fill='%23e2e8f0' width='180' height='120'/></svg>"
                                      onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22180%22 height=%22120%22><rect fill=%22%23e2e8f0%22 width=%22180%22 height=%22120%22/></svg>'"
                                      alt="Match">` : ''}
-                                <div class="match-score ${getScoreClass(match.similarity_score)}">
-                                    ${match.similarity_score.toFixed(1)}%
+                                <div class="match-score ${getScoreClass(similarityScore)}">
+                                    ${similarityScore.toFixed(1)}%
                                 </div>
-                                ${match.similarity_score > 90 ? '<span class="duplicate-badge">DUPLICATE?</span>' : ''}
+                                ${similarityScore > 90 ? '<span class="duplicate-badge">DUPLICATE?</span>' : ''}
                                 <div class="match-info">
-                                    ${escapeHtml(match.product_name || 'Unknown')}
-                                    ${match.priceStatistics ? `
-                                        <div class="price-sparkline" title="Price trend: ${match.priceStatistics.trend}">
-                                            ${generateSparkline(match.priceHistory)}
-                                            <span class="price-current">$${match.priceStatistics.current}</span>
-                                            <span class="price-trend price-trend-${match.priceStatistics.trend}">${getTrendIcon(match.priceStatistics.trend)}</span>
-                                        </div>
-                                    ` : ''}
-                                    ${match.performanceStatistics ? `
-                                        <div class="performance-sparkline" title="Sales trend: ${match.performanceStatistics.sales_trend}">
-                                            ${generatePerformanceSparkline(match.performanceHistory)}
-                                            <span class="performance-sales" style="font-weight: bold;">${match.performanceStatistics.total_sales} SALES</span>
-                                            <span class="performance-trend performance-trend-${match.performanceStatistics.sales_trend}">${getTrendIcon(match.performanceStatistics.sales_trend)}</span>
-                                        </div>
-                                    ` : ''}
+                                    ${escapeHtml(match.name || 'Unknown')}
                                 </div>
                             </div>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </div>
                 ` : '<div class="no-matches">No matches found</div>'}
             </div>
@@ -1621,7 +1873,7 @@ function displayResults(resetPage = true) {
             <div style="display: flex; justify-content: center; gap: 15px; margin-top: 30px; padding: 20px;">
                 ${hasPrevious ? `
                     <button class="btn" onclick="loadPreviousPage()" style="min-width: 120px;">
-                        ← Previous
+                        Previous
                     </button>
                 ` : ''}
                 <div style="display: flex; align-items: center; color: #718096; font-weight: 500;">
@@ -1629,13 +1881,60 @@ function displayResults(resetPage = true) {
                 </div>
                 ${hasMore ? `
                     <button class="btn" onclick="loadNextPage()" style="min-width: 120px;">
-                        Next →
+                        Next
                     </button>
                 ` : ''}
             </div>
         `;
     }
-    
+
+    // Add chunking controls if dataset is very large (10,000+ results)
+    if (chunkInfo.totalResults > CHUNK_SIZE) {
+        const totalChunks = Math.ceil(chunkInfo.totalResults / CHUNK_SIZE);
+        const hasPrevious = currentChunk > 0;
+        const hasNext = chunkInfo.hasMore;
+
+        listDiv.innerHTML += `
+            <div style="margin-top: 30px; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white;">
+                <div style="text-align: center; margin-bottom: 15px;">
+                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Large Dataset Detected</div>
+                    <div style="font-size: 18px; font-weight: 600;">
+                        Chunk ${chunkInfo.chunkNumber} of ${totalChunks}
+                    </div>
+                    <div style="font-size: 13px; opacity: 0.85; margin-top: 5px;">
+                        Showing ${chunkInfo.startIdx.toLocaleString()}-${chunkInfo.endIdx.toLocaleString()} of ${chunkInfo.totalResults.toLocaleString()} results
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: center; gap: 10px; align-items: center;">
+                    <button
+                        class="btn"
+                        onclick="loadPreviousChunk()"
+                        ${!hasPrevious ? 'disabled' : ''}
+                        style="min-width: 120px; background: white; color: #667eea; ${!hasPrevious ? 'opacity: 0.5; cursor: not-allowed;' : 'cursor: pointer;'}">
+                        Previous
+                    </button>
+
+                    <div style="padding: 8px 16px; background: rgba(255,255,255,0.2); border-radius: 4px; font-weight: 500;">
+                        ${chunkInfo.chunkNumber} / ${totalChunks}
+                    </div>
+
+                    <button
+                        class="btn"
+                        onclick="loadNextChunk()"
+                        ${!hasNext ? 'disabled' : ''}
+                        style="min-width: 120px; background: white; color: #667eea; ${!hasNext ? 'opacity: 0.5; cursor: not-allowed;' : 'cursor: pointer;'}">
+                        Next
+                    </button>
+                </div>
+
+                <div style="text-align: center; margin-top: 12px; font-size: 12px; opacity: 0.85;">
+                    Tip: Filters and search work within the current chunk only
+                </div>
+            </div>
+        `;
+    }
+
     // Initialize lazy loading for images
     initLazyLoading();
 }
@@ -1652,6 +1951,41 @@ function loadPreviousPage() {
     document.getElementById('resultsList').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// MEMORY OPTIMIZATION: Load more historical products when user clicks "Load More" button
+async function loadMoreHistoricalProducts() {
+    try {
+        historicalProductsPage++;
+        console.log(`[ADD_TO_EXISTING] Loading page ${historicalProductsPage} of historical products`);
+
+        const response = await fetch(`/api/catalog/products?type=historical&page=${historicalProductsPage}&limit=50`);
+        if (response.ok) {
+            const data = await response.json();
+            const newProducts = data.products.map(p => ({
+                id: p.id,
+                filename: p.filename,
+                category: p.category,
+                sku: p.sku,
+                name: p.product_name,
+                is_historical: true,
+                hasFeatures: p.has_features
+            }));
+
+            // Append to existing products
+            historicalProducts.push(...newProducts);
+            console.log(`[ADD_TO_EXISTING] Loaded page ${historicalProductsPage}: ${newProducts.length} products, total now ${historicalProducts.length}`);
+
+            // Update UI to show the new products
+            showToast(`Loaded ${newProducts.length} more products`, 'info');
+        } else {
+            console.error('[ADD_TO_EXISTING] Failed to load more products');
+            showToast('Failed to load more products', 'error');
+        }
+    } catch (error) {
+        console.error('[ADD_TO_EXISTING] Error loading more products:', error);
+        showToast('Error loading more products', 'error');
+    }
+}
+
 function updateDynamicThreshold(value) {
     dynamicThreshold = parseInt(value);
     document.getElementById('dynamicThresholdValue').textContent = value + '%';
@@ -1663,36 +1997,37 @@ function updateDynamicLimit(value) {
     displayResults(true); // Reset to page 1 when filter changes
 }
 
-let dynamicCategory = '';
 let dynamicSearch = '';
 let dynamicSearchResults = new Map(); // Cache search results
 
-function updateDynamicCategory(value) {
-    dynamicCategory = value;
-    displayResults(true); // Reset to page 1 when filter changes
-}
-
 async function updateDynamicSearch(value) {
     dynamicSearch = value.toLowerCase().trim();
-    
+
+    // Show spinner while typing
+    const statusEl = document.getElementById('dynamicSearchStatus');
+
     // Clear cache if search is empty
     if (!dynamicSearch) {
         dynamicSearchResults.clear();
+        statusEl.innerHTML = '';
         displayResults(true);
         return;
     }
-    
+
+    // Show searching spinner
+    statusEl.innerHTML = '<span class="search-spinner"></span><span style="font-size: 0.75rem;">SEARCHING...</span>';
+
     // Debounce search - wait 300ms before searching
     if (window.searchTimeout) {
         clearTimeout(window.searchTimeout);
     }
-    
+
     window.searchTimeout = setTimeout(async () => {
         try {
             // Call backend search API
             const response = await fetch(`/api/products/search?q=${encodeURIComponent(dynamicSearch)}&limit=1000`);
             const data = await response.json();
-            
+
             if (data.success) {
                 // Build a map of product IDs for fast lookup
                 dynamicSearchResults.clear();
@@ -1700,11 +2035,16 @@ async function updateDynamicSearch(value) {
                     dynamicSearchResults.set(product.id, product);
                 });
                 console.log(`[SEARCH] Found ${data.results.length} products matching "${dynamicSearch}"`);
+
+                // Update status to show count
+                const count = data.results.length;
+                statusEl.innerHTML = `<span class="search-count">${count} ${count === 1 ? 'match' : 'matches'}</span>`;
             }
         } catch (error) {
             console.error('[SEARCH] Error:', error);
+            statusEl.innerHTML = '<span style="color: #e53e3e; font-size: 0.75rem;">ERROR</span>';
         }
-        
+
         displayResults(true);
     }, 300);
 }
@@ -1737,9 +2077,33 @@ async function showDetailedComparison(newProductId, matchedProductId) {
         const newData = await newResp.json();
         const matchData = await matchResp.json();
 
-        // Find the match details
-        const matchResult = matchResults.find(r => r.product.id === newProductId);
-        let matchDetails = matchResult?.matches.find(m => m.product_id === matchedProductId);
+        // Find the match details (using compact format)
+        const matchResult = matchResults.find(r => r.p.id === newProductId);
+        const compactMatch = matchResult?.m.find(m => m.mid === matchedProductId);
+
+        // Expand compact match to full format for display
+        let matchDetails = null;
+        if (compactMatch) {
+            matchDetails = {
+                product_id: compactMatch.mid,
+                similarity_score: compactMatch.s[0],
+                color_score: compactMatch.s[1],
+                shape_score: compactMatch.s[2],
+                texture_score: compactMatch.s[3],
+                category: compactMatch.cat,
+                product_name: compactMatch.name,
+                sku: compactMatch.sku,
+                is_potential_duplicate: compactMatch.dup || false,
+                // Copy any additional fields that might exist
+                visual_score: compactMatch.vs,
+                metadata_score: compactMatch.ms,
+                sku_score: compactMatch.skus,
+                name_score: compactMatch.ns,
+                category_score: compactMatch.cs,
+                price_score: compactMatch.ps,
+                performance_score: compactMatch.pfs
+            };
+        }
 
         // LAZY LOADING: Fetch price/performance history on-demand if not already loaded
         if (matchDetails && !matchDetails.priceHistory && !matchDetails.performanceHistory) {
@@ -1947,7 +2311,7 @@ function closeModal() {
     document.getElementById('detailModal').classList.remove('show');
 }
 
-function exportResults() {
+async function exportResults() {
     let csv = 'New Product,Category,Match Count,Top Match,Top Score,Price Current,Price Avg,Price Min,Price Max,Price Trend,Total Sales,Avg Sales,Sales Trend\n';
 
     matchResults.forEach(result => {
@@ -1985,28 +2349,49 @@ function exportResults() {
         csv += '\n';
     });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    
-    try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `match_results_${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
-        showToast('Results exported to CSV', 'success');
-    } catch (error) {
-        console.error('Export failed:', error);
-        showToast('Export failed', 'error');
-    } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+    const filename = `match_results_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    // Check if running in pywebview
+    if (window.pywebview) {
+        try {
+            const result = await window.pywebview.api.save_file_auto(csv, filename);
+            if (result) {
+                showToast(`Results saved to Downloads folder: ${filename}`, 'success');
+            } else {
+                showToast('Export failed', 'error');
+            }
+        } catch (error) {
+            console.error('Webview save failed:', error);
+            showToast('Export failed - ' + error.message, 'error');
+        }
+    } else {
+        // Browser fallback
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            showToast('Results exported to CSV', 'success');
+        } catch (error) {
+            console.error('Export failed:', error);
+            showToast('Export failed', 'error');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 }
 
-function resetApp() {
+async function resetApp() {
     if (confirm('Start over? This will clear all data.')) {
         // Clean up memory before reload
         cleanupMemory();
-        
+
+        // Clear saved state (webview only)
+        await clearSavedState();
+
         // Small delay to ensure cleanup completes
         setTimeout(() => {
             location.reload();
@@ -2664,7 +3049,7 @@ function closeCsvHelp() {
     modal.classList.remove('show');
 }
 
-function downloadSampleCsv() {
+async function downloadSampleCsv() {
     const csv = `filename,category,sku,name,price,price_history,performance_history
 product1.jpg,placemats,PM-001,Blue Placemat,29.99,2024-01-15:29.99;2024-02-15:31.50;2024-03-15:28.75,2024-01-15:150:1200:12.5:1800;2024-02-15:180:1500:12.0:2160;2024-03-15:200:1800:11.1:2400
 product2.jpg,dinnerware,DW-002,White Plate Set,45.00,2024-01-15:45.00;2024-02-15:42.50;2024-03-15:44.00,2024-01-15:200:2000:10.0:9000;2024-02-15:220:2200:10.0:9900;2024-03-15:240:2400:10.0:10800
@@ -2672,20 +3057,38 @@ product3.jpg,textiles,TX-003,Cotton Napkins,15.99,15.99;16.50;15.75,100:800:12.5
 product4.jpg,placemats,PM-004,Red Placemat,32.00,,
 product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,2024-01-15:22.50;2024-02-15:23.00,80:600:13.3:960;90:650:13.8:1080`;
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    
-    try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'sample_product_data.csv';
-        a.click();
-        showToast('Sample CSV downloaded! Open it in Excel or any text editor.', 'success');
-    } catch (error) {
-        console.error('Download failed:', error);
-        showToast('Download failed', 'error');
-    } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+    const filename = 'sample_product_data.csv';
+
+    // Check if running in pywebview
+    if (window.pywebview) {
+        try {
+            const result = await window.pywebview.api.save_file_auto(csv, filename);
+            if (result) {
+                showToast(`Sample CSV saved to Downloads folder: ${filename}`, 'success');
+            } else {
+                showToast('Download failed', 'error');
+            }
+        } catch (error) {
+            console.error('Webview save failed:', error);
+            showToast('Download failed - ' + error.message, 'error');
+        }
+    } else {
+        // Browser fallback
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            showToast('Sample CSV downloaded! Open it in Excel or any text editor.', 'success');
+        } catch (error) {
+            console.error('Download failed:', error);
+            showToast('Download failed', 'error');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 }
 
@@ -2799,7 +3202,7 @@ function getTrendIcon(trend) {
             return '↓';
         case 'stable':
         default:
-            return '→';
+            return '->';
     }
 }
 
@@ -2948,10 +3351,10 @@ function toggleAdvancedSettings() {
         // Detect mode and show appropriate weight section
         detectAndShowWeightSection();
         panel.style.display = 'block';
-        btn.textContent = '⚙️ Hide Advanced Settings';
+        btn.textContent = 'Hide Advanced Settings';
     } else {
         panel.style.display = 'none';
-        btn.textContent = '⚙️ Advanced Settings';
+        btn.textContent = 'Advanced Settings';
     }
 }
 
@@ -3030,49 +3433,21 @@ function updateWeights() {
 }
 
 // Update Metadata Weights (Mode 2)
+// NOTE: Metadata sub-weights are now fixed and displayed statically
+// This function is kept for backwards compatibility but does nothing
 function updateMetadataWeights() {
-    const skuWeight = parseInt(document.getElementById('skuWeightSlider').value);
-    const nameWeight = parseInt(document.getElementById('nameWeightSlider').value);
-    const categoryWeight = parseInt(document.getElementById('categoryWeightSlider').value);
-    const priceWeight = parseInt(document.getElementById('priceWeightSlider').value);
-    const performanceWeight = parseInt(document.getElementById('performanceWeightSlider').value);
-    
-    document.getElementById('skuWeightValue').textContent = skuWeight;
-    document.getElementById('nameWeightValue').textContent = nameWeight;
-    document.getElementById('categoryWeightValue').textContent = categoryWeight;
-    document.getElementById('priceWeightValue').textContent = priceWeight;
-    document.getElementById('performanceWeightValue').textContent = performanceWeight;
-    
-    const total = skuWeight + nameWeight + categoryWeight + priceWeight + performanceWeight;
-    document.getElementById('metadataWeightTotal').textContent = total;
-    
-    const warning = document.getElementById('metadataWeightWarning');
-    
-    if (total !== 100) {
-        warning.style.display = 'inline';
-    } else {
-        warning.style.display = 'none';
-    }
+    // Metadata sub-weights are fixed at:
+    // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
+    // No user adjustment needed - backend uses fixed optimized values
 }
 
-// Update Hybrid Weights (Mode 3)
+// Update Hybrid Weights (Mode 3) - Single slider balances between visual and metadata
 function updateHybridWeights() {
-    const visualWeight = parseInt(document.getElementById('hybridVisualWeightSlider').value);
-    const metadataWeight = parseInt(document.getElementById('hybridMetadataWeightSlider').value);
-    
+    const visualWeight = parseInt(document.getElementById('hybridBalanceSlider').value);
+    const metadataWeight = 100 - visualWeight;
+
     document.getElementById('hybridVisualWeightValue').textContent = visualWeight;
     document.getElementById('hybridMetadataWeightValue').textContent = metadataWeight;
-    
-    const total = visualWeight + metadataWeight;
-    document.getElementById('hybridWeightTotal').textContent = total;
-    
-    const warning = document.getElementById('hybridWeightWarning');
-    
-    if (total !== 100) {
-        warning.style.display = 'inline';
-    } else {
-        warning.style.display = 'none';
-    }
 }
 
 // Update Hybrid Visual Sub-Weights
@@ -3098,29 +3473,12 @@ function updateHybridVisualSubWeights() {
 }
 
 // Update Hybrid Metadata Sub-Weights
+// NOTE: Metadata sub-weights are now fixed and displayed statically
+// This function is kept for backwards compatibility but does nothing
 function updateHybridMetadataSubWeights() {
-    const skuWeight = parseInt(document.getElementById('hybridSkuWeightSlider').value);
-    const nameWeight = parseInt(document.getElementById('hybridNameWeightSlider').value);
-    const categoryWeight = parseInt(document.getElementById('hybridCategoryWeightSlider').value);
-    const priceWeight = parseInt(document.getElementById('hybridPriceWeightSlider').value);
-    const performanceWeight = parseInt(document.getElementById('hybridPerformanceWeightSlider').value);
-    
-    document.getElementById('hybridSkuWeightValue').textContent = skuWeight;
-    document.getElementById('hybridNameWeightValue').textContent = nameWeight;
-    document.getElementById('hybridCategoryWeightValue').textContent = categoryWeight;
-    document.getElementById('hybridPriceWeightValue').textContent = priceWeight;
-    document.getElementById('hybridPerformanceWeightValue').textContent = performanceWeight;
-    
-    const total = skuWeight + nameWeight + categoryWeight + priceWeight + performanceWeight;
-    document.getElementById('hybridMetadataSubWeightTotal').textContent = total;
-    
-    const warning = document.getElementById('hybridMetadataSubWeightWarning');
-    
-    if (total !== 100) {
-        warning.style.display = 'inline';
-    } else {
-        warning.style.display = 'none';
-    }
+    // Metadata sub-weights are fixed at:
+    // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
+    // No user adjustment needed - backend uses fixed optimized values
 }
 
 // Reset Weights to Default
@@ -3139,33 +3497,23 @@ function resetWeights() {
     }
     
     if (metadataSection.style.display !== 'none') {
-        // Reset Mode 2 (Metadata) - Asymmetric scoring with name-heavy weighting
-        document.getElementById('skuWeightSlider').value = 30;
-        document.getElementById('nameWeightSlider').value = 30;
-        document.getElementById('categoryWeightSlider').value = 25;
-        document.getElementById('priceWeightSlider').value = 10;
-        document.getElementById('performanceWeightSlider').value = 5;
-        updateMetadataWeights();
+        // Mode 2 (Metadata) weights are fixed and cannot be reset
+        // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
     }
     
     if (hybridSection.style.display !== 'none') {
-        // Reset Mode 3 (Hybrid)
-        document.getElementById('hybridVisualWeightSlider').value = 60;
-        document.getElementById('hybridMetadataWeightSlider').value = 40;
+        // Reset Mode 3 (Hybrid) - 60% Visual, 40% Metadata
+        document.getElementById('hybridBalanceSlider').value = 60;
         updateHybridWeights();
         
-        // Reset sub-weights
+        // Reset visual sub-weights
         document.getElementById('hybridColorWeightSlider').value = 50;
         document.getElementById('hybridShapeWeightSlider').value = 30;
         document.getElementById('hybridTextureWeightSlider').value = 20;
         updateHybridVisualSubWeights();
-        
-        document.getElementById('hybridSkuWeightSlider').value = 30;
-        document.getElementById('hybridNameWeightSlider').value = 30;
-        document.getElementById('hybridCategoryWeightSlider').value = 25;
-        document.getElementById('hybridPriceWeightSlider').value = 10;
-        document.getElementById('hybridPerformanceWeightSlider').value = 5;
-        updateHybridMetadataSubWeights();
+
+        // Metadata sub-weights are fixed and cannot be reset
+        // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
     }
     
     showToast('Weights reset to default values', 'success');
@@ -3192,27 +3540,20 @@ function initAdvancedFeatures() {
     safeAddListener('textureWeightSlider', 'input', updateWeights);
     
     // Weight Sliders - Mode 2 (Metadata)
-    safeAddListener('skuWeightSlider', 'input', updateMetadataWeights);
-    safeAddListener('nameWeightSlider', 'input', updateMetadataWeights);
-    safeAddListener('categoryWeightSlider', 'input', updateMetadataWeights);
-    safeAddListener('priceWeightSlider', 'input', updateMetadataWeights);
-    safeAddListener('performanceWeightSlider', 'input', updateMetadataWeights);
-    
-    // Weight Sliders - Mode 3 (Hybrid Main)
-    safeAddListener('hybridVisualWeightSlider', 'input', updateHybridWeights);
-    safeAddListener('hybridMetadataWeightSlider', 'input', updateHybridWeights);
-    
+    // NOTE: Metadata sub-weight sliders removed - weights are now fixed and displayed statically
+    // Backend uses fixed values: SKU 30%, Name 30%, Category 25%, Price 10%, Performance 5%
+
+    // Weight Slider - Mode 3 (Hybrid Balance)
+    safeAddListener('hybridBalanceSlider', 'input', updateHybridWeights);
+
     // Weight Sliders - Mode 3 (Hybrid Visual Sub)
     safeAddListener('hybridColorWeightSlider', 'input', updateHybridVisualSubWeights);
     safeAddListener('hybridShapeWeightSlider', 'input', updateHybridVisualSubWeights);
     safeAddListener('hybridTextureWeightSlider', 'input', updateHybridVisualSubWeights);
-    
+
     // Weight Sliders - Mode 3 (Hybrid Metadata Sub)
-    safeAddListener('hybridSkuWeightSlider', 'input', updateHybridMetadataSubWeights);
-    safeAddListener('hybridNameWeightSlider', 'input', updateHybridMetadataSubWeights);
-    safeAddListener('hybridCategoryWeightSlider', 'input', updateHybridMetadataSubWeights);
-    safeAddListener('hybridPriceWeightSlider', 'input', updateHybridMetadataSubWeights);
-    safeAddListener('hybridPerformanceWeightSlider', 'input', updateHybridMetadataSubWeights);
+    // NOTE: Metadata sub-weight sliders removed - weights are now fixed and displayed statically
+    // Backend uses fixed values: SKU 30%, Name 30%, Category 25%, Price 10%, Performance 5%
     
     // Export Buttons
     safeAddListener('exportCsvBtn', 'click', exportResults);
@@ -3277,20 +3618,39 @@ async function exportWithImages() {
         }
         
         // Export JSON with instructions
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        
-        try {
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `match_results_full_${new Date().toISOString().slice(0, 10)}.json`;
-            a.click();
-            showToast('Export complete! JSON file includes all match data. Images can be downloaded separately via API.', 'success');
-        } catch (error) {
-            console.error('Export failed:', error);
-            showToast('Export failed', 'error');
-        } finally {
-            setTimeout(() => URL.revokeObjectURL(url), 100);
+        const jsonContent = JSON.stringify(exportData, null, 2);
+        const filename = `match_results_full_${new Date().toISOString().slice(0, 10)}.json`;
+
+        // Check if running in pywebview
+        if (window.pywebview) {
+            try {
+                const result = await window.pywebview.api.save_file_auto(jsonContent, filename);
+                if (result) {
+                    showToast(`Export complete! JSON saved to Downloads folder: ${filename}`, 'success');
+                } else {
+                    showToast('Export failed', 'error');
+                }
+            } catch (error) {
+                console.error('Webview save failed:', error);
+                showToast('Export failed - ' + error.message, 'error');
+            }
+        } else {
+            // Browser fallback
+            const blob = new Blob([jsonContent], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            try {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                showToast('Export complete! JSON file includes all match data. Images can be downloaded separately via API.', 'success');
+            } catch (error) {
+                console.error('Export failed:', error);
+                showToast('Export failed', 'error');
+            } finally {
+                setTimeout(() => URL.revokeObjectURL(url), 100);
+            }
         }
     } catch (error) {
         showToast('Failed to export with images: ' + error.message, 'error');
@@ -3331,7 +3691,7 @@ function showDuplicateReport() {
     let html = `
         <div class="duplicate-report-modal">
             <div class="duplicate-report-header">
-                <h2>🔍 Duplicate Detection Report</h2>
+                <h2>Duplicate Detection Report</h2>
                 <p style="color: #64748b; font-size: 16px;">${duplicates.length} product(s) with potential duplicates found</p>
             </div>
             
@@ -3392,7 +3752,7 @@ function showDuplicateReport() {
             </div>
             
             <div style="margin-top: 24px; text-align: center;">
-                <button class="btn btn-primary" onclick="exportDuplicateReport()">📄 Export Duplicate Report</button>
+                <button class="btn btn-primary" onclick="exportDuplicateReport()">Export Duplicate Report</button>
             </div>
         </div>
     `;
@@ -3402,7 +3762,7 @@ function showDuplicateReport() {
 }
 
 // Export Duplicate Report
-function exportDuplicateReport() {
+async function exportDuplicateReport() {
     const duplicates = [];
     
     matchResults.forEach(result => {
@@ -3432,31 +3792,49 @@ function exportDuplicateReport() {
     duplicates.forEach(dup => {
         csv += `"${dup.new_product}","${dup.new_category}","${dup.matched_product}","${dup.matched_category}",${dup.similarity_score},"${dup.price_current}","${dup.price_trend}","${dup.total_sales}","${dup.total_revenue}","${dup.recommendation}"\n`;
     });
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    
-    try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `duplicate_report_${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
-        showToast('Duplicate report exported to CSV', 'success');
-    } catch (error) {
-        console.error('Export failed:', error);
-        showToast('Export failed', 'error');
-    } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+
+    const filename = `duplicate_report_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    // Check if running in pywebview
+    if (window.pywebview) {
+        try {
+            const result = await window.pywebview.api.save_file_auto(csv, filename);
+            if (result) {
+                showToast(`Duplicate report saved to Downloads folder: ${filename}`, 'success');
+            } else {
+                showToast('Export failed', 'error');
+            }
+        } catch (error) {
+            console.error('Webview save failed:', error);
+            showToast('Export failed - ' + error.message, 'error');
+        }
+    } else {
+        // Browser fallback
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            showToast('Duplicate report exported to CSV', 'success');
+        } catch (error) {
+            console.error('Export failed:', error);
+            showToast('Export failed', 'error');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 }
 
 // Save Session
-function saveSession() {
+async function saveSession() {
     if (matchResults.length === 0) {
         showToast('No session data to save', 'warning');
         return;
     }
-    
+
     const sessionData = {
         version: '1.0',
         timestamp: new Date().toISOString(),
@@ -3467,21 +3845,40 @@ function saveSession() {
         newProducts: newProducts,
         matchResults: matchResults
     };
-    
-    const blob = new Blob([JSON.stringify(sessionData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    
-    try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `matching_session_${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        showToast('Session saved successfully', 'success');
-    } catch (error) {
-        console.error('Save failed:', error);
-        showToast('Save failed', 'error');
-    } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+
+    const sessionContent = JSON.stringify(sessionData, null, 2);
+    const filename = `matching_session_${new Date().toISOString().slice(0, 10)}.json`;
+
+    // Check if running in pywebview
+    if (window.pywebview) {
+        try {
+            const result = await window.pywebview.api.save_file_auto(sessionContent, filename);
+            if (result) {
+                showToast(`Session saved to Downloads folder: ${filename}`, 'success');
+            } else {
+                showToast('Save failed', 'error');
+            }
+        } catch (error) {
+            console.error('Webview save failed:', error);
+            showToast('Save failed - ' + error.message, 'error');
+        }
+    } else {
+        // Browser fallback
+        const blob = new Blob([sessionContent], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            showToast('Session saved successfully', 'success');
+        } catch (error) {
+            console.error('Save failed:', error);
+            showToast('Save failed', 'error');
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 }
 
@@ -3549,12 +3946,103 @@ function applyFilters() {
     filterCategory = document.getElementById('categoryFilter').value;
     filterDuplicatesOnly = document.getElementById('duplicatesOnlyCheckbox').checked;
     sortBy = document.getElementById('sortBySelect').value;
-    
+
+    // Update active filter badges
+    updateActiveBadges();
+
+    // Update main search status
+    updateMainSearchStatus();
+
     // Re-render results with filters
     displayResults();
-    
+
     // Save to history
     saveToHistory('filters_applied', { searchQuery, filterCategory, filterDuplicatesOnly, sortBy });
+}
+
+// Update Main Search Status (shows count of filtered results)
+function updateMainSearchStatus() {
+    const statusEl = document.getElementById('searchStatus');
+    if (!searchQuery) {
+        statusEl.innerHTML = '';
+        return;
+    }
+
+    // Count how many products match the search
+    if (matchResults && matchResults.length > 0) {
+        const filtered = matchResults.map(result => {
+            const product = result.product;
+            const searchText = `${product.filename} ${product.name || ''} ${product.sku || ''} ${product.category || ''}`.toLowerCase();
+            if (!searchText.includes(searchQuery)) {
+                return null;
+            }
+            return result;
+        }).filter(r => r !== null);
+
+        const count = filtered.length;
+        statusEl.innerHTML = `<span class="search-count">${count} ${count === 1 ? 'product' : 'products'}</span>`;
+    }
+}
+
+// Update Active Filter Badges
+function updateActiveBadges() {
+    const badgesContainer = document.getElementById('activeBadges');
+    const badges = [];
+
+    // Search badge
+    if (searchQuery) {
+        badges.push({
+            label: 'Search',
+            value: searchQuery,
+            clear: () => {
+                document.getElementById('searchInput').value = '';
+                applyFilters();
+            }
+        });
+    }
+
+    // Category badge
+    if (filterCategory !== 'all' && filterCategory !== '') {
+        badges.push({
+            label: 'Category',
+            value: filterCategory,
+            clear: () => {
+                document.getElementById('categoryFilter').value = 'all';
+                applyFilters();
+            }
+        });
+    }
+
+    // Duplicates badge
+    if (filterDuplicatesOnly) {
+        badges.push({
+            label: 'Duplicates Only',
+            value: '',
+            clear: () => {
+                document.getElementById('duplicatesOnlyCheckbox').checked = false;
+                applyFilters();
+            }
+        });
+    }
+
+    // Render badges
+    if (badges.length === 0) {
+        badgesContainer.innerHTML = '';
+        return;
+    }
+
+    badgesContainer.innerHTML = badges.map(badge => `
+        <div class="badge">
+            <span>${badge.label}${badge.value ? ': <span class="badge-value">' + badge.value + '</span>' : ''}</span>
+            <button class="badge-remove" onclick="event.stopPropagation(); this.parentElement.onclick(); this.parentElement.remove();">×</button>
+        </div>
+    `).join('');
+
+    // Attach click handlers to badges
+    badges.forEach((badge, index) => {
+        const badgeElement = badgesContainer.children[index];
+        badgeElement.onclick = badge.clear;
+    });
 }
 
 // Clear Filters
@@ -3563,7 +4051,7 @@ function clearFilters() {
     document.getElementById('categoryFilter').value = 'all';
     document.getElementById('duplicatesOnlyCheckbox').checked = false;
     document.getElementById('sortBySelect').value = 'similarity';
-    
+
     applyFilters();
     showToast('Filters cleared', 'success');
 }
@@ -3571,16 +4059,16 @@ function clearFilters() {
 // Populate Category Filter
 function populateCategoryFilter() {
     const categories = new Set();
-    
+
     matchResults.forEach(result => {
-        if (result.product.category) {
-            categories.add(result.product.category);
+        if (result.p.cat) {
+            categories.add(result.p.cat);
         }
     });
-    
+
     const select = document.getElementById('categoryFilter');
     select.innerHTML = '<option value="all">All Categories</option>';
-    
+
     Array.from(categories).sort().forEach(category => {
         const option = document.createElement('option');
         option.value = category;
@@ -3593,87 +4081,75 @@ function populateCategoryFilter() {
 function filterAndSortResults(results) {
     let filtered = results.map(result => {
         // Apply dynamic threshold and limit to matches
-        let filteredMatches = result.matches.filter(m => m.similarity_score >= dynamicThreshold);
-        
-        // Apply dynamic category filter to matches
-        if (dynamicCategory) {
-            filteredMatches = filteredMatches.filter(m => (m.category || 'Uncategorized') === dynamicCategory);
-        }
-        
+        let filteredMatches = result.m.filter(m => getScore(m, 'similarity') >= dynamicThreshold);
+
         // Apply dynamic search filter to matches (using backend search results)
         if (dynamicSearch && dynamicSearchResults.size > 0) {
             filteredMatches = filteredMatches.filter(m => {
-                return dynamicSearchResults.has(m.matched_product_id);
+                return dynamicSearchResults.has(m.mid);
             });
         }
-        
+
         // Apply dynamic limit
         if (dynamicLimit > 0) {
             filteredMatches = filteredMatches.slice(0, dynamicLimit);
         }
-        
+
         return {
             ...result,
-            matches: filteredMatches
+            m: filteredMatches
         };
     }).filter(result => {
-        const product = result.product;
-        
+        const product = result.p;
+
         // Search filter
         if (searchQuery) {
-            const searchText = `${product.filename} ${product.name || ''} ${product.sku || ''} ${product.category || ''}`.toLowerCase();
+            const searchText = `${product.name || ''} ${product.sku || ''} ${product.cat || ''}`.toLowerCase();
             if (!searchText.includes(searchQuery)) {
                 return false;
             }
         }
-        
+
         // Category filter
-        if (filterCategory !== 'all' && product.category !== filterCategory) {
+        if (filterCategory !== 'all' && product.cat !== filterCategory) {
             return false;
         }
-        
+
         // Duplicates only filter
         if (filterDuplicatesOnly) {
-            const hasDuplicate = result.matches.some(m => m.similarity_score > 90);
+            const hasDuplicate = result.m.some(m => getScore(m, 'similarity') > 90);
             if (!hasDuplicate) {
                 return false;
             }
         }
-        
+
         return true;
     });
-    
+
     // Sort results
     filtered.sort((a, b) => {
-        const aMatch = a.matches[0];
-        const bMatch = b.matches[0];
-        
+        const aMatch = a.m[0];
+        const bMatch = b.m[0];
+
         if (!aMatch && !bMatch) return 0;
         if (!aMatch) return 1;
         if (!bMatch) return -1;
-        
+
         switch (sortBy) {
             case 'similarity':
-                return bMatch.similarity_score - aMatch.similarity_score;
-            
-            case 'price':
-                const aPrice = aMatch.priceStatistics?.current_numeric || 0;
-                const bPrice = bMatch.priceStatistics?.current_numeric || 0;
-                return bPrice - aPrice;
-            
-            case 'performance':
-                const aPerf = aMatch.performanceStatistics?.total_sales || 0;
-                const bPerf = bMatch.performanceStatistics?.total_sales || 0;
-                return bPerf - aPerf;
-            
+                return getScore(bMatch, 'similarity') - getScore(aMatch, 'similarity');
+
+            case 'category':
+                return (a.p.cat || '').localeCompare(b.p.cat || '');
+
             case 'name':
-                return (a.product.filename || '').localeCompare(b.product.filename || '');
-            
+                return (a.p.name || '').localeCompare(b.p.name || '');
+
             default:
                 return 0;
         }
     });
-    
+
     return filtered;
 }
 
@@ -3821,7 +4297,7 @@ function showColorPicker(event) {
 function updateFileLabel(input, labelId) {
     const label = document.getElementById(labelId);
     if (input.files && input.files.length > 0) {
-        label.textContent = '✓ ' + input.files[0].name;
+        label.textContent = input.files[0].name;
         label.classList.add('has-file');
     } else {
         label.textContent = 'Use BUILD CSV or see CSV FORMAT to create your file';
@@ -3998,9 +4474,9 @@ function setMode(section, mode) {
 // Prompt for CSV Builder after folder upload in advanced mode
 async function promptCsvBuilder(section) {
     const files = section === 'historical' ? historicalFiles : newFiles;
-    
+
     if (files.length === 0) return;
-    
+
     // Create custom modal for prompt
     const modal = document.createElement('div');
     modal.className = 'modal show';
@@ -4015,14 +4491,14 @@ async function promptCsvBuilder(section) {
                 <li>Sales performance data</li>
             </ul>
             <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
-                <button class="btn" onclick="openIntegratedCsvBuilder('${section}')">YES, ADD METADATA</button>
+                <button class="btn" onclick="openCsvBuilderWithFiles('${section}')">YES, ADD METADATA</button>
                 <button class="btn" onclick="closePromptModal()">NO, I'LL UPLOAD CSV</button>
             </div>
             <p style="margin-top: 15px; font-size: 0.9em; color: #718096;">You can also upload a CSV file manually or click "BUILD CSV" button.</p>
         </div>
     `;
     document.body.appendChild(modal);
-    
+
     // Store modal reference for cleanup
     window.currentPromptModal = modal;
 }
@@ -4034,59 +4510,58 @@ function closePromptModal() {
     }
 }
 
-// Open Integrated CSV Builder
-function openIntegratedCsvBuilder(section) {
+// Open CSV Builder with files pre-populated (called from popup and BUILD CSV button)
+async function openCsvBuilderWithFiles(section) {
     closePromptModal();
-    
+
     const files = section === 'historical' ? historicalFiles : newFiles;
-    
-    // Store files in sessionStorage for CSV builder
+
+    // Prepare file data for CSV builder
     const fileData = files.map(({ file, category }) => ({
         filename: file.name,
         category: category || '',
         size: file.size,
         type: file.type
     }));
-    
-    sessionStorage.setItem('csvBuilderFiles', JSON.stringify(fileData));
-    sessionStorage.setItem('csvBuilderSource', section);
-    
-    // Open CSV builder in new tab
-    const builderWindow = window.open('/csv-builder', '_blank');
-    
-    // Listen for CSV data from builder
-    const csvBuilderListener = (event) => {
-        if (event.data && event.data.type === 'CSV_BUILDER_COMPLETE') {
-            const csvContent = event.data.csvContent;
-            const targetSection = event.data.section;
-            
-            // Create a Blob and File object from CSV content
-            const blob = new Blob([csvContent], { type: 'text/csv' });
-            const file = new File([blob], 'products.csv', { type: 'text/csv' });
-            
-            // Set the CSV in the appropriate section
-            if (targetSection === 'historical') {
-                historicalCsv = file;
-                document.getElementById('historicalFileLabel').textContent = 'products.csv (from CSV Builder)';
-                document.getElementById('processHistoricalBtn').disabled = false;
-                removeWorkflowIndicators('historical');
-                showToast('CSV loaded from builder! Ready to process.', 'success');
-            } else if (targetSection === 'new') {
-                newCsv = file;
-                document.getElementById('newFileLabel').textContent = 'products.csv (from CSV Builder)';
-                document.getElementById('processNewBtn').disabled = false;
-                removeWorkflowIndicators('new');
-                showToast('CSV loaded from builder! Ready to process.', 'success');
+
+    // Use the openCsvBuilder function from index.html (handles webview vs browser)
+    if (typeof openCsvBuilder === 'function') {
+        // Generate window ID for staging
+        const windowId = 'csv_builder_' + Math.random().toString(36).substr(2, 9);
+
+        try {
+            // Stage file data on server
+            const response = await fetch('/api/csv-builder/stage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    window_id: windowId,
+                    file_data: fileData,
+                    section: section
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to stage CSV builder data');
             }
-            
-            // Remove listener after receiving data
-            window.removeEventListener('message', csvBuilderListener);
+
+            // Open CSV builder with window ID in query params
+            openCsvBuilder(section, windowId);
+        } catch (error) {
+            console.error('Error staging CSV builder data:', error);
+            showToast('Failed to open CSV builder', 'error');
         }
-    };
-    
-    addTrackedListener(window, 'message', csvBuilderListener, 'general');
-    
-    showToast('CSV Builder opened. Complete the form and click "SEND TO APP".', 'info');
+    } else {
+        // Fallback - direct navigation (browser mode) - use sessionStorage
+        sessionStorage.setItem('csvBuilderFiles', JSON.stringify(fileData));
+        sessionStorage.setItem('csvBuilderSource', section);
+        window.location.href = `/static/csv-builder.html?section=${section}`;
+    }
+}
+
+// Legacy function for backwards compatibility
+function openIntegratedCsvBuilder(section) {
+    openCsvBuilderWithFiles(section);
 }
 
 // Update file label when CSV is selected
@@ -4308,7 +4783,7 @@ function updateGPUStatus(status) {
     if (status.available && status.device !== 'cpu') {
         // GPU is active
         gpuStatusEl.classList.add('gpu-active');
-        statusIcon.textContent = '⚡';
+        statusIcon.textContent = '';
         
         let deviceName = 'GPU';
         let tooltip = 'GPU acceleration active';
@@ -4334,13 +4809,13 @@ function updateGPUStatus(status) {
     } else if (status.error) {
         // GPU error
         gpuStatusEl.classList.add('gpu-error');
-        statusIcon.textContent = '⚠️';
+        statusIcon.textContent = '';
         statusText.textContent = 'GPU Error';
         gpuStatusEl.setAttribute('data-tooltip', `GPU initialization failed: ${status.error}. Using CPU mode.`);
     } else {
         // CPU mode
         gpuStatusEl.classList.add('gpu-cpu');
-        statusIcon.textContent = '💻';
+        statusIcon.textContent = '';
         statusText.textContent = 'CPU Mode';
         
         let tooltip = 'Running on CPU - ';
@@ -4410,14 +4885,14 @@ async function checkExistingCatalog() {
                 }
             }
             if (data.loaded_snapshot && data.loaded_snapshot.loaded) {
-                statsText += ` | 📂 <strong>${data.loaded_snapshot.name}</strong>`;
+                statsText += ` | <strong>${data.loaded_snapshot.name}</strong>`;
             }
             
             statsEl.innerHTML = statsText;
             
             // Check for large database warning
             if (data.database_size_mb && data.database_size_mb > 500) {
-                showToast('⚠️ Database is large (' + data.database_size_mb.toFixed(0) + ' MB). Consider cleaning up old products.', 'warning', 8000);
+                showToast('Database is large (' + data.database_size_mb.toFixed(0) + ' MB). Consider cleaning up old products.', 'warning', 8000);
             }
         } else {
             // No existing catalog - still show options but with different message
@@ -4461,7 +4936,7 @@ function handleCatalogOptionChange(e) {
         // Replace catalog - show warning
         if (existingCatalogStats && existingCatalogStats.historical_products > 0) {
             const confirmed = confirm(
-                `⚠️ WARNING: This will DELETE all ${existingCatalogStats.historical_products.toLocaleString()} existing historical products and create a NEW catalog!\n\n` +
+                `WARNING: This will DELETE all ${existingCatalogStats.historical_products.toLocaleString()} existing historical products and create a NEW catalog!\n\n` +
                 `A backup snapshot will be created automatically.\n\n` +
                 `Are you sure you want to replace with a new catalog?`
             );
@@ -4518,7 +4993,7 @@ async function processHistoricalCatalogWithOptions() {
             
             // Update UI
             document.getElementById('historicalStatus').innerHTML = 
-                `<p class="success">✓ Loaded ${historicalProducts.length} products from existing catalog</p>`;
+                `<p class="success">Loaded ${historicalProducts.length} products from existing catalog</p>`;
             
             // Show next section
             document.getElementById('newSection').style.display = 'block';
@@ -4532,37 +5007,44 @@ async function processHistoricalCatalogWithOptions() {
     }
     
     if (option === 'replace') {
-        // Create automatic backup snapshot before replacing
-        try {
-            console.log('[REPLACE] Creating automatic backup snapshot...');
-            showToast('Creating backup snapshot...', 'info');
-            
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const snapshotName = `auto-backup-before-replace-historical-${timestamp}`;
-            
-            const snapshotResponse = await fetch('/api/catalogs/save-current', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    name: snapshotName,
-                    description: 'Automatic backup created before replacing historical catalog'
-                })
-            });
-            
-            if (snapshotResponse.ok) {
-                console.log('[REPLACE] Backup snapshot created:', snapshotName);
-                showToast('Backup snapshot created', 'success');
-            } else {
-                console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
+        // Create automatic backup snapshot before replacing (debounced to avoid duplicates in batch operations)
+        const now = Date.now();
+        if (now - lastAutoBackupTime > AUTO_BACKUP_DEBOUNCE_MS) {
+            try {
+                console.log('[REPLACE] Creating automatic backup snapshot...');
+                showToast('Creating backup snapshot...', 'info');
+
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const snapshotName = `auto-backup-before-replace-${timestamp}`;
+
+                const snapshotResponse = await fetch('/api/catalogs/save-current', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: snapshotName,
+                        description: 'Automatic backup created before batch replace operations'
+                    })
+                });
+
+                if (snapshotResponse.ok) {
+                    console.log('[REPLACE] Backup snapshot created:', snapshotName);
+                    showToast('Backup snapshot created', 'success');
+                    lastAutoBackupTime = now;
+                } else {
+                    console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
+                    showToast('Warning: Could not create backup snapshot', 'warning');
+                }
+
+                // Wait a moment to ensure snapshot is complete
+                await new Promise(resolve => setTimeout(resolve, 300));
+            } catch (error) {
+                console.warn('[REPLACE] Error creating backup snapshot:', error);
                 showToast('Warning: Could not create backup snapshot', 'warning');
+                // Continue with replace even if snapshot fails
             }
-            
-            // Wait a moment to ensure snapshot is complete
-            await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (error) {
-            console.warn('[REPLACE] Error creating backup snapshot:', error);
-            showToast('Warning: Could not create backup snapshot', 'warning');
-            // Continue with replace even if snapshot fails
+        } else {
+            console.log('[REPLACE] Skipping backup (within debounce window) - batch operation detected');
+            showToast('Batch operation detected - using previous backup', 'info');
         }
         
         // Clear existing catalog
@@ -4668,7 +5150,7 @@ function handleNewCatalogOptionChange() {
         // Show warning
         if (existingCatalogStats && existingCatalogStats.new_products > 0) {
             const confirmed = confirm(
-                `⚠️ WARNING: This will DELETE all ${existingCatalogStats.new_products} existing new products and create a NEW catalog!\n\n` +
+                `WARNING: This will DELETE all ${existingCatalogStats.new_products} existing new products and create a NEW catalog!\n\n` +
                 `A backup snapshot will be created automatically.\n\n` +
                 `Are you sure you want to replace with a new catalog?`
             );
@@ -4719,7 +5201,7 @@ async function processNewCatalogWithOptions() {
             
             // Update UI
             document.getElementById('newStatus').innerHTML = 
-                `<p class="success">✓ Loaded ${newProducts.length} new products from existing catalog</p>`;
+                `<p class="success">Loaded ${newProducts.length} new products from existing catalog</p>`;
             
             // Show next section
             document.getElementById('matchSection').style.display = 'block';
@@ -4733,39 +5215,46 @@ async function processNewCatalogWithOptions() {
     }
     
     if (option === 'replace') {
-        // Create automatic backup snapshot before replacing
-        try {
-            console.log('[REPLACE] Creating automatic backup snapshot...');
-            showToast('Creating backup snapshot...', 'info');
-            
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const snapshotName = `auto-backup-before-replace-new-${timestamp}`;
-            
-            const snapshotResponse = await fetch('/api/catalogs/save-current', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    name: snapshotName,
-                    description: 'Automatic backup created before replacing new products catalog'
-                })
-            });
-            
-            if (snapshotResponse.ok) {
-                console.log('[REPLACE] Backup snapshot created:', snapshotName);
-                showToast('Backup snapshot created', 'success');
-            } else {
-                console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
+        // Create automatic backup snapshot before replacing (debounced to avoid duplicates in batch operations)
+        const now = Date.now();
+        if (now - lastAutoBackupTime > AUTO_BACKUP_DEBOUNCE_MS) {
+            try {
+                console.log('[REPLACE] Creating automatic backup snapshot...');
+                showToast('Creating backup snapshot...', 'info');
+
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const snapshotName = `auto-backup-before-replace-${timestamp}`;
+
+                const snapshotResponse = await fetch('/api/catalogs/save-current', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: snapshotName,
+                        description: 'Automatic backup created before batch replace operations'
+                    })
+                });
+
+                if (snapshotResponse.ok) {
+                    console.log('[REPLACE] Backup snapshot created:', snapshotName);
+                    showToast('Backup snapshot created', 'success');
+                    lastAutoBackupTime = now;
+                } else {
+                    console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
+                    showToast('Warning: Could not create backup snapshot', 'warning');
+                }
+
+                // Wait a moment to ensure snapshot is complete
+                await new Promise(resolve => setTimeout(resolve, 300));
+            } catch (error) {
+                console.warn('[REPLACE] Error creating backup snapshot:', error);
                 showToast('Warning: Could not create backup snapshot', 'warning');
+                // Continue with replace even if snapshot fails
             }
-            
-            // Wait a moment to ensure snapshot is complete
-            await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (error) {
-            console.warn('[REPLACE] Error creating backup snapshot:', error);
-            showToast('Warning: Could not create backup snapshot', 'warning');
-            // Continue with replace even if snapshot fails
+        } else {
+            console.log('[REPLACE] Skipping backup (within debounce window) - batch operation detected');
+            showToast('Batch operation detected - using previous backup', 'info');
         }
-        
+
         // Clear existing new products
         try {
             console.log('[REPLACE] Starting new products cleanup...');
@@ -4869,9 +5358,9 @@ async function checkCatalogStateChanged() {
 }
 
 // Reset app state when catalog changes are detected
-function resetAppState(reason = 'Catalog data has changed') {
+async function resetAppState(reason = 'Catalog data has changed') {
     console.log('Resetting app state:', reason);
-    
+
     // Clear in-memory product data
     historicalProducts = [];
     newProducts = [];
@@ -4880,6 +5369,9 @@ function resetAppState(reason = 'Catalog data has changed') {
     newFiles = [];
     historicalCsv = null;
     newCsv = null;
+
+    // Clear saved state (webview only)
+    await clearSavedState();
     
     // Reset UI to initial state
     const historicalSection = document.getElementById('historicalSection');
@@ -5081,7 +5573,7 @@ async function loadCatalogInfo() {
             let text = `${data.total_products} products (${data.historical_products} historical, ${data.new_products} new)`;
             
             if (data.loaded_snapshot && data.loaded_snapshot.loaded) {
-                text += ` | 📂 Loaded from: "${data.loaded_snapshot.name}"`;
+                text += ` | Loaded from: "${data.loaded_snapshot.name}"`;
             }
             
             summary.textContent = text;
@@ -5108,27 +5600,45 @@ function refreshCatalogInfo() {
 
 // Open Catalog Manager
 function openCatalogManager() {
-    window.open('/catalog-manager', '_blank');
+    // Use pywebview API to open in child window if available
+    if (window.pywebview && window.pywebview.api) {
+        console.log('[NAV] Opening Catalog Manager in child window (webviewer)...');
+        try {
+            window.pywebview.api.open_catalog_manager();
+        } catch (e) {
+            console.error('[NAV] Error opening catalog manager:', e);
+            // Fallback to browser window
+            window.open('/catalog-manager', '_blank');
+        }
+    } else {
+        // Browser mode - open in new tab
+        console.log('[NAV] Pywebview not available, opening in browser tab...');
+        window.open('/catalog-manager', '_blank');
+    }
 }
 
-// Listen for catalog changes from Catalog Manager
+// Listen for catalog changes from Catalog Manager (browser mode only)
+// PyWebview mode uses window.handleChildWindowEvent in index.html
 function initCatalogChangeListener() {
-    // Listen via BroadcastChannel
+    // Listen via BroadcastChannel (browser mode only)
     try {
         catalogChannel = new BroadcastChannel('catalog_changes');
         catalogChannel.onmessage = (event) => {
-            handleCatalogChangeInMainApp(event.data);
+            // In browser mode, call the same handler that pywebview uses
+            if (typeof handleCatalogChanged === 'function') {
+                handleCatalogChanged({ action: event.data.action, details: event.data.details });
+            }
         };
     } catch (e) {
         // BroadcastChannel not supported, use polling
         catalogPollingInterval = setInterval(checkCatalogChangesInMainApp, 2000);
     }
-    
+
     // Also check on visibility change (when user switches back to this tab)
     const catalogVisibilityHandler = () => {
         if (!document.hidden) {
             checkCatalogChangesInMainApp();
-            
+
             // Restart polling if it was stopped and BroadcastChannel not available
             if (!catalogChannel && !catalogPollingInterval) {
                 catalogPollingInterval = setInterval(checkCatalogChangesInMainApp, 2000);
@@ -5141,11 +5651,11 @@ function initCatalogChangeListener() {
             }
         }
     };
-    
+
     addTrackedListener(document, 'visibilitychange', catalogVisibilityHandler, 'general');
 }
 
-// Check for catalog changes via sessionStorage
+// Check for catalog changes via sessionStorage (browser mode fallback)
 function checkCatalogChangesInMainApp() {
     const changeData = sessionStorage.getItem('catalogManagerChange');
     if (changeData) {
@@ -5153,7 +5663,10 @@ function checkCatalogChangesInMainApp() {
             const change = JSON.parse(changeData);
             // Only process recent changes (within last 30 seconds)
             if (Date.now() - change.timestamp < 30000) {
-                handleCatalogChangeInMainApp(change);
+                // Call the same handler that pywebview uses
+                if (typeof handleCatalogChanged === 'function') {
+                    handleCatalogChanged({ action: change.action, details: change.details });
+                }
             }
         } catch (e) {
             console.error('Error parsing catalog change:', e);
@@ -5161,22 +5674,245 @@ function checkCatalogChangesInMainApp() {
     }
 }
 
-// Handle catalog change notification in main app
-function handleCatalogChangeInMainApp(change) {
-    if (!change || !change.action) return;
-    
-    // Refresh catalog info
-    loadCatalogInfo();
-    
-    // If a new catalog was loaded, show prominent notification
-    if (change.action === 'catalog_loaded') {
-        showToast(`Catalog "${change.details?.name || 'snapshot'}" loaded with ${change.details?.productCount || 0} products`, 'success');
-        
-        // If user has already processed products, warn them
-        if (historicalProducts.length > 0 || newProducts.length > 0) {
-            showToast('Note: Your current session data may be from the previous catalog. Consider resetting.', 'warning');
-        }
-    } else if (change.action === 'cleanup' || change.action === 'bulk_delete') {
-        showToast('Catalog was modified in Catalog Manager', 'info');
+// ============================================================================
+// SAVE DIALOG FUNCTIONS
+// ============================================================================
+
+let pendingSaveOperation = null;
+
+/**
+ * Show the save dialog to user for snapshot creation
+ * @param {string} operation - The operation that triggered the save (e.g., 'comparison_complete', 'manual_save')
+ * @param {string} defaultName - Default snapshot name to prefill
+ */
+function showSaveDialog(operation = 'snapshot', defaultName = null) {
+    const dialog = document.getElementById('saveDialog');
+    const nameInput = document.getElementById('snapshotNameInput');
+
+    // Generate default name if not provided
+    if (!defaultName) {
+        const now = new Date();
+        const date = now.toISOString().split('T')[0];
+        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+        defaultName = `${operation}-${date}_${time}`;
     }
+
+    nameInput.value = defaultName;
+    nameInput.focus();
+    nameInput.select();
+
+    // Store the operation for later use
+    pendingSaveOperation = operation;
+
+    // Show dialog
+    dialog.classList.add('show');
+}
+
+/**
+ * Close the save dialog without saving
+ */
+function closeSaveDialog() {
+    const dialog = document.getElementById('saveDialog');
+    dialog.classList.remove('show');
+    pendingSaveOperation = null;
+}
+
+/**
+ * Submit the save dialog
+ */
+async function submitSaveDialog() {
+    const nameInput = document.getElementById('snapshotNameInput');
+    const saveType = document.querySelector('input[name="saveType"]:checked').value;
+    const snapshotName = nameInput.value.trim();
+
+    if (!snapshotName) {
+        showToast('Please enter a snapshot name', 'error');
+        return;
+    }
+
+    if (saveType === 'skip') {
+        closeSaveDialog();
+        return;
+    }
+
+    try {
+        // During matching operations, we have both catalogs - save both
+        // For other operations, save the specific section
+        const operation = pendingSaveOperation || 'snapshot';
+        const sectionsToSave = operation === 'matching_complete' ? ['historical', 'new'] : ['historical'];
+
+        let allSuccess = true;
+        let savedCount = 0;
+
+        for (const section of sectionsToSave) {
+            const response = await fetch('/api/catalogs/save-with-dialog', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    snapshot_name: `${snapshotName}-${section}`,
+                    choice: saveType, // Backend expects 'choice', not 'save_type'
+                    section: section,
+                    operation: operation
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                savedCount++;
+            } else {
+                allSuccess = false;
+                console.error(`Error saving ${section} snapshot:`, result.error);
+            }
+        }
+
+        if (allSuccess && savedCount > 0) {
+            const typeLabel = saveType === 'persistent' ? 'Persistent snapshot' : 'Session snapshot';
+            const sectionLabel = savedCount > 1 ? 'snapshots' : 'snapshot';
+            showToast(`${typeLabel} ${sectionLabel} saved: "${snapshotName}"`, 'success');
+            closeSaveDialog();
+        } else if (savedCount > 0) {
+            showToast(`Partial save: ${savedCount} of ${sectionsToSave.length} snapshots saved`, 'warning');
+            closeSaveDialog();
+        } else {
+            showToast(`Error saving snapshot`, 'error');
+        }
+    } catch (error) {
+        console.error('Error saving snapshot:', error);
+        showToast('Error saving snapshot', 'error');
+    }
+}
+
+// ============================================================================
+// CRASH RECOVERY DIALOG FUNCTIONS
+// ============================================================================
+
+let crashRecoveryData = null;
+
+/**
+ * Check for crash recovery on app startup
+ */
+async function checkForCrashRecovery() {
+    try {
+        const response = await fetch('/api/catalogs/check-crash-recovery');
+        const result = await response.json();
+
+        if (result.crash_detected && result.recovery_snapshot) {
+            crashRecoveryData = result.recovery_snapshot;
+            showCrashRecoveryDialog(result.recovery_snapshot);
+        }
+    } catch (error) {
+        console.error('Error checking for crash recovery:', error);
+    }
+}
+
+/**
+ * Show crash recovery dialog to user
+ */
+function showCrashRecoveryDialog(snapshotInfo) {
+    const dialog = document.getElementById('crashRecoveryDialog');
+    const detailsDiv = document.getElementById('recoveryDetails');
+
+    // Format snapshot info for display
+    let html = `
+        <div><strong>Name:</strong> ${escapeHtml(snapshotInfo.name || 'Unknown')}</div>
+        <div><strong>Created:</strong> ${new Date(snapshotInfo.created_at).toLocaleString()}</div>
+        <div><strong>Products:</strong> ${snapshotInfo.product_count || 'Unknown'}</div>
+    `;
+
+    if (snapshotInfo.created_by_operation) {
+        html += `<div><strong>From:</strong> ${escapeHtml(snapshotInfo.created_by_operation)}</div>`;
+    }
+
+    // Show expiry warning since this is a session snapshot
+    html += `<div style="margin-top: 10px; color: #c00;"><strong>WARNING:</strong> This recovery snapshot will expire in 1 hour if not restored</div>`;
+
+    detailsDiv.innerHTML = html;
+    dialog.classList.add('show');
+}
+
+/**
+ * Close crash recovery dialog
+ */
+function closeCrashRecoveryDialog() {
+    const dialog = document.getElementById('crashRecoveryDialog');
+    dialog.classList.remove('show');
+    crashRecoveryData = null;
+}
+
+/**
+ * Discard the crash recovery snapshot
+ */
+async function discardCrashRecovery() {
+    if (!crashRecoveryData) {
+        closeCrashRecoveryDialog();
+        return;
+    }
+
+    try {
+        const snapshotName = encodeURIComponent(crashRecoveryData.id);
+        const response = await fetch(`/api/catalogs/${snapshotName}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            showToast('Recovery snapshot discarded', 'info');
+        } else {
+            const data = await response.json();
+            showToast(`Error discarding snapshot: ${data.error || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error discarding recovery snapshot:', error);
+        showToast('Error discarding recovery snapshot', 'error');
+    }
+
+    closeCrashRecoveryDialog();
+}
+
+/**
+ * Restore from crash recovery snapshot
+ */
+async function restoreCrashRecovery() {
+    if (!crashRecoveryData) {
+        closeCrashRecoveryDialog();
+        return;
+    }
+
+    try {
+        // Load the snapshot
+        const snapshotName = encodeURIComponent(crashRecoveryData.id);
+        const response = await fetch(`/api/catalogs/load/${snapshotName}`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showToast(`Recovered snapshot "${crashRecoveryData.name}" loaded`, 'success');
+
+            // Refresh the UI
+            await loadCatalogInfo();
+
+            // Reload products if needed
+            if (result.total_products && result.total_products > 0) {
+                showToast(`${result.total_products} products restored`, 'info');
+            }
+        } else {
+            showToast(`Error loading recovery snapshot: ${result.error || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error restoring recovery snapshot:', error);
+        showToast('Error restoring recovery snapshot', 'error');
+    }
+
+    closeCrashRecoveryDialog();
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }

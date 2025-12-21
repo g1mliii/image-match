@@ -43,7 +43,14 @@ def _get_pooled_connection():
 def _return_pooled_connection(conn):
     """Return a connection to the pool"""
     _init_pool()
-    
+
+    # Reset connection state before returning to pool (prevent transaction pollution)
+    try:
+        conn.rollback()  # Clear any uncommitted transactions
+        logger.debug("✓ Reset connection state (rollback)")
+    except Exception as e:
+        logger.debug(f"Connection state reset failed (connection may be closed): {e}")
+
     with _pool_lock:
         if len(_connection_pool) < _pool_max_size:
             _connection_pool.append(conn)
@@ -85,6 +92,25 @@ def get_db_connection():
     finally:
         # Return connection to pool for reuse
         _return_pooled_connection(conn)
+
+def close_all_db_connections():
+    """
+    Close all database connections in the pool.
+    Should be called on application shutdown to prevent database locks.
+    """
+    global _connection_pool
+    _init_pool()
+
+    with _pool_lock:
+        for conn in _connection_pool:
+            try:
+                conn.close()
+                logger.info("Closed database connection")
+            except Exception as e:
+                logger.warning(f"Error closing database connection: {e}")
+
+        _connection_pool.clear()
+        logger.info(f"✓ All database connections closed ({len(_connection_pool)} remaining in pool)")
 
 def migrate_features_table():
     """Migrate existing features table to support CLIP embeddings
@@ -2509,6 +2535,60 @@ def clear_uploaded_images() -> Dict[str, int]:
         'files_deleted': files_deleted,
         'space_reclaimed_mb': round(space_reclaimed / (1024 * 1024), 2)
     }
+
+
+def cleanup_old_uploaded_images(days_retention: int = 30) -> Dict[str, Any]:
+    """Clean up uploaded images older than retention period.
+
+    Removes uploaded image files that haven't been accessed in days_retention days.
+    Keeps recent uploads for active work.
+
+    Args:
+        days_retention: Number of days to keep files (default: 30 days)
+
+    Returns:
+        Dictionary with cleanup statistics:
+        - files_deleted: Number of files removed
+        - space_reclaimed_mb: Amount of disk space freed
+    """
+    import time
+
+    uploads_path = os.path.join(os.path.dirname(__file__), 'uploads')
+
+    files_deleted = 0
+    space_reclaimed = 0
+    cutoff_time = time.time() - (days_retention * 24 * 60 * 60)  # X days ago in seconds
+
+    try:
+        if os.path.exists(uploads_path):
+            for filename in os.listdir(uploads_path):
+                filepath = os.path.join(uploads_path, filename)
+
+                if os.path.isfile(filepath):
+                    try:
+                        # Check file modification time
+                        file_mtime = os.path.getmtime(filepath)
+
+                        if file_mtime < cutoff_time:
+                            # File is older than retention period, delete it
+                            space_reclaimed += os.path.getsize(filepath)
+                            os.remove(filepath)
+                            files_deleted += 1
+                            logger.debug(f"Deleted old uploaded image: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old upload {filepath}: {e}")
+    except Exception as e:
+        logger.error(f"Error cleaning old uploads: {e}")
+
+    result = {
+        'files_deleted': files_deleted,
+        'space_reclaimed_mb': round(space_reclaimed / (1024 * 1024), 2)
+    }
+
+    if files_deleted > 0:
+        logger.info(f"✓ Cleaned up old uploads: {files_deleted} files deleted, {result['space_reclaimed_mb']}MB freed")
+
+    return result
 
 
 def export_catalog_csv() -> str:

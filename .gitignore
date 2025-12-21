@@ -20,6 +20,9 @@ release/
 # Uploads
 backend/uploads/
 
+# Staging directory (inter-window communication)
+staging/
+
 # IDE
 .vscode/
 .idea/

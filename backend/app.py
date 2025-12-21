@@ -21,7 +21,8 @@ from database import (
     get_catalog_stats, get_products_paginated, get_all_categories, update_product,
     delete_product, bulk_delete_products, bulk_update_products, clear_products_by_type,
     clear_all_matches, clear_products_by_categories, clear_products_by_date,
-    vacuum_database, clear_uploaded_images, export_catalog_csv, delete_features
+    vacuum_database, clear_uploaded_images, export_catalog_csv, delete_features,
+    get_db_connection
 )
 from image_processing import (
     validate_image_file,
@@ -60,6 +61,32 @@ logger = logging.getLogger(__name__)
 # Suppress werkzeug HTTP request logs (too verbose)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
+# App Lock and Crash Detection
+BACKEND_DIR = os.path.dirname(__file__)
+APP_LOCK_FILE = os.path.join(BACKEND_DIR, '.app.lock')
+
+def create_app_lock():
+    """Create lock file to detect crashes on next startup"""
+    try:
+        with open(APP_LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        logger.info("Created app lock file (crash detection enabled)")
+    except Exception as e:
+        logger.warning(f"Failed to create app lock file: {e}")
+
+def remove_app_lock():
+    """Remove lock file on clean shutdown"""
+    try:
+        if os.path.exists(APP_LOCK_FILE):
+            os.remove(APP_LOCK_FILE)
+            logger.info("Removed app lock file (clean shutdown)")
+    except Exception as e:
+        logger.warning(f"Failed to remove app lock file: {e}")
+
+def detect_crash():
+    """Check if app crashed on last run"""
+    return os.path.exists(APP_LOCK_FILE)
+
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)
 
@@ -77,6 +104,19 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize database
 init_db()
+
+# Crash detection and app lock
+crash_detected = detect_crash()
+if crash_detected:
+    logger.warning("Previous app crash detected (lock file found)")
+create_app_lock()
+
+# Clean up expired session autosaves
+try:
+    from snapshot_manager import cleanup_expired_session_autosaves
+    cleanup_expired_session_autosaves()
+except Exception as e:
+    logger.warning(f"Failed to cleanup expired session autosaves: {e}")
 
 # Pre-load CLIP model on startup (download if needed)
 logger.info("Initializing CLIP model...")
@@ -149,9 +189,19 @@ def cleanup_on_shutdown():
     """
     Explicit cleanup function to call on application shutdown.
     This should be called from main.py when the desktop app closes.
+
+    Cleans up:
+    - CLIP model cache (350MB+)
+    - FAISS indexes (500MB+)
+    - Database connections
+    - Old uploaded images (30+ days)
+    - Logging handlers
+    - Flask app context
+    - GPU memory
+    - Garbage collection
     """
     logger.info("Starting application shutdown cleanup...")
-    
+
     try:
         # Clear CLIP model cache (350MB+ memory)
         from image_processing_clip import clear_clip_model_cache
@@ -159,7 +209,81 @@ def cleanup_on_shutdown():
         logger.info("✓ CLIP model cache cleared")
     except Exception as e:
         logger.warning(f"Failed to clear CLIP model cache: {e}")
-    
+
+    try:
+        # Clear FAISS indexes from memory (500MB+)
+        from faiss_index import faiss_manager
+        faiss_manager.clear_all_indexes()
+    except Exception as e:
+        logger.warning(f"Failed to clear FAISS indexes: {e}")
+
+    try:
+        # Close all database connections
+        from database import close_all_db_connections
+        close_all_db_connections()
+    except Exception as e:
+        logger.warning(f"Failed to close database connections: {e}")
+
+    try:
+        # Clean up old uploaded images (older than 30 days)
+        from database import cleanup_old_uploaded_images
+        cleanup_old_uploaded_images(days_retention=30)
+    except Exception as e:
+        logger.warning(f"Failed to cleanup old uploads: {e}")
+
+    try:
+        # Close all logging handlers to release file handles
+        for handler in logging.root.handlers[:]:
+            try:
+                handler.close()
+                logging.root.removeHandler(handler)
+            except Exception as e:
+                logger.warning(f"Failed to close logging handler: {e}")
+        logger.info("✓ Logging handlers closed")
+    except Exception as e:
+        logger.warning(f"Failed to close logging handlers: {e}")
+
+    try:
+        # Clear CSV builder staging dict (prevent memory leak from orphaned windows)
+        cleaned_count = len(csv_builder_staging)
+        csv_builder_staging.clear()
+        if cleaned_count > 0:
+            logger.info(f"✓ Cleared CSV builder staging ({cleaned_count} orphaned entries)")
+        else:
+            logger.debug("CSV builder staging already empty")
+    except Exception as e:
+        logger.warning(f"Failed to clear CSV builder staging: {e}")
+
+    try:
+        # Clear Flask app context and thread-local storage
+        try:
+            # Pop any active Flask app contexts using internal stack
+            from flask import _app_ctx_stack
+            popped_count = 0
+            while _app_ctx_stack.top is not None:
+                _app_ctx_stack.pop()
+                popped_count += 1
+            if popped_count > 0:
+                logger.debug(f"✓ Popped {popped_count} Flask app context(s)")
+            else:
+                logger.debug("No active Flask app contexts to pop")
+        except Exception as e:
+            logger.debug(f"Flask context cleanup skipped: {e}")
+            pass
+
+        try:
+            # Clear Flask g object (thread-local request data)
+            from flask import g
+            if hasattr(g, '__dict__'):
+                g.__dict__.clear()
+            logger.debug("Cleared Flask g object")
+        except:
+            pass
+
+        logger.info("✓ Flask app context cleared")
+    except Exception as e:
+        logger.warning(f"Failed to clear Flask context: {e}")
+
     try:
         # Force garbage collection
         import gc
@@ -167,7 +291,7 @@ def cleanup_on_shutdown():
         logger.info(f"✓ Garbage collection freed {collected} objects")
     except Exception as e:
         logger.warning(f"Failed to run garbage collection: {e}")
-    
+
     try:
         # Clear CUDA/GPU cache if available
         import torch
@@ -176,7 +300,13 @@ def cleanup_on_shutdown():
             logger.info("✓ CUDA cache cleared")
     except:
         pass
-    
+
+    try:
+        # Remove app lock file (signal clean shutdown)
+        remove_app_lock()
+    except Exception as e:
+        logger.warning(f"Failed to remove app lock: {e}")
+
     logger.info("Application cleanup complete")
 
 # Supported image formats
@@ -214,6 +344,57 @@ def gradient():
 def csv_builder():
     """Serve the CSV builder tool"""
     return send_from_directory(app.static_folder, 'csv-builder.html')
+
+# CSV Builder staging (for passing data between windows)
+csv_builder_staging = {}
+
+@app.route('/api/csv-builder/stage', methods=['POST'])
+def stage_csv_builder_data():
+    """Stage file data for CSV builder window"""
+    try:
+        data = request.get_json()
+        window_id = data.get('window_id')
+        file_data = data.get('file_data', [])
+        section = data.get('section', 'historical')
+
+        if not window_id:
+            return jsonify({'error': 'window_id is required'}), 400
+
+        # Store data with timestamp for cleanup
+        csv_builder_staging[window_id] = {
+            'file_data': file_data,
+            'section': section,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        logger.info(f"Staged {len(file_data)} files for CSV builder window {window_id}")
+        return jsonify({'success': True, 'file_count': len(file_data)})
+
+    except Exception as e:
+        logger.error(f"Error staging CSV builder data: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/csv-builder/get-staged/<window_id>', methods=['GET'])
+def get_staged_csv_builder_data(window_id):
+    """Retrieve staged file data for CSV builder window"""
+    try:
+        if window_id not in csv_builder_staging:
+            return jsonify({'error': 'No staged data found for this window'}), 404
+
+        data = csv_builder_staging[window_id]
+
+        # Clean up after retrieval
+        del csv_builder_staging[window_id]
+
+        logger.info(f"Retrieved staged data for window {window_id}: {len(data['file_data'])} files")
+        return jsonify({
+            'file_data': data['file_data'],
+            'section': data['section']
+        })
+
+    except Exception as e:
+        logger.error(f"Error retrieving staged CSV builder data: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/catalog-manager')
 def catalog_manager():
@@ -1737,12 +1918,25 @@ def batch_match_products():
                 status_code=400
             )
         
-        product_ids = data.get('product_ids', [])
+        # MEMORY OPTIMIZATION: Support match_all_new to avoid frontend loading products
+        match_all_new = data.get('match_all_new', False)
+
+        if match_all_new:
+            # Query new product IDs from database instead of requiring frontend to send them
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT id FROM products WHERE is_historical = 0')
+                product_ids = [row['id'] for row in cursor.fetchall()]
+            logger.info(f"[BATCH] Queried {len(product_ids)} new products from database")
+        else:
+            # Use provided product IDs
+            product_ids = data.get('product_ids', [])
+
         if not product_ids or not isinstance(product_ids, list):
             return create_error_response(
                 'INVALID_PRODUCT_IDS',
-                'product_ids must be a non-empty array',
-                'Example: {"product_ids": [1, 2, 3]}',
+                'product_ids must be a non-empty array or match_all_new must be true',
+                'Example: {"product_ids": [1, 2, 3]} or {"match_all_new": true}',
                 status_code=400
             )
         
@@ -2866,7 +3060,7 @@ def get_categories():
 def get_catalog_products():
     """
     Get paginated products with filtering.
-    
+
     Query parameters:
     - page: Page number (default: 1)
     - limit: Products per page (default: 50)
@@ -2875,12 +3069,49 @@ def get_catalog_products():
     - type: 'historical' or 'new'
     - features: 'has_features' or 'no_features'
     - sort: Sort order
-    
+    - ids: Comma-separated list of product IDs (bypasses pagination)
+
     Returns:
     - 200: Success with products list
     - 500: Server error
     """
     try:
+        # Check if specific IDs are requested (batch fetch mode)
+        ids_param = request.args.get('ids', '')
+        if ids_param:
+            # Batch fetch mode: get specific products by ID
+            try:
+                product_ids = [int(id.strip()) for id in ids_param.split(',') if id.strip()]
+                logger.info(f"[GET-PRODUCTS] Batch fetch mode: {len(product_ids)} IDs")
+
+                products = []
+                for product_id in product_ids:
+                    product = get_product_by_id(product_id)
+                    if product:
+                        # Add has_features flag
+                        features = get_features_by_product_id(product_id)
+                        product['has_features'] = features is not None
+                        products.append(product)
+
+                logger.info(f"[GET-PRODUCTS] Batch result: {len(products)} products fetched")
+
+                return jsonify({
+                    'products': products,
+                    'total': len(products),
+                    'page': 1,
+                    'limit': len(products),
+                    'pages': 1
+                }), 200
+
+            except ValueError as e:
+                return create_error_response(
+                    'INVALID_IDS',
+                    'Invalid product IDs format',
+                    'IDs must be comma-separated integers',
+                    status_code=400
+                )
+
+        # Normal pagination mode
         page = request.args.get('page', 1, type=int)
         limit = request.args.get('limit', 50, type=int)
         search = request.args.get('search', '')
@@ -2888,23 +3119,23 @@ def get_catalog_products():
         product_type = request.args.get('type', '')
         features = request.args.get('features', '')
         sort_by = request.args.get('sort', 'date_desc')
-        
+
         # Convert type filter
         is_historical = None
         if product_type == 'historical':
             is_historical = True
         elif product_type == 'new':
             is_historical = False
-        
+
         # Convert features filter
         has_features = None
         if features == 'has_features':
             has_features = True
         elif features == 'no_features':
             has_features = False
-        
+
         logger.info(f"[GET-PRODUCTS] Query: type={product_type}, is_historical={is_historical}, limit={limit}")
-        
+
         result = get_products_paginated(
             page=page,
             limit=limit,
@@ -2914,9 +3145,9 @@ def get_catalog_products():
             has_features=has_features,
             sort_by=sort_by
         )
-        
+
         logger.info(f"[GET-PRODUCTS] Result: {result['total']} total products, {len(result['products'])} returned")
-        
+
         return jsonify(result), 200
         
     except Exception as e:
@@ -3559,6 +3790,103 @@ def clear_catalog_images():
         )
 
 
+@app.route('/api/working-catalog/stats', methods=['GET'])
+def get_working_catalog_stats():
+    """
+    Get live statistics for the working catalog (main database).
+
+    Returns:
+    - 200: Success with current stats
+    - 500: Server error
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Count products in main database
+            cursor.execute('SELECT COUNT(*) FROM products')
+            product_count = cursor.fetchone()[0]
+
+            # Count products with features
+            cursor.execute('SELECT COUNT(DISTINCT product_id) FROM features')
+            features_count = cursor.fetchone()[0]
+
+            # Count by type
+            cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = 1')
+            historical_count = cursor.fetchone()[0]
+
+            cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = 0')
+            new_count = cursor.fetchone()[0]
+
+        return jsonify({
+            'success': True,
+            'product_count': product_count,
+            'features_count': features_count,
+            'historical_count': historical_count,
+            'new_count': new_count,
+            'is_active': True
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting working catalog stats: {e}", exc_info=True)
+        return create_error_response(
+            'WORKING_CATALOG_STATS_ERROR',
+            'Failed to get working catalog stats',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/working-catalog/clear', methods=['POST'])
+def clear_working_catalog():
+    """
+    Clear all data from the working catalog (main database).
+    WARNING: This deletes all products and features.
+
+    Returns:
+    - 200: Success with deletion counts
+    - 500: Server error
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Count before deletion
+            cursor.execute('SELECT COUNT(*) FROM features')
+            features_before = cursor.fetchone()[0]
+
+            cursor.execute('SELECT COUNT(*) FROM products')
+            products_before = cursor.fetchone()[0]
+
+            # Delete all features first (due to foreign key)
+            cursor.execute('DELETE FROM features')
+            features_deleted = cursor.rowcount
+
+            # Delete all products
+            cursor.execute('DELETE FROM products')
+            products_deleted = cursor.rowcount
+
+            conn.commit()
+
+        return jsonify({
+            'success': True,
+            'products_deleted': products_deleted,
+            'features_deleted': features_deleted,
+            'message': f'Cleared {products_deleted} products and {features_deleted} feature sets from working catalog'
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error clearing working catalog: {e}", exc_info=True)
+        return create_error_response(
+            'WORKING_CATALOG_CLEAR_ERROR',
+            'Failed to clear working catalog',
+            'Please try again',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
 @app.route('/api/catalog/export', methods=['GET'])
 def export_catalog():
     """
@@ -3628,6 +3956,210 @@ def list_catalog_snapshots():
         return create_error_response(
             'LIST_ERROR',
             'Failed to list snapshots',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/storage', methods=['GET'])
+def get_snapshot_storage_info():
+    """
+    Get total disk space used by all snapshots.
+
+    Returns:
+    - 200: Success with storage breakdown
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import get_total_snapshot_storage
+
+        result = get_total_snapshot_storage()
+
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting snapshot storage info: {e}", exc_info=True)
+        return create_error_response(
+            'STORAGE_ERROR',
+            'Failed to get storage information',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/check-duplicate/<section>', methods=['GET'])
+def check_catalog_duplicate(section):
+    """
+    Check if a duplicate snapshot already exists for a catalog section.
+
+    Args:
+        section: 'historical' or 'new'
+
+    Returns:
+    - 200: Success with duplicate check results
+    - 400: Invalid section
+    - 500: Server error
+    """
+    try:
+        if section not in ['historical', 'new']:
+            return create_error_response(
+                'INVALID_SECTION',
+                f"Invalid section: {section}. Must be 'historical' or 'new'",
+                status_code=400
+            )
+
+        from snapshot_manager import check_snapshot_duplicate
+
+        result = check_snapshot_duplicate(section)
+
+        if result.get('is_duplicate'):
+            logger.info(f"Duplicate detected for {section} catalog: {result['existing_snapshot']}")
+
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error checking for duplicate snapshot: {e}", exc_info=True)
+        return create_error_response(
+            'DUPLICATE_CHECK_ERROR',
+            'Failed to check for duplicate',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/save-with-dialog', methods=['POST'])
+def save_catalog_with_dialog_choice():
+    """
+    Save catalog snapshot based on user's dialog choice.
+
+    JSON body:
+    {
+      "section": "historical" or "new",
+      "snapshot_name": "User provided name (for persistent saves)",
+      "choice": "skip" | "session" | "persistent",
+      "operation": "what triggered this (e.g., 'catalog_replace', 'bulk_import')"
+    }
+
+    Returns:
+    - 200: Success with snapshot info
+    - 400: Invalid parameters
+    - 500: Server error
+    """
+    try:
+        data = request.get_json() or {}
+        section = data.get('section', '').lower()
+        snapshot_name = data.get('snapshot_name', '')
+        choice = data.get('choice', '').lower()
+        operation = data.get('operation')
+
+        # Validate
+        if section not in ['historical', 'new']:
+            return create_error_response(
+                'INVALID_SECTION',
+                f"Invalid section: {section}. Must be 'historical' or 'new'",
+                status_code=400
+            )
+
+        if choice not in ['skip', 'session', 'persistent']:
+            return create_error_response(
+                'INVALID_CHOICE',
+                f"Invalid choice: {choice}. Must be 'skip', 'session', or 'persistent'",
+                status_code=400
+            )
+
+        if choice == 'persistent' and not snapshot_name:
+            return create_error_response(
+                'MISSING_NAME',
+                "Snapshot name required for persistent saves",
+                status_code=400
+            )
+
+        from snapshot_manager import save_snapshot_with_dialog_choice
+
+        result = save_snapshot_with_dialog_choice(section, snapshot_name, choice, operation)
+
+        if 'error' in result:
+            return create_error_response(
+                'SAVE_ERROR',
+                result['error'],
+                status_code=500
+            )
+
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error saving catalog with dialog: {e}", exc_info=True)
+        return create_error_response(
+            'SAVE_ERROR',
+            'Failed to save catalog',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/check-crash-recovery', methods=['GET'])
+def check_crash_recovery():
+    """
+    Check if app crashed and offer recovery option.
+
+    Returns:
+    - 200: With crash detection result and available recovery snapshots
+    """
+    try:
+        crash_detected = globals().get('crash_detected', False)
+
+        recovery_info = {
+            'crash_detected': crash_detected,
+            'available_recovery': None
+        }
+
+        if crash_detected:
+            # Find most recent session autosave
+            from snapshot_manager import list_snapshots
+
+            all_snapshots = list_snapshots()
+
+            # Check both historical and new for session autosaves
+            latest_session = None
+            latest_time = None
+
+            for section_key in ['historical', 'new']:
+                for snapshot in all_snapshots.get(section_key, []):
+                    if snapshot.get('session_only') and 'error' not in snapshot:
+                        created_at = snapshot.get('created_at')
+                        if created_at and (latest_time is None or created_at > latest_time):
+                            latest_session = snapshot
+                            latest_time = created_at
+
+            if latest_session:
+                recovery_info['recovery_snapshot'] = {
+                    'id': latest_session.get('snapshot_file'),  # Use snapshot_file as ID
+                    'name': latest_session.get('name'),
+                    'section': 'historical' if latest_session.get('is_historical') else 'new',
+                    'created_at': latest_session.get('created_at'),
+                    'product_count': latest_session.get('product_count', 0),
+                    'created_by_operation': latest_session.get('created_by_operation')
+                }
+
+        return jsonify({
+            'status': 'success',
+            **recovery_info
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error checking crash recovery: {e}", exc_info=True)
+        return create_error_response(
+            'RECOVERY_CHECK_ERROR',
+            'Failed to check crash recovery',
             {'error': str(e)},
             status_code=500
         )

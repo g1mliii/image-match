@@ -14,9 +14,8 @@ const state = {
     skuPattern: '[A-Z]+-\\d+'
 };
 
-// Track intervals and channels for cleanup (Fix #11, #12)
-let catalogPollingInterval = null;
-let catalogChannel = null;
+// Expose state to window for loadToApp function (defined in html)
+window.state = state;
 
 // Track event listeners for cleanup
 const eventListeners = [];
@@ -25,75 +24,159 @@ const eventListeners = [];
 document.addEventListener('DOMContentLoaded', () => {
     initializeStep1();
     loadFromLocalStorage();
-    checkForMainAppData();
-    initCatalogChangeListener();
+    checkForMainAppFiles();
 });
 
-// Listen for catalog changes from Catalog Manager
-function initCatalogChangeListener() {
-    // Listen via BroadcastChannel
+// Check if files were passed from the main app (via server staging or sessionStorage fallback)
+async function checkForMainAppFiles() {
     try {
-        catalogChannel = new BroadcastChannel('catalog_changes');
-        catalogChannel.onmessage = (event) => {
-            handleCatalogChange(event.data);
-        };
-    } catch (e) {
-        // BroadcastChannel not supported, use polling
-        catalogPollingInterval = setInterval(checkCatalogChanges, 2000);
-    }
-    
-    // Also check on visibility change (when user switches back to this tab)
-    const visibilityChangeHandler = () => {
-        if (!document.hidden) {
-            // Page is visible again
-            checkCatalogChanges();
-            
-            // Restart polling if it was stopped
-            if (!catalogChannel && !catalogPollingInterval) {
-                catalogPollingInterval = setInterval(checkCatalogChanges, 2000);
-            }
-        } else {
-            // Page is hidden, pause polling to save resources
-            if (catalogPollingInterval && !catalogChannel) {
-                clearInterval(catalogPollingInterval);
-                catalogPollingInterval = null;
+        // First try to get window_id from query params (webview mode)
+        const params = new URLSearchParams(window.location.search);
+        const windowId = params.get('window_id');
+        const section = params.get('section');
+
+        if (windowId) {
+            console.log('[CSV-BUILDER] Fetching staged data for window:', windowId);
+
+            // Fetch staged data from server
+            const response = await fetch(`/api/csv-builder/get-staged/${windowId}`);
+
+            if (response.ok) {
+                const data = await response.json();
+                const fileData = data.file_data;
+                const source = data.section || section;
+
+                if (fileData && fileData.length > 0) {
+                    console.log('[CSV-BUILDER] Found pre-populated files from main app:', fileData.length);
+
+                    // Create product entries from file data
+                    state.products = fileData.map(f => ({
+                        filename: f.filename,
+                        category: f.category || '',
+                        sku: '',
+                        name: '',
+                        price: '',
+                        priceHistory: [],
+                        performanceHistory: []
+                    }));
+
+                    // Store source for later
+                    state.mainAppSource = source;
+
+                    // Display file info in Step 1
+                    displayPrePopulatedFiles(fileData, source);
+
+                    // Enable next button
+                    document.getElementById('nextToLink').disabled = false;
+
+                    showToast(`${fileData.length} images loaded from main app`, 'success');
+                    return;
+                }
+            } else {
+                console.log('[CSV-BUILDER] No staged data found for window:', windowId);
             }
         }
-    };
-    
-    document.addEventListener('visibilitychange', visibilityChangeHandler);
-    eventListeners.push({ element: document, event: 'visibilitychange', handler: visibilityChangeHandler });
+
+        // Fallback: Try sessionStorage (browser mode)
+        const filesStr = sessionStorage.getItem('csvBuilderFiles');
+        const source = sessionStorage.getItem('csvBuilderSource');
+
+        if (filesStr) {
+            const fileData = JSON.parse(filesStr);
+
+            if (fileData && fileData.length > 0) {
+                console.log('[CSV-BUILDER] Found pre-populated files from sessionStorage:', fileData.length);
+
+                // Create product entries from file data
+                state.products = fileData.map(f => ({
+                    filename: f.filename,
+                    category: f.category || '',
+                    sku: '',
+                    name: '',
+                    price: '',
+                    priceHistory: [],
+                    performanceHistory: []
+                }));
+
+                // Store source for later
+                state.mainAppSource = source;
+
+                // Display file info in Step 1
+                displayPrePopulatedFiles(fileData, source);
+
+                // Clear sessionStorage after reading
+                sessionStorage.removeItem('csvBuilderFiles');
+                sessionStorage.removeItem('csvBuilderSource');
+
+                // Enable next button
+                document.getElementById('nextToLink').disabled = false;
+
+                showToast(`${fileData.length} images loaded from main app`, 'success');
+            }
+        }
+    } catch (error) {
+        console.error('[CSV-BUILDER] Error loading files from main app:', error);
+    }
 }
 
-// Cleanup on window unload (Fix #11, #12)
+// Display pre-populated files in Step 1 UI
+function displayPrePopulatedFiles(fileData, source) {
+    const info = document.getElementById('imageInfo');
+    if (!info) return;
+
+    // Count categories
+    const categoryCount = {};
+    fileData.forEach(f => {
+        if (f.category) {
+            categoryCount[f.category] = (categoryCount[f.category] || 0) + 1;
+        }
+    });
+
+    const categorySummary = Object.keys(categoryCount).length > 0
+        ? `<div style="margin-top: 10px;"><strong>Categories found:</strong> ${Object.entries(categoryCount).map(([cat, count]) => `${cat} (${count})`).join(', ')}</div>`
+        : '<div style="margin-top: 10px; color: #ed8936;">No categories detected</div>';
+
+    const displayLimit = 50;
+    const hasMore = fileData.length > displayLimit;
+
+    const sourceLabel = source === 'historical' ? 'Historical Products' : 'New Products';
+
+    info.innerHTML = `
+        <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
+        <h4>Loaded from Main App: ${fileData.length} images</h4>
+        <div style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+            <strong>Destination:</strong> <span id="destinationLabel">${sourceLabel}</span>
+        </div>
+        ${categorySummary}
+        <div class="file-list" id="csvBuilderFileList">
+            ${fileData.slice(0, displayLimit).map(f =>
+                `<div>${escapeHtml(f.filename)}${f.category ? ` <span style="color: #667eea;">[${f.category}]</span>` : ''}</div>`
+            ).join('')}
+        </div>
+        ${hasMore ? `
+            <div style="text-align: center; margin-top: 10px;">
+                <button class="btn" onclick="showAllCsvBuilderFiles(${fileData.length})" style="font-size: 12px; padding: 5px 15px;">
+                    SHOW ALL ${fileData.length} FILES
+                </button>
+            </div>
+        ` : ''}
+    `;
+    info.classList.add('show');
+}
+
+// Cleanup on window unload
 window.addEventListener('beforeunload', () => {
     cleanupResources();
 });
 
 // Centralized cleanup function
 function cleanupResources() {
-    // Clear polling interval
-    if (catalogPollingInterval) {
-        clearInterval(catalogPollingInterval);
-        catalogPollingInterval = null;
-    }
-    
-    // Close BroadcastChannel
-    if (catalogChannel) {
-        try {
-            catalogChannel.close();
-            catalogChannel = null;
-        } catch (e) {
-            console.warn('Failed to close BroadcastChannel:', e);
-        }
-    }
-    
     // Clear auto-save timer
     if (state.autoSaveTimer) {
         clearTimeout(state.autoSaveTimer);
         state.autoSaveTimer = null;
     }
-    
+
     // Remove event listeners
     eventListeners.forEach(({ element, event, handler }) => {
         if (element && element.removeEventListener) {
@@ -101,59 +184,16 @@ function cleanupResources() {
         }
     });
     eventListeners.length = 0;
-    
+
     // Clean up global window properties
     if (window.savedWorkData) {
         window.savedWorkData = null;
     }
-    
+
     // Remove any lingering modals
     const modal = document.getElementById('loadSavedWorkModal');
     if (modal) {
         modal.remove();
-    }
-}
-
-// Check for catalog changes via sessionStorage
-function checkCatalogChanges() {
-    const changeData = sessionStorage.getItem('catalogManagerChange');
-    if (changeData) {
-        try {
-            const change = JSON.parse(changeData);
-            // Only process recent changes (within last 30 seconds)
-            if (Date.now() - change.timestamp < 30000) {
-                handleCatalogChange(change);
-            }
-        } catch (e) {
-            console.error('Error parsing catalog change:', e);
-        }
-    }
-}
-
-// Handle catalog change notification
-function handleCatalogChange(change) {
-    if (!change || !change.action) return;
-    
-    // Show notification to user
-    const actions = {
-        'delete': 'A product was deleted',
-        'bulk_delete': `${change.details?.count || 'Multiple'} products were deleted`,
-        'cleanup': 'Database cleanup was performed',
-        'category_cleanup': 'Categories were deleted',
-        'date_cleanup': 'Old products were deleted',
-        'snapshot_change': 'Catalog snapshot was changed',
-        'snapshot_deleted': 'A snapshot was deleted',
-        'catalog_loaded': `Catalog "${change.details?.name || 'snapshot'}" was loaded (${change.details?.productCount || 0} products)`
-    };
-    
-    const message = actions[change.action] || 'Catalog was modified';
-    
-    // If catalog was loaded, this is a major change
-    if (change.action === 'catalog_loaded') {
-        showToast(`${message}. Refresh if you need updated data.`, 'info');
-    } else if (state.products.length > 0) {
-        // If we have products loaded that might be affected, warn user
-        showToast(`${message} in Catalog Manager. Your CSV data may be out of sync.`, 'warning');
     }
 }
 
@@ -271,7 +311,7 @@ function handleImageFiles(files) {
     
     info.innerHTML = `
         <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
-        <h4>✓ ${imageFiles.length} images loaded</h4>
+        <h4>${imageFiles.length} images loaded</h4>
         ${destinationSection}
         ${categorySummary}
         <div class="file-list" id="csvBuilderFileList">
@@ -377,7 +417,27 @@ function parseImportedData(content, source) {
     const headers = rows[0].map(h => (h || '').toLowerCase().trim());
     const commonHeaders = ['filename', 'sku', 'name', 'price', 'category', 'product_name', 'product_id'];
     const hasHeaders = headers.some(h => commonHeaders.some(ch => h.includes(ch)));
-    
+
+    // Track which standard fields were found in headers
+    const foundFields = {
+        filename: false,
+        sku: false,
+        name: false,
+        price: false,
+        category: false,
+        price_history: false,
+        performance_history: false
+    };
+
+    if (hasHeaders) {
+        headers.forEach(header => {
+            const normalized = normalizeHeaderName(header);
+            if (normalized in foundFields) {
+                foundFields[normalized] = true;
+            }
+        });
+    }
+
     const dataRows = hasHeaders ? rows.slice(1) : rows;
     
     // Track data quality issues
@@ -406,15 +466,29 @@ function parseImportedData(content, source) {
                 const normalizedHeader = normalizeHeaderName(header);
                 obj[normalizedHeader] = value;
             });
+
+            // Fallback for missing critical fields: attempt positional mapping
+            if (!obj.filename && !obj.sku && row.length >= 3) {
+                // If both filename and SKU are missing, try to infer from available data
+                if (!obj.filename && row[0]) obj.filename = sanitizeField(row[0]);
+                if (!obj.sku && row[2]) obj.sku = sanitizeField(row[2]);
+            }
         } else {
+            // No headers detected - use positional mapping
             // Assume order: filename, category, sku, name, price
+            // Handle rows with fewer than 5 columns gracefully
             obj = {
-                filename: sanitizeField(row[0]),
-                category: sanitizeField(row[1]),
-                sku: sanitizeField(row[2]),
-                name: sanitizeField(row[3]),
-                price: sanitizeField(row[4])
+                filename: sanitizeField(row[0] || ''),
+                category: sanitizeField(row[1] || ''),
+                sku: sanitizeField(row[2] || ''),
+                name: sanitizeField(row[3] || ''),
+                price: sanitizeField(row[4] || '')
             };
+
+            // Track incomplete rows when using positional mapping
+            if (row.length < 3) {
+                dataQuality.missingFields++;
+            }
         }
         
         // Validate and clean price
@@ -445,9 +519,41 @@ function parseImportedData(content, source) {
     }).filter(obj => obj !== null);
     
     // Build status message
-    let statusMessage = `✓ Imported ${state.importedData.length} products from ${source}`;
+    let statusMessage = `Imported ${state.importedData.length} products from ${source}`;
     const warnings = [];
-    
+    const infoMessages = [];
+
+    // Header-specific warnings
+    if (hasHeaders) {
+        // Only warn about missing BASIC fields (not history fields)
+        const basicFields = ['filename', 'sku', 'name', 'price', 'category'];
+        const missingBasicFields = basicFields.filter(f => !foundFields[f]);
+
+        if (missingBasicFields.length > 0) {
+            warnings.push(`Missing basic headers: ${missingBasicFields.join(', ')} (will use positional mapping as fallback)`);
+        }
+
+        // Show info about history fields if found
+        if (foundFields.price_history) {
+            infoMessages.push(`price_history column detected`);
+        }
+        if (foundFields.performance_history) {
+            infoMessages.push(`performance_history column detected`);
+        }
+
+        // Check for unmapped columns (exclude known columns)
+        const knownFields = Object.keys(foundFields);
+        const unmappedColumns = headers.filter(h => {
+            const normalized = normalizeHeaderName(h);
+            return !knownFields.includes(normalized) && h.trim().length > 0;
+        });
+        if (unmappedColumns.length > 0) {
+            infoMessages.push(`ℹ️ Extra columns ignored: ${unmappedColumns.slice(0, 3).join(', ')}${unmappedColumns.length > 3 ? ` (+${unmappedColumns.length - 3} more)` : ''}`);
+        }
+    } else {
+        warnings.push(`ℹ️ No headers detected - using positional mapping (Col 1=filename, Col 2=category, Col 3=sku, Col 4=name, Col 5=price). Ensure your CSV matches this order!`);
+    }
+
     if (dataQuality.emptyRows > 0) {
         warnings.push(`${dataQuality.emptyRows} empty row(s) skipped`);
     }
@@ -460,11 +566,17 @@ function parseImportedData(content, source) {
     if (parseErrors.length > 0) {
         warnings.push(`${parseErrors.length} parse error(s)`);
     }
-    
-    if (warnings.length > 0) {
-        statusMessage += `<br><span style="color: #ed8936;">⚠️ ${warnings.join(', ')}</span>`;
+
+    // Display info messages first (green)
+    if (infoMessages.length > 0) {
+        statusMessage += `<br><span style="color: #48bb78;">${infoMessages.join('<br>')}</span>`;
     }
-    
+
+    // Display warnings (orange)
+    if (warnings.length > 0) {
+        statusMessage += `<br><span style="color: #ed8936;">${warnings.join('<br>')}</span>`;
+    }
+
     // Show import status
     document.getElementById('importStatus').style.display = 'block';
     document.getElementById('importStatusText').innerHTML = statusMessage;
@@ -506,9 +618,13 @@ function normalizeHeaderName(header) {
         'unit_price': 'price',
         'unitprice': 'price',
         'cost': 'price',
-        'amount': 'price'
+        'amount': 'price',
+        'pricehistory': 'price_history',
+        'price history': 'price_history',
+        'performancehistory': 'performance_history',
+        'performance history': 'performance_history'
     };
-    
+
     const normalized = header.toLowerCase().replace(/[^a-z0-9]/g, '');
     return headerMap[normalized] || header.toLowerCase().replace(/[^a-z0-9_]/g, '');
 }
@@ -590,30 +706,47 @@ function sanitizeField(field) {
     return sanitized;
 }
 
-function exportTemplate() {
+async function exportTemplate() {
     // Generate CSV template with filenames and empty metadata columns
     let csv = 'filename,category,sku,name,price,price_history,performance_history\n';
-    
+
     state.products.forEach(product => {
         csv += `${product.filename},${product.category || ''},,,,\n`;
     });
-    
-    // Download
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `product-template_${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
-        showToast('Template exported! Fill it in Excel and re-import.', 'success');
-    } catch (error) {
-        console.error('Export failed:', error);
-        showToast('Export failed', 'error');
-    } finally {
-        // Always revoke the URL to prevent memory leak
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+
+    const filename = `product-template_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    // Check if running in pywebview
+    if (window.pywebview) {
+        try {
+            const result = await window.pywebview.api.save_file_auto(csv, filename);
+            if (result) {
+                showToast(`Template saved to Downloads folder: ${filename}. Fill it in Excel and re-import!`, 'success');
+            } else {
+                showToast('Export failed', 'error');
+            }
+        } catch (error) {
+            console.error('Webview save failed:', error);
+            showToast('Export failed - ' + error.message, 'error');
+        }
+    } else {
+        // Browser fallback
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            showToast('Template exported! Fill it in Excel and re-import.', 'success');
+        } catch (error) {
+            console.error('Export failed:', error);
+            showToast('Export failed', 'error');
+        } finally {
+            // Always revoke the URL to prevent memory leak
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 }
 
@@ -698,27 +831,31 @@ function processCompletedTemplate(content) {
     let matched = 0;
     let notFound = 0;
     const notFoundList = [];
-    
+    let hasPriceHistory = false;
+    let hasPerformanceHistory = false;
+
     importedProducts.forEach(imported => {
-        const product = state.products.find(p => 
+        const product = state.products.find(p =>
             p.filename.toLowerCase() === imported.filename.toLowerCase()
         );
-        
+
         if (product) {
             // Update product with imported data
             if (imported.category) product.category = imported.category;
             if (imported.sku) product.sku = imported.sku;
             if (imported.name) product.name = imported.name;
             if (imported.price) product.price = imported.price;
-            
+
             // Parse history if present
             if (imported.price_history) {
                 product.priceHistory = parsePriceHistory(imported.price_history);
+                hasPriceHistory = true;
             }
             if (imported.performance_history) {
                 product.performanceHistory = parsePerformanceHistory(imported.performance_history);
+                hasPerformanceHistory = true;
             }
-            
+
             matched++;
         } else {
             notFound++;
@@ -728,16 +865,29 @@ function processCompletedTemplate(content) {
     
     // Validate data
     const validationWarnings = validateImportedData(state.products);
-    
+
     // Show results
-    let message = `✓ Imported metadata for ${matched} product(s)`;
+    let message = `Imported metadata for ${matched} product(s)`;
+
+    // Show history field detection
+    const historyInfo = [];
+    if (hasPriceHistory) {
+        historyInfo.push('price_history data imported');
+    }
+    if (hasPerformanceHistory) {
+        historyInfo.push('performance_history data imported');
+    }
+    if (historyInfo.length > 0) {
+        message += `\n<span style="color: #48bb78;">${historyInfo.join('<br>')}</span>`;
+    }
+
     if (notFound > 0) {
-        message += `\n⚠️ ${notFound} filename(s) not found in uploaded images`;
+        message += `\n${notFound} filename(s) not found in uploaded images`;
     }
     if (validationWarnings.length > 0) {
-        message += `\n⚠️ ${validationWarnings.length} validation warning(s)`;
+        message += `\n${validationWarnings.length} validation warning(s)`;
     }
-    
+
     document.getElementById('importStatus').style.display = 'block';
     document.getElementById('importStatusText').innerHTML = message.replace(/\n/g, '<br>');
     
@@ -771,7 +921,7 @@ function processCompletedTemplate(content) {
     if (matched > 0) {
         const skipBtn = document.createElement('button');
         skipBtn.className = 'btn btn-primary';
-        skipBtn.textContent = 'SKIP TO REVIEW →';
+        skipBtn.textContent = 'SKIP TO REVIEW';
         skipBtn.style.marginTop = '15px';
         skipBtn.onclick = () => goToStep(3);
         document.getElementById('importStatus').appendChild(skipBtn);
@@ -834,8 +984,8 @@ function previewLinking() {
     const matches = performLinking(strategy);
     
     // Update stats
-    document.getElementById('linkedCount').textContent = `Linked: ${matches.linked} ✓`;
-    document.getElementById('unlinkedCount').textContent = `Unlinked: ${matches.unlinked} ⚠️`;
+    document.getElementById('linkedCount').textContent = `Linked: ${matches.linked}`;
+    document.getElementById('unlinkedCount').textContent = `Unlinked: ${matches.unlinked}`;
     
     // Show preview
     const previewList = document.getElementById('previewList');
@@ -843,13 +993,13 @@ function previewLinking() {
         if (result.matched) {
             return `<div class="preview-item success">
                 <span class="preview-image">${escapeHtml(result.image)}</span>
-                <span class="preview-arrow">→</span>
+                <span class="preview-arrow">-></span>
                 <span class="preview-data">${escapeHtml(result.data.sku || result.data.name || 'Matched')}</span>
             </div>`;
         } else {
             return `<div class="preview-item warning">
                 <span class="preview-image">${escapeHtml(result.image)}</span>
-                <span class="preview-arrow">✗</span>
+                <span class="preview-arrow">X</span>
                 <span class="preview-data">No match</span>
             </div>`;
         }
@@ -1318,8 +1468,8 @@ function renderProductsTable() {
             <td><input type="text" value="${escapeHtml(product.name)}" onchange="updateProduct(${index}, 'name', this.value)" placeholder="Optional"></td>
             <td><input type="number" value="${product.price}" onchange="updateProduct(${index}, 'price', this.value)" placeholder="0.00" step="0.01" min="0"></td>
             <td>
-                <button class="btn-icon" onclick="duplicateProduct(${index})" title="Duplicate">📋</button>
-                <button class="btn-icon delete" onclick="deleteProduct(${index})" title="Delete">🗑️</button>
+                <button class="btn-icon" onclick="duplicateProduct(${index})" title="Duplicate">DUPLICATE</button>
+                <button class="btn-icon delete" onclick="deleteProduct(${index})" title="Delete">DELETE</button>
             </td>
         </tr>
     `).join('');
@@ -1485,7 +1635,7 @@ function renderPriceHistory() {
                 </div>
             </div>
             <div class="history-entry-actions">
-                <button class="btn-icon delete" onclick="deletePriceEntry(${i})" title="Delete">🗑️</button>
+                <button class="btn-icon delete" onclick="deletePriceEntry(${i})" title="Delete">DELETE</button>
             </div>
         </div>
     `).join('');
@@ -1592,7 +1742,7 @@ function renderPerformanceHistory() {
                 </div>
             </div>
             <div class="history-entry-actions">
-                <button class="btn-icon delete" onclick="deletePerformanceEntry(${i})" title="Delete">🗑️</button>
+                <button class="btn-icon delete" onclick="deletePerformanceEntry(${i})" title="Delete">DELETE</button>
             </div>
         </div>
     `).join('');
@@ -1762,23 +1912,41 @@ function formatPerformanceHistory(performanceHistory) {
     return JSON.stringify(salesNumbers);
 }
 
-function downloadCSV() {
+async function downloadCSV() {
     const csv = generateCSV();
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `products_${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
-        showToast('CSV downloaded successfully!', 'success');
-    } catch (error) {
-        console.error('Download failed:', error);
-        showToast('Download failed', 'error');
-    } finally {
-        // Always revoke the URL to prevent memory leak
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+    const filename = `products_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    // Check if running in pywebview
+    if (window.pywebview) {
+        try {
+            const result = await window.pywebview.api.save_file_auto(csv, filename);
+            if (result) {
+                showToast(`CSV saved to Downloads folder: ${filename}`, 'success');
+            } else {
+                showToast('Save failed', 'error');
+            }
+        } catch (error) {
+            console.error('Webview save failed:', error);
+            showToast('Save failed - ' + error.message, 'error');
+        }
+    } else {
+        // Browser fallback
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            showToast('CSV downloaded successfully!', 'success');
+        } catch (error) {
+            console.error('Download failed:', error);
+            showToast('Download failed', 'error');
+        } finally {
+            // Always revoke the URL to prevent memory leak
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 }
 
@@ -2112,7 +2280,7 @@ function checkForMainAppData() {
         
         info.innerHTML = `
             <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
-            <h4>✓ ${files.length} images loaded from Main App</h4>
+            <h4>${files.length} images loaded from Main App</h4>
             <div style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
                 <strong>Destination:</strong> <span id="destinationLabel">${source === 'historical' ? 'Historical Products' : 'New Products'}</span>
                 <button class="btn-small" onclick="changeDestination()" style="margin-left: 10px;">CHANGE</button>
@@ -2228,18 +2396,16 @@ function changeDestination() {
 
 // Send CSV data back to main app with confirmation
 function sendToMainApp() {
-    if (!window.opener) {
-        showToast('Main app window not found. Please download CSV and upload manually.', 'error');
-        return;
-    }
-    
+    // Check if in webview (no opener) or browser (has opener)
+    const isWebview = !window.opener;
+
     // If no destination set, ask user
     if (!state.mainAppSource) {
         showToast('Please select a destination first', 'warning');
         showDestinationSelector();
         return;
     }
-    
+
     // Show confirmation modal
     const modal = document.createElement('div');
     modal.id = 'confirmSendModal';
@@ -2284,23 +2450,40 @@ function sendToMainApp() {
 function confirmSendToMainApp() {
     const modal = document.getElementById('confirmSendModal');
     if (modal) modal.remove();
-    
+
     const csv = generateCSV();
     const source = state.mainAppSource;
-    
-    // Send message to parent window
-    window.opener.postMessage({
-        type: 'CSV_BUILDER_COMPLETE',
-        csvContent: csv,
-        section: source
-    }, '*');
-    
-    showToast('CSV sent to Main App! You can close this window.', 'success');
-    
-    // Close window after 2 seconds
-    setTimeout(() => {
-        window.close();
-    }, 2000);
+
+    // Check if in webview or browser
+    if (window.opener) {
+        // Browser mode: use postMessage to parent window
+        window.opener.postMessage({
+            type: 'CSV_BUILDER_COMPLETE',
+            csvContent: csv,
+            section: source
+        }, '*');
+
+        showToast('CSV sent to Main App! You can close this window.', 'success');
+
+        // Close window after 2 seconds
+        setTimeout(() => {
+            window.close();
+        }, 2000);
+    } else {
+        // Webview mode: use sessionStorage and navigate back
+        sessionStorage.setItem('csvBuilderResult', JSON.stringify({
+            type: 'CSV_BUILDER_COMPLETE',
+            csvContent: csv,
+            section: source
+        }));
+
+        showToast('Returning to Main App...', 'success');
+
+        // Navigate back to main app after brief delay
+        setTimeout(() => {
+            window.location.href = '/';
+        }, 500);
+    }
 }
 
 
@@ -2362,7 +2545,7 @@ function loadSavedWork() {
             const info = document.getElementById('imageInfo');
             info.innerHTML = `
                 <button class="btn clear-btn" onclick="clearCsvBuilderUpload()" data-tooltip="Clear uploaded folder and start over">CLEAR</button>
-                <h4>✓ ${state.products.length} products loaded from saved session</h4>
+                <h4>${state.products.length} products loaded from saved session</h4>
             `;
             info.classList.add('show');
             showToast('Saved work loaded successfully', 'success');

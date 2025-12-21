@@ -222,7 +222,7 @@ function renderProducts(products) {
                     <div class="product-meta">${escapeHtml(category)} • ${escapeHtml(sku)}</div>
                     <div class="product-status">
                         <span class="status-badge">
-                            ${product.has_features ? '✓ Features' : '✗ No Features'}
+                            ${product.has_features ? 'Features' : 'No Features'}
                         </span>
                         <span class="status-badge">
                             ${product.is_historical ? 'Historical' : 'New'}
@@ -687,15 +687,20 @@ async function executeCleanup(type) {
 
 // Notify main app that database has changed
 function notifyMainAppOfChange(action, details) {
-    // Store change notification in sessionStorage for main app to detect
+    // In child window mode, use pywebview API to signal main app directly
+    if (typeof signalCatalogChange === 'function') {
+        signalCatalogChange(action, details);
+    }
+
+    // Fallback: Store change notification in sessionStorage for browser mode
     const changeEvent = {
         action: action,
         details: details,
         timestamp: Date.now()
     };
     sessionStorage.setItem('catalogManagerChange', JSON.stringify(changeEvent));
-    
-    // Also try to notify via BroadcastChannel if available
+
+    // Also try to notify via BroadcastChannel if available (browser mode)
     try {
         const channel = new BroadcastChannel('catalog_changes');
         channel.postMessage(changeEvent);
@@ -877,28 +882,52 @@ async function clearUploadedImages() {
 async function exportBackup() {
     try {
         showToast('Generating backup...', 'info');
-        
+
         const response = await fetch('/api/catalog/export');
         if (!response.ok) throw new Error('Export failed');
-        
+
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        
-        try {
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `catalog-backup-${new Date().toISOString().split('T')[0]}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            showToast('Backup downloaded', 'success');
-        } finally {
-            setTimeout(() => URL.revokeObjectURL(url), 100);
+        const filename = `catalog-backup-${new Date().toISOString().split('T')[0]}.csv`;
+
+        // Use pywebview API if available (child window mode)
+        if (window.pywebview && window.pywebview.api) {
+            try {
+                const text = await blob.text();
+                const result = await window.pywebview.api.save_file_auto(text, filename);
+                if (result) {
+                    showToast(`Backup saved to Downloads: ${filename}`, 'success');
+                } else {
+                    showToast('Save failed', 'error');
+                }
+            } catch (e) {
+                console.error('Pywebview save failed:', e);
+                // Fallback to browser download
+                browserDownload(blob, filename);
+            }
+        } else {
+            // Browser fallback
+            browserDownload(blob, filename);
         }
-        
+
     } catch (error) {
         console.error('Error exporting backup:', error);
         showToast('Failed to export backup', 'error');
+    }
+}
+
+// Helper function for browser-based downloads
+function browserDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast('Backup downloaded', 'success');
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 100);
     }
 }
 
@@ -914,7 +943,17 @@ function formatSize(mb) {
 function formatDate(dateStr) {
     if (!dateStr) return 'Unknown';
     try {
-        const date = new Date(dateStr);
+        // SQLite stores timestamps in UTC without timezone indicator
+        // Add 'Z' to parse as UTC, then convert to local time
+        let date;
+        if (dateStr.includes('T')) {
+            // ISO format with T separator
+            date = dateStr.endsWith('Z') ? new Date(dateStr) : new Date(dateStr + 'Z');
+        } else {
+            // SQLite format: "2025-12-13 19:10:49"
+            // Replace space with 'T' and add 'Z' for UTC
+            date = new Date(dateStr.replace(' ', 'T') + 'Z');
+        }
         return date.toLocaleString();
     } catch {
         return dateStr;
@@ -924,6 +963,28 @@ function formatDate(dateStr) {
 function getFilename(path) {
     if (!path) return 'Unknown';
     return path.split(/[/\\]/).pop();
+}
+
+function formatTimeUntilExpiry(expiryDate) {
+    const now = new Date();
+    const diffMs = expiryDate - now;
+
+    if (diffMs <= 0) {
+        return 'EXPIRED';
+    }
+
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+
+    if (diffMins < 1) {
+        return 'expires in <1m';
+    } else if (diffMins < 60) {
+        return `expires in ${diffMins}m`;
+    } else if (diffHours < 2) {
+        return `expires in ${diffHours}h ${diffMins % 60}m`;
+    } else {
+        return `expires in ${diffHours}h`;
+    }
 }
 
 function escapeHtml(text) {
@@ -999,38 +1060,87 @@ function renderSnapshots() {
         ...(snapshotData.new || []).map(s => ({...s, type: 'New'}))
     ];
     renderSnapshotList('allSnapshots', allSnapshots);
+
+    // Auto-refresh stats for working catalog after rendering
+    const activeCatalog = allSnapshots.find(s => s.is_active);
+    if (activeCatalog) {
+        // Refresh stats in background after a short delay to let DOM update
+        setTimeout(() => {
+            refreshWorkingCatalogStats(activeCatalog.snapshot_file);
+        }, 100);
+    }
 }
 
 function renderSnapshotList(containerId, snapshots) {
     const container = document.getElementById(containerId);
     if (!container) return;
-    
+
     if (!snapshots || snapshots.length === 0) {
         container.innerHTML = '<p style="padding: 20px; text-align: center; color: #666;">No snapshots found. Click "SAVE CURRENT CATALOG" to create one.</p>';
         return;
     }
-    
+
     let html = '';
+    // Add bulk delete controls if there are snapshots
+    html += `
+        <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+            <input type="checkbox" id="selectAllSnapshots" onchange="toggleAllSnapshotSelections(this.checked)" style="cursor: pointer; width: 18px; height: 18px;">
+            <label for="selectAllSnapshots" style="cursor: pointer; margin: 0; font-weight: bold;">SELECT ALL</label>
+            <button id="bulkDeleteBtn" class="btn-small danger" onclick="bulkDeleteSnapshots()" style="margin-left: auto; display: none;">
+                DELETE SELECTED
+            </button>
+            <span id="selectionCount" style="font-size: 0.9em; color: #666; display: none;"></span>
+        </div>
+    `;
+
     for (const snapshot of snapshots) {
         const tags = snapshot.tags?.join(', ') || '';
-        
+        const isSessionOnly = snapshot.session_only;
+        const isActive = snapshot.is_active || false;
+        const expiresAt = snapshot.expires_at ? new Date(snapshot.expires_at) : null;
+        const isExpired = expiresAt && expiresAt < new Date();
+        const timeUntilExpiry = expiresAt ? formatTimeUntilExpiry(expiresAt) : '';
+
+        // Style different snapshot types
+        let cardStyle = '';
+        let nameStyle = '';
+
+        if (isActive) {
+            cardStyle = 'background: #f0f8ff; border-left: 4px solid #4CAF50;';
+        } else if (isSessionOnly) {
+            cardStyle = 'background: #f9f9f9; border-color: #999;';
+            nameStyle = 'color: #666; font-style: italic;';
+        }
+
         html += `
-            <div class="snapshot-card" data-snapshot="${escapeHtml(snapshot.snapshot_file)}">
-                <div class="snapshot-info">
-                    <div class="snapshot-name">
-                        ${escapeHtml(snapshot.name)} 
-                        <span style="font-weight: normal; color: #666;">[${snapshot.type}]</span>
+            <div class="snapshot-card ${isActive ? 'active-catalog-row' : ''}" data-snapshot="${escapeHtml(snapshot.snapshot_file)}" style="${cardStyle}">
+                <div style="display: flex; gap: 10px; align-items: center; flex: 1;">
+                    ${!isActive ? `<input type="checkbox" class="snapshot-checkbox" data-snapshot="${escapeHtml(snapshot.snapshot_file)}"
+                           onchange="updateBulkDeleteUI()" style="cursor: pointer; width: 18px; height: 18px; flex-shrink: 0;">` : '<div style="width: 18px; height: 18px; flex-shrink: 0;"></div>'}
+                    <div class="snapshot-info">
+                        <div class="snapshot-name" style="${nameStyle}">
+                            ${isActive ? '<span class="working-catalog-badge">WORKING CATALOG</span>Active Catalog' : escapeHtml(snapshot.name)}
+                            <span style="font-weight: normal; color: #666;">[${snapshot.type}]</span>
+                            ${isSessionOnly ? '<span style="color: #999; margin-left: 8px; font-size: 0.85em;">[SESSION]</span>' : ''}
+                        </div>
+                        <div class="snapshot-meta" id="snapshot-count-${escapeHtml(snapshot.snapshot_file)}">
+                            ${snapshot.product_count?.toLocaleString() || 0} products | ${snapshot.total_size_mb || 0} MB
+                        </div>
+                        <div class="snapshot-date">Created: ${formatDate(snapshot.created_at)}</div>
+                        ${snapshot.created_by_operation ? `<div class="snapshot-tags">From: ${escapeHtml(snapshot.created_by_operation)}</div>` : ''}
+                        ${isSessionOnly && timeUntilExpiry ? `<div class="snapshot-tags" style="color: #c00;">Expires: ${timeUntilExpiry}</div>` : ''}
+                        ${tags ? `<div class="snapshot-tags">Tags: ${escapeHtml(tags)}</div>` : ''}
                     </div>
-                    <div class="snapshot-meta">
-                        ${snapshot.product_count?.toLocaleString() || 0} products | ${snapshot.total_size_mb || 0} MB
-                    </div>
-                    <div class="snapshot-date">Created: ${formatDate(snapshot.created_at)}</div>
-                    ${tags ? `<div class="snapshot-tags">Tags: ${escapeHtml(tags)}</div>` : ''}
                 </div>
                 <div class="snapshot-actions">
-                    <button class="btn-small" onclick="event.stopPropagation(); loadSnapshotToMain('${escapeHtml(snapshot.snapshot_file)}')" title="Load this snapshot">LOAD</button>
-                    <button class="btn-small" onclick="event.stopPropagation(); renameSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Rename">RENAME</button>
-                    <button class="btn-small danger" onclick="event.stopPropagation(); deleteSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Delete">DEL</button>
+                    ${isActive ? `
+                        <button class="btn-small" onclick="event.stopPropagation(); refreshWorkingCatalogStats('${escapeHtml(snapshot.snapshot_file)}')" title="Refresh statistics">REFRESH</button>
+                        <button class="btn-small warning" onclick="event.stopPropagation(); confirmClearWorkingCatalog()" title="Clear all data from working catalog">CLEAR DATA</button>
+                    ` : `
+                        <button class="btn-small" onclick="event.stopPropagation(); loadSnapshotToMain('${escapeHtml(snapshot.snapshot_file)}')" title="Load this snapshot">LOAD</button>
+                        ${!isSessionOnly ? `<button class="btn-small" onclick="event.stopPropagation(); renameSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Rename">RENAME</button>` : ''}
+                        <button class="btn-small danger" onclick="event.stopPropagation(); deleteSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Delete">DEL</button>
+                    `}
                 </div>
             </div>
         `;
@@ -1041,7 +1151,7 @@ function renderSnapshotList(containerId, snapshots) {
 function updateActiveSnapshotSummary() {
     const nameSpan = document.getElementById('activeSnapshotName');
     if (!nameSpan) return;
-    
+
     // Check if a snapshot is currently loaded
     fetch('/api/catalogs/main-db-stats')
         .then(res => res.json())
@@ -1058,6 +1168,82 @@ function updateActiveSnapshotSummary() {
             console.error('Error checking loaded snapshot:', err);
             nameSpan.textContent = 'Unknown';
         });
+}
+
+async function refreshWorkingCatalogStats(filename) {
+    try {
+        const response = await fetch('/api/working-catalog/stats');
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            showToast(data.error || 'Failed to refresh stats', 'error');
+            return;
+        }
+
+        // Update the product count in the UI
+        const countElement = document.getElementById(`snapshot-count-${filename}`);
+        if (countElement) {
+            // Extract size from existing text (e.g., "1,234 products | 5.67 MB")
+            const sizeMatch = countElement.textContent.match(/\|\s*(.+)$/);
+            const sizeText = sizeMatch ? sizeMatch[1] : '0 MB';
+            countElement.textContent = `${data.product_count.toLocaleString()} products | ${sizeText}`;
+        }
+
+        showToast('Working catalog stats refreshed', 'success');
+    } catch (error) {
+        console.error('Error refreshing stats:', error);
+        showToast('Failed to refresh stats', 'error');
+    }
+}
+
+function confirmClearWorkingCatalog() {
+    const message = 'WARNING: This will delete ALL products and features from your working catalog.\n\n' +
+                   'This action cannot be undone, but you can restore from snapshots.\n\n' +
+                   'Type "CLEAR" to confirm:';
+
+    const confirmation = prompt(message);
+
+    if (confirmation === 'CLEAR') {
+        clearWorkingCatalog();
+    } else if (confirmation !== null) {
+        showToast('Clear cancelled - confirmation text did not match', 'info');
+    }
+}
+
+async function clearWorkingCatalog() {
+    try {
+        const response = await fetch('/api/working-catalog/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            showToast(data.error || 'Failed to clear working catalog', 'error');
+            return;
+        }
+
+        showToast(data.message, 'success');
+
+        // Refresh the snapshot list to show updated counts
+        renderSnapshots();
+
+        // Also refresh any active catalog stats display
+        const activeRow = document.querySelector('.active-catalog-row');
+        if (activeRow) {
+            const filenameMatch = activeRow.getAttribute('data-snapshot');
+            if (filenameMatch) {
+                refreshWorkingCatalogStats(filenameMatch);
+            }
+        }
+
+        // Notify main app to refresh its UI
+        notifyMainAppOfChange('catalog_cleared', { products_deleted: data.products_deleted });
+    } catch (error) {
+        console.error('Error clearing working catalog:', error);
+        showToast('Failed to clear working catalog', 'error');
+    }
 }
 
 async function toggleSnapshotActive(snapshotFile, isHistorical, isActive) {
@@ -1178,25 +1364,33 @@ async function deleteSnapshot(snapshotFile) {
     if (!confirm(`Are you sure you want to delete "${snapshotFile}"? This cannot be undone.`)) {
         return;
     }
-    
+
     try {
         const response = await fetch(`/api/catalogs/${encodeURIComponent(snapshotFile)}`, {
             method: 'DELETE'
         });
-        
+
         if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || 'Failed to delete snapshot');
+            let errorMessage = 'Failed to delete snapshot';
+            try {
+                const data = await response.json();
+                errorMessage = data.error || data.message || errorMessage;
+            } catch (jsonError) {
+                // Response wasn't JSON, use status text
+                errorMessage = `${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
         }
-        
+
         showToast('Snapshot deleted', 'success');
         loadSnapshots();
-        
+
         notifyMainAppOfChange('snapshot_deleted', { snapshotFile });
-        
+
     } catch (error) {
         console.error('Error deleting snapshot:', error);
-        showToast(error.message || 'Failed to delete snapshot', 'error');
+        const errorMsg = error.message || 'Failed to delete snapshot';
+        showToast(errorMsg, 'error');
     }
 }
 
@@ -1225,33 +1419,135 @@ async function renameSnapshot(snapshotFile) {
     }
 }
 
+// Bulk delete helpers
+function toggleAllSnapshotSelections(checked) {
+    document.querySelectorAll('.snapshot-checkbox').forEach(checkbox => {
+        checkbox.checked = checked;
+    });
+    updateBulkDeleteUI();
+}
+
+function updateBulkDeleteUI() {
+    const checkboxes = document.querySelectorAll('.snapshot-checkbox:checked');
+    const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    const selectionCount = document.getElementById('selectionCount');
+    const selectAllCheckbox = document.getElementById('selectAllSnapshots');
+
+    if (!bulkDeleteBtn || !selectionCount) return;
+
+    if (checkboxes.length > 0) {
+        bulkDeleteBtn.style.display = 'block';
+        selectionCount.style.display = 'inline';
+        selectionCount.textContent = `${checkboxes.length} snapshot${checkboxes.length !== 1 ? 's' : ''} selected`;
+    } else {
+        bulkDeleteBtn.style.display = 'none';
+        selectionCount.style.display = 'none';
+    }
+
+    // Update select all checkbox state
+    if (selectAllCheckbox) {
+        const totalCheckboxes = document.querySelectorAll('.snapshot-checkbox').length;
+        selectAllCheckbox.checked = checkboxes.length === totalCheckboxes && totalCheckboxes > 0;
+        selectAllCheckbox.indeterminate = checkboxes.length > 0 && checkboxes.length < totalCheckboxes;
+    }
+}
+
+async function bulkDeleteSnapshots() {
+    const selectedCheckboxes = document.querySelectorAll('.snapshot-checkbox:checked');
+    if (selectedCheckboxes.length === 0) {
+        showToast('No snapshots selected', 'warning');
+        return;
+    }
+
+    const snapshotsToDelete = Array.from(selectedCheckboxes).map(cb => cb.dataset.snapshot);
+    const message = `Delete ${snapshotsToDelete.length} snapshot${snapshotsToDelete.length !== 1 ? 's' : ''}?\n\n${snapshotsToDelete.map(f => {
+        const card = document.querySelector(`[data-snapshot="${f}"]`);
+        const name = card?.querySelector('.snapshot-name')?.textContent || f;
+        return `• ${name}`;
+    }).join('\n')}\n\nThis action cannot be undone.`;
+
+    if (!confirm(message)) return;
+
+    try {
+        showToast(`Deleting ${snapshotsToDelete.length} snapshots...`, 'info');
+
+        const results = await Promise.all(
+            snapshotsToDelete.map(snapshotFile =>
+                fetch(`/api/catalogs/${encodeURIComponent(snapshotFile)}`, { method: 'DELETE' })
+                    .then(res => {
+                        if (res.ok) {
+                            console.log(`Successfully deleted: ${snapshotFile}`);
+                            return true;
+                        } else {
+                            console.error(`Failed to delete ${snapshotFile}: ${res.status} ${res.statusText}`);
+                            return false;
+                        }
+                    })
+                    .catch(err => {
+                        console.error(`Error deleting ${snapshotFile}:`, err);
+                        return false;
+                    })
+            )
+        );
+
+        const deleted = results.filter(r => r).length;
+        const failed = results.filter(r => !r).length;
+
+        if (failed > 0) {
+            showToast(`Deleted ${deleted} snapshot${deleted !== 1 ? 's' : ''}. ${failed} failed.`, 'warning');
+        } else {
+            showToast(`Deleted ${deleted} snapshot${deleted !== 1 ? 's' : ''}`, 'success');
+        }
+
+        loadSnapshots();
+
+        // Reset checkboxes
+        document.getElementById('selectAllSnapshots').checked = false;
+        updateBulkDeleteUI();
+
+    } catch (error) {
+        console.error('Error bulk deleting snapshots:', error);
+        showToast('Failed to delete some snapshots', 'error');
+    }
+}
+
 async function exportSnapshot(snapshotFile) {
     try {
         showToast('Exporting snapshot...', 'info');
-        
+
         const response = await fetch('/api/catalogs/export', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ snapshot: snapshotFile })
         });
-        
+
         if (!response.ok) throw new Error('Export failed');
-        
+
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        
-        try {
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = snapshotFile.replace('.db', '-export.zip');
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            showToast('Snapshot exported', 'success');
-        } finally {
-            setTimeout(() => URL.revokeObjectURL(url), 100);
+        const filename = snapshotFile.replace('.db', '-export.zip');
+
+        // Use pywebview API if available (for binary data, convert to base64)
+        if (window.pywebview && window.pywebview.api) {
+            try {
+                const reader = new FileReader();
+                reader.onload = async function() {
+                    const base64 = reader.result; // data:application/zip;base64,...
+                    const result = await window.pywebview.api.save_file_auto(base64, filename);
+                    if (result) {
+                        showToast(`Snapshot saved to Downloads: ${filename}`, 'success');
+                    } else {
+                        showToast('Save failed', 'error');
+                    }
+                };
+                reader.readAsDataURL(blob);
+            } catch (e) {
+                console.error('Pywebview save failed:', e);
+                browserDownload(blob, filename);
+            }
+        } else {
+            browserDownload(blob, filename);
         }
-        
+
     } catch (error) {
         console.error('Error exporting snapshot:', error);
         showToast('Failed to export snapshot', 'error');
@@ -1536,75 +1832,57 @@ async function loadSnapshotToMain(snapshotFile) {
     if (!confirm(`Load "${snapshotFile}" into main catalog?\n\nThis will REPLACE your current catalog. Make sure to save it first if needed.`)) {
         return;
     }
-    
+
     try {
         showToast('Loading snapshot to main catalog...', 'info');
-        
+
         const response = await fetch(`/api/catalogs/load/${encodeURIComponent(snapshotFile)}`, {
             method: 'POST'
         });
-        
+
         if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || 'Failed to load snapshot');
+            let errorMessage = 'Failed to load snapshot';
+            try {
+                const data = await response.json();
+                errorMessage = data.error || data.message || errorMessage;
+            } catch (jsonError) {
+                errorMessage = `${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
         }
-        
+
         const data = await response.json();
-        showToast(`Loaded "${data.name}" (${data.product_count} products) to main catalog`, 'success');
-        
-        // Notify main app and CSV builder of catalog change
-        notifyMainAppOfChange('catalog_loaded', { 
-            snapshotFile, 
-            name: data.name,
-            productCount: data.product_count 
+        console.log('[CATALOG-MANAGER] Snapshot loaded successfully:', data);
+
+        // Show success message with product count
+        const productCount = data.product_count || 0;
+        const snapshotName = data.name || snapshotFile;
+        showToast(`Loaded "${snapshotName}" (${productCount.toLocaleString()} products)`, 'success');
+
+        // Notify main app of catalog change
+        console.log('[CATALOG-MANAGER] Notifying main app of catalog change...');
+        notifyMainAppOfChange('catalog_loaded', {
+            snapshotFile,
+            name: snapshotName,
+            productCount: productCount
         });
-        
-        loadStats();
-        loadSnapshots();
-        
+
+        // Wait briefly for notification, then refresh displays
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Refresh all data displays
+        await Promise.all([
+            loadStats(),
+            loadSnapshots()
+        ]);
+
+        console.log('[CATALOG-MANAGER] ✓ Snapshot load complete');
+
     } catch (error) {
-        console.error('Error loading snapshot:', error);
-        showToast(error.message || 'Failed to load snapshot', 'error');
+        console.error('[CATALOG-MANAGER] Error loading snapshot:', error);
+        showToast(`Failed to load snapshot: ${error.message}`, 'error');
     }
 }
 
-// Update snapshot card rendering to include "Load to Main" button
-const originalRenderSnapshotList = renderSnapshotList;
-renderSnapshotList = function(containerId, snapshots, isHistorical) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    
-    if (!snapshots || snapshots.length === 0) {
-        container.innerHTML = '<p class="no-snapshots">No snapshots found. Create one to get started.</p>';
-        return;
-    }
-    
-    const activeList = isHistorical ? activeSnapshots.active_historical : activeSnapshots.active_new;
-    
-    let html = '';
-    for (const snapshot of snapshots) {
-        const isActive = activeList?.includes(snapshot.snapshot_file);
-        const tags = snapshot.tags?.join(', ') || '';
-        
-        html += `
-            <div class="snapshot-card ${isActive ? 'active' : ''}" data-snapshot="${escapeHtml(snapshot.snapshot_file)}">
-                <div class="snapshot-info" style="flex: 1;">
-                    <div class="snapshot-name">${escapeHtml(snapshot.name)} (v${snapshot.version || '1.0'})</div>
-                    <div class="snapshot-meta">
-                        ${snapshot.product_count?.toLocaleString() || 0} products | ${snapshot.total_size_mb || 0} MB
-                    </div>
-                    <div class="snapshot-date">Created: ${formatDate(snapshot.created_at)}</div>
-                    ${tags ? `<div class="snapshot-tags">Tags: ${escapeHtml(tags)}</div>` : ''}
-                </div>
-                <div class="snapshot-actions">
-                    <button class="btn-small btn-primary" onclick="loadSnapshotToMain('${escapeHtml(snapshot.snapshot_file)}')" title="Load this snapshot into main catalog">LOAD</button>
-                    <button class="btn-small" onclick="viewSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="View products">VIEW</button>
-                    <button class="btn-small" onclick="renameSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Rename">RENAME</button>
-                    <button class="btn-small" onclick="exportSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Export as ZIP">EXPORT</button>
-                    <button class="btn-small danger" onclick="deleteSnapshot('${escapeHtml(snapshot.snapshot_file)}')" title="Delete">DEL</button>
-                </div>
-            </div>
-        `;
-    }
-    container.innerHTML = html;
-};
+// Note: renderSnapshotList is already defined above with multi-select checkboxes (line 1055)
+// No need to override it here

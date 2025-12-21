@@ -451,6 +451,71 @@ header .btn-link[data-tooltip]:hover::before {
     width: 0%;
 }
 
+/* ============================================================================
+   MODERN PROGRESS ESTIMATION
+   Time-based progress visualization (purely informational)
+   ========================================================================= */
+
+.progress-estimation {
+    padding: 20px;
+    border: 3px solid #000;
+    background: #fff;
+    margin: 15px 0;
+}
+
+.progress-estimation h4 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.progress-bar-modern {
+    position: relative;
+    width: 100%;
+    height: 40px;
+    border: 3px solid #000;
+    background: #f5f5f5;
+    margin: 10px 0;
+    overflow: hidden;
+}
+
+.progress-fill-modern {
+    height: 100%;
+    background: linear-gradient(90deg, #000 0%, #333 100%);
+    transition: width 0.2s ease-out;
+    width: 0%;
+}
+
+.progress-percentage {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-weight: bold;
+    font-size: 16px;
+    color: #000;
+    mix-blend-mode: difference;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.progress-time {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 14px;
+    font-family: 'Courier New', monospace;
+    color: #666;
+}
+
+.time-elapsed {
+    font-weight: bold;
+}
+
+.time-remaining {
+    font-style: italic;
+}
+
 /* CONTROLS */
 .controls {
     display: flex;
@@ -576,6 +641,57 @@ header .btn-link[data-tooltip]:hover::before {
 }
 
 /* FILTERS */
+/* Active Badges */
+.active-badges {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #fff;
+    color: #000;
+    border: 2px solid #000;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    cursor: default;
+    transition: all 0.2s;
+}
+
+.badge:hover {
+    background: #000;
+    color: #fff;
+}
+
+.badge .badge-value {
+    font-weight: bold;
+}
+
+.badge-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 0;
+    margin-left: 4px;
+    display: flex;
+    align-items: center;
+    font-weight: bold;
+    transition: transform 0.15s;
+}
+
+.badge-remove:hover {
+    transform: scale(1.2);
+}
+
 .filters {
     display: flex;
     gap: 15px;
@@ -617,6 +733,38 @@ input[type="checkbox"] {
     height: 18px;
     border: 2px solid #000;
     cursor: pointer;
+}
+
+/* Search Status - Count and Spinner */
+.search-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    color: #666;
+    white-space: nowrap;
+}
+
+.search-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #ccc;
+    border-top: 2px solid #000;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.search-count {
+    font-size: 0.85rem;
+    color: #333;
 }
 
 /* SUMMARY */
@@ -1638,7 +1786,7 @@ img.image-loading::after {
 }
 
 .upload-area-completed::after {
-    content: '✓ COMPLETED';
+    content: 'COMPLETED';
     position: absolute;
     top: 50%;
     left: 50%;
@@ -1677,7 +1825,7 @@ img.image-loading::after {
 }
 
 .next-step-indicator::before {
-    content: '👇 ';
+    content: '';
     font-size: 20px;
 }
 
@@ -2064,4 +2212,34 @@ img.image-loading::after {
 .import-help strong {
     display: block;
     margin-bottom: 10px;
+}
+
+
+/* Working Catalog Styles */
+.active-catalog-row {
+    background-color: #f0f8ff;
+    border-left: 4px solid #4CAF50;
+}
+
+.working-catalog-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #4CAF50, #45a049);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    margin-right: 10px;
+    vertical-align: middle;
+}
+
+.btn-small.warning {
+    background-color: #ff9800;
+    color: white;
+}
+
+.btn-small.warning:hover {
+    background-color: #e68900;
+    color: white;
 }

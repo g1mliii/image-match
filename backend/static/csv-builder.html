@@ -5,6 +5,92 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSV BUILDER</title>
     <link rel="stylesheet" href="/static/styles.css">
+
+    <!-- Child window detection and context handling -->
+    <script>
+        // Check if running in pywebview child window
+        function isChildWindow() {
+            return typeof window.pywebview !== 'undefined' && window.pywebview.api;
+        }
+
+        // Wait for pywebview API to be ready (it might be injected asynchronously)
+        function waitForPywebview(callback, maxWait = 3000) {
+            const startTime = Date.now();
+            const check = () => {
+                if (window.pywebview && window.pywebview.api) {
+                    callback(true);
+                } else if (Date.now() - startTime > maxWait) {
+                    console.log('[CSV-BUILDER] Pywebview not available after', maxWait, 'ms');
+                    callback(false);
+                } else {
+                    setTimeout(check, 100);
+                }
+            };
+            check();
+        }
+
+        // Get query params for context
+        function getWindowContext() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                mode: params.get('mode') || 'visual',
+                section: params.get('section') || 'historical',
+                windowId: params.get('window_id') || null
+            };
+        }
+
+        // Store context globally
+        window.csvBuilderContext = getWindowContext();
+        console.log('[CSV-BUILDER] Context:', window.csvBuilderContext);
+        console.log('[CSV-BUILDER] Pywebview available:', isChildWindow());
+
+        // Close window and return to app (child window mode)
+        async function closeAndReturn() {
+            if (isChildWindow()) {
+                try {
+                    // Use pywebview API to close the window
+                    await window.pywebview.api.close_window();
+                } catch (e) {
+                    console.error('Error closing window:', e);
+                    // Fallback - try window.close()
+                    window.close();
+                }
+            } else {
+                // Browser mode - navigate back
+                window.location.href = '/';
+            }
+        }
+
+        // Load CSV to main app and close (child window mode)
+        async function loadToApp() {
+            if (!isChildWindow()) {
+                showToast('Load to App only works in desktop mode', 'error');
+                return;
+            }
+
+            try {
+                const csvContent = generateCSV();
+                const productCount = window.state?.products?.length || 0;
+                const section = window.csvBuilderContext?.section || 'historical';
+
+                // Save to staging directory via pywebview API
+                const result = await window.pywebview.api.save_to_staging(csvContent, section, productCount);
+
+                if (result) {
+                    // Notify main app and close this window
+                    await window.pywebview.api.close_and_notify('csv_builder_complete', {
+                        section: section,
+                        product_count: productCount
+                    });
+                } else {
+                    showToast('Failed to save CSV to staging', 'error');
+                }
+            } catch (error) {
+                console.error('[CSV-BUILDER] Error loading to app:', error);
+                showToast('Error: ' + error.message, 'error');
+            }
+        }
+    </script>
 </head>
 <body>
     <div class="container">
@@ -22,12 +108,12 @@
                 <p>2. Link existing product data OR export template to fill in Excel</p>
                 <p>3. Review and edit metadata for each product</p>
                 <p>4. Optionally add price and performance history</p>
-                <p>5. Export the CSV file</p>
-                <p>6. Use this CSV file in the main app when uploading products</p>
+                <p>5. Export or load directly to main app</p>
                 <p><strong>WHY USE IT?</strong> The CSV Builder ensures your filenames match perfectly and makes it easy to add metadata without manually creating a CSV file. It works with YOUR existing data structure!</p>
                 <p><strong>FLEXIBLE LINKING:</strong> Already have product data in Excel or your ERP? Import it and we'll automatically link it to your images using smart matching strategies.</p>
             </div>
-            <a href="/" class="btn-link">← BACK TO APP</a>
+            <button onclick="closeAndReturn()" class="btn-link">CLOSE</button>
+            <span id="targetSection" style="margin-left: 10px; font-size: 0.9em; color: #666;"></span>
         </header>
 
         <main>
@@ -81,7 +167,7 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn btn-primary" id="nextToLink" disabled>NEXT →</button>
+                    <button class="btn btn-primary" id="nextToLink" disabled>NEXT</button>
                 </div>
             </section>
 
@@ -92,43 +178,56 @@
                     <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
                 </div>
                 <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>IMPORT YOUR PRODUCT DATA:</strong></p>
-                    <p>Upload a CSV/Excel file with your product data (SKU, name, price, category, price history, performance history) or export a template to fill in Excel.</p>
-                    <p><strong>LINKING STRATEGIES:</strong></p>
-                    <p>• <strong>Filename = SKU:</strong> Image filename matches SKU exactly (e.g., PM-001.jpg → SKU: PM-001)</p>
-                    <p>• <strong>Filename contains SKU:</strong> SKU is embedded in filename (e.g., photo_PM-001_front.jpg → SKU: PM-001)</p>
-                    <p>• <strong>Folder name = SKU:</strong> Parent folder name is the SKU (e.g., /PM-001/image.jpg → SKU: PM-001)</p>
-                    <p>• <strong>Fuzzy name matching:</strong> Match filename to product name (e.g., blue-plate.jpg → "Blue Ceramic Plate")</p>
-                    <p>• <strong>Manual linking:</strong> Manually link unmatched products</p>
-                    <p><strong>EXCEL WORKFLOW:</strong> Export template → fill in Excel → import completed CSV</p>
+                    <p><strong>TWO WAYS TO IMPORT DATA:</strong></p>
+
+                    <p><strong>OPTION 1: IMPORT & LINK (for existing data)</strong></p>
+                    <p>Use this if you have a CSV/Excel file with product data but filenames DON'T match your images exactly.</p>
+                    <p>• Upload your CSV - Choose linking strategy - System matches data to images automatically</p>
+                    <p>• Example: Your CSV has SKU "PM-001" and your image is "blue-plate-photo.jpg" - we'll link them!</p>
+                    <p>• <strong>Supports:</strong> sku, name, price, category, price_history, performance_history</p>
+
+                    <p><strong>OPTION 2: IMPORT COMPLETED TEMPLATE (exact filename match)</strong></p>
+                    <p>Use this if you've filled out the exported template OR your CSV filenames EXACTLY match your images.</p>
+                    <p>• Export template - Fill in Excel - Import completed template</p>
+                    <p>• Example: CSV has "blue-plate.jpg" in filename column, and you have "blue-plate.jpg" image</p>
+                    <p>• <strong>Supports:</strong> ALL columns including price_history, performance_history</p>
+
+                    <p><strong>HISTORY DATA FORMAT:</strong></p>
+                    <p>• <strong>price_history:</strong> date:price;date:price (e.g., "2024-01-01:19.99;2024-02-01:21.99")</p>
+                    <p>• <strong>performance_history:</strong> JSON array of sales numbers (e.g., "[100,150,200,180]" for monthly sales)</p>
+
                     <p><strong>OR SKIP THIS STEP:</strong> If you don't have existing data, skip to manually enter metadata in Step 3.</p>
                 </div>
 
                 <div class="link-panel">
                     <h3>IMPORT PRODUCT DATA</h3>
-                    <div class="import-options">
-                        <button class="btn" onclick="importFromFile()">UPLOAD CSV/EXCEL</button>
-                        <button class="btn" onclick="importFromClipboard()">PASTE FROM CLIPBOARD</button>
-                        <button class="btn" onclick="exportTemplate()">EXPORT TEMPLATE</button>
-                        <button class="btn" onclick="importCompletedTemplate()">IMPORT COMPLETED CSV</button>
-                        <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" hidden>
-                        <input type="file" id="importCompletedInput" accept=".csv" hidden>
+                    <p style="font-size: 0.9em; color: #666; margin-bottom: 15px;">Choose your import method below. Not sure? Click the ? button above for detailed explanations.</p>
+
+                    <div style="border: 2px solid #667eea; padding: 15px; margin-bottom: 15px; background: #f0f4ff;">
+                        <strong>OPTION 1: Import & Link Existing Data</strong>
+                        <p style="font-size: 0.85em; margin: 8px 0; color: #333;">Use when your CSV data doesn't have exact filename matches. We'll auto-link using SKU or name matching.</p>
+                        <div style="display: flex; gap: 10px; margin-top: 10px;">
+                            <button class="btn" onclick="importFromFile()" title="Upload CSV/Excel and link to images using matching strategies">IMPORT & LINK FROM FILE</button>
+                            <button class="btn" onclick="importFromClipboard()" title="Paste CSV data from clipboard and link to images">PASTE & LINK FROM CLIPBOARD</button>
+                        </div>
                     </div>
+
+                    <div style="border: 2px solid #48bb78; padding: 15px; background: #f0fff4;">
+                        <strong>OPTION 2: Import Completed Template</strong>
+                        <p style="font-size: 0.85em; margin: 8px 0; color: #333;">Use when CSV filenames EXACTLY match your image filenames (like exported template).</p>
+                        <div style="display: flex; gap: 10px; margin-top: 10px;">
+                            <button class="btn" onclick="exportTemplate()" title="Download CSV template with your image filenames to fill in Excel">EXPORT TEMPLATE</button>
+                            <button class="btn" onclick="importCompletedTemplate()" title="Upload completed template where filenames match exactly">IMPORT COMPLETED TEMPLATE</button>
+                        </div>
+                    </div>
+
+                    <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" hidden>
+                    <input type="file" id="importCompletedInput" accept=".csv" hidden>
+                </div>
                     
                     <div id="importStatus" class="import-status" style="display: none;">
                         <p id="importStatusText"></p>
                     </div>
-                    
-                    <div id="importHelp" class="import-help" style="display: none; margin-top: 15px; padding: 15px; border: 2px dashed #000; background: #f9f9f9;">
-                        <p><strong>EXCEL WORKFLOW:</strong></p>
-                        <p>1. Click "EXPORT TEMPLATE" to download CSV with filenames</p>
-                        <p>2. Open in Excel and fill in metadata (SKU, name, price, etc.)</p>
-                        <p>3. Save the file</p>
-                        <p>4. Click "IMPORT COMPLETED CSV" to upload your filled template</p>
-                        <p>5. We'll match by filename and update your products!</p>
-                        <button class="btn-small" onclick="toggleImportHelp()" style="margin-top: 10px;">HIDE</button>
-                    </div>
-                    <button class="btn-small" onclick="toggleImportHelp()" style="margin-top: 10px;">SHOW EXCEL WORKFLOW</button>
                 </div>
 
                 <div id="linkingPanel" style="display: none;">
@@ -174,7 +273,7 @@
                     </div>
 
                     <div class="actions">
-                        <button class="btn" onclick="goToStep(1)">← BACK</button>
+                        <button class="btn" onclick="goToStep(1)">BACK (change import)</button>
                         <button class="btn" onclick="applyLinking()">APPLY LINKING</button>
                     </div>
                 </div>
@@ -194,14 +293,14 @@
                         </div>
                     </div>
                     <div class="actions">
-                        <button class="btn" onclick="backToLinkingStrategy()">← BACK</button>
-                        <button class="btn btn-primary" onclick="finishLinking()">FINISH LINKING</button>
+                        <button class="btn" onclick="backToLinkingStrategy()">BACK (change strategy)</button>
+                        <button class="btn btn-primary" onclick="finishLinking()">SAVE LINKS & CONTINUE</button>
                     </div>
                 </div>
 
                 <div class="actions" id="skipLinkingActions">
-                    <button class="btn" onclick="goToStep(1)">← BACK</button>
-                    <button class="btn btn-primary" onclick="skipLinking()">SKIP (ENTER MANUALLY) →</button>
+                    <button class="btn" onclick="goToStep(1)">BACK (change import)</button>
+                    <button class="btn btn-primary" onclick="skipLinking()">SKIP LINKING (enter manually)</button>
                 </div>
             </section>
 
@@ -263,10 +362,10 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn" onclick="goToStep(2)">← BACK</button>
+                    <button class="btn" onclick="goToStep(2)">BACK</button>
                     <button class="btn" onclick="saveDraft()">SAVE</button>
                     <button class="btn" onclick="loadDraft()">LOAD</button>
-                    <button class="btn btn-primary" onclick="goToStep(4)">NEXT →</button>
+                    <button class="btn btn-primary" onclick="goToStep(4)">NEXT</button>
                 </div>
             </section>
 
@@ -329,9 +428,9 @@
                 </div>
 
                 <div class="actions">
-                    <button class="btn" onclick="goToStep(3)">← BACK</button>
+                    <button class="btn" onclick="goToStep(3)">BACK</button>
                     <button class="btn" onclick="skipHistory()">SKIP</button>
-                    <button class="btn btn-primary" onclick="goToStep(5)">NEXT →</button>
+                    <button class="btn btn-primary" onclick="goToStep(5)">NEXT</button>
                 </div>
             </section>
 
@@ -386,12 +485,16 @@
                     <pre id="csvPreviewContent"></pre>
                 </div>
 
-                <div class="actions">
-                    <button class="btn" onclick="goToStep(4)">← BACK</button>
-                    <button class="btn btn-primary" onclick="downloadCSV()">DOWNLOAD</button>
+                <div class="actions" style="flex-wrap: wrap; gap: 10px;">
+                    <button class="btn" onclick="goToStep(4)">BACK</button>
+                    <button class="btn btn-primary" id="loadToAppBtn" onclick="loadToApp()" style="display: none; font-size: 1.1em; padding: 12px 24px;">LOAD TO MAIN APP</button>
+                    <button class="btn" onclick="downloadCSV()">DOWNLOAD CSV</button>
                     <button class="btn" onclick="copyToClipboard()">COPY</button>
                     <button class="btn" onclick="saveAsTemplate()">SAVE TEMPLATE</button>
                 </div>
+                <p id="loadToAppHint" style="display: none; margin-top: 10px; text-align: center; color: #667eea; font-weight: bold;">
+                    Click "LOAD TO MAIN APP" to send this CSV to the main application
+                </p>
             </section>
         </main>
     </div>
@@ -399,5 +502,46 @@
     <div id="toast" class="toast"></div>
 
     <script src="/static/csv-builder.js"></script>
+    <script>
+        // Show context and load-to-app button if in child window mode
+        document.addEventListener('DOMContentLoaded', function() {
+            const context = window.csvBuilderContext;
+
+            // Show target section indicator
+            if (context && context.section) {
+                const targetEl = document.getElementById('targetSection');
+                if (targetEl) {
+                    targetEl.textContent = `Target: ${context.section.toUpperCase()} section`;
+                }
+            }
+
+            // Wait for pywebview API then show the LOAD TO APP button
+            waitForPywebview(function(available) {
+                if (available) {
+                    console.log('[CSV-BUILDER] Pywebview ready, showing LOAD TO APP button');
+
+                    // Show the LOAD TO APP button
+                    const loadBtn = document.getElementById('loadToAppBtn');
+                    if (loadBtn) {
+                        loadBtn.style.display = 'inline-block';
+                    }
+
+                    // Show the hint text
+                    const hint = document.getElementById('loadToAppHint');
+                    if (hint) {
+                        hint.style.display = 'block';
+                    }
+
+                    // Update close button text to be clearer
+                    const closeBtn = document.querySelector('button[onclick="closeAndReturn()"]');
+                    if (closeBtn) {
+                        closeBtn.textContent = '← CANCEL';
+                    }
+                } else {
+                    console.log('[CSV-BUILDER] Browser mode - LOAD TO APP hidden, use DOWNLOAD instead');
+                }
+            });
+        });
+    </script>
 </body>
 </html>

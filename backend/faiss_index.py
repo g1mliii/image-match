@@ -238,8 +238,23 @@ class FAISSIndexManager:
                     'product_count': len(product_id_list),
                     'index_size_mb': self.indexes[cache_key].ntotal * 512 * 4 / (1024 * 1024)  # Rough estimate
                 }
-            
+
             return stats
+
+    def clear_all_indexes(self):
+        """
+        Clear all cached FAISS indexes from memory.
+        Should be called on application shutdown to free memory (500MB+).
+        """
+        with self.lock:
+            num_indexes = len(self.indexes)
+            num_products = sum(len(ids) for ids in self.product_ids.values())
+
+            self.indexes.clear()
+            self.product_ids.clear()
+            self.access_order.clear()
+
+            logger.info(f"✓ Cleared FAISS indexes ({num_indexes} indexes, {num_products} products freed from memory)")
 
 
 # Global singleton instance

@@ -83,16 +83,19 @@ def get_snapshot_connection(snapshot_path: str):
 
 
 def init_snapshot_db(snapshot_path: str, name: str, is_historical: bool = True,
-                     description: str = None, tags: List[str] = None) -> bool:
+                     description: str = None, tags: List[str] = None,
+                     session_only: bool = False, created_by_operation: str = None) -> bool:
     """Initialize a new snapshot database with full schema
-    
+
     Args:
         snapshot_path: Path to the new database file
         name: Display name for the snapshot
         is_historical: Whether this is a historical catalog
         description: Optional description
         tags: Optional list of tags
-        
+        session_only: If True, snapshot is deleted after 1 hour
+        created_by_operation: Operation that created this snapshot
+
     Returns:
         True if successful
     """
@@ -110,16 +113,27 @@ def init_snapshot_db(snapshot_path: str, name: str, is_historical: bool = True,
                     description TEXT,
                     product_count INTEGER DEFAULT 0,
                     is_historical BOOLEAN DEFAULT 1,
+                    is_workspace BOOLEAN DEFAULT 0,
+                    session_only BOOLEAN DEFAULT 0,
+                    expires_at TIMESTAMP,
+                    created_by_operation TEXT,
                     tags TEXT,
                     last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
             # Insert metadata
+            expires_at = None
+            if session_only:
+                # Set expiration time to 1 hour from now
+                from datetime import datetime, timedelta
+                expires_at = (datetime.now() + timedelta(hours=1)).isoformat()
+
             cursor.execute('''
-                INSERT INTO snapshot_metadata (name, is_historical, description, tags)
-                VALUES (?, ?, ?, ?)
-            ''', (name, is_historical, description, json.dumps(tags or [])))
+                INSERT INTO snapshot_metadata
+                (name, is_historical, description, tags, session_only, expires_at, created_by_operation)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (name, is_historical, description, json.dumps(tags or []), session_only, expires_at, created_by_operation))
             
             # Create products table
             cursor.execute('''
@@ -217,16 +231,19 @@ def init_snapshot_db(snapshot_path: str, name: str, is_historical: bool = True,
         return False
 
 
-def create_snapshot(name: str, is_historical: bool = True, 
-                   description: str = None, tags: List[str] = None) -> Dict[str, Any]:
+def create_snapshot(name: str, is_historical: bool = True,
+                   description: str = None, tags: List[str] = None,
+                   session_only: bool = False, created_by_operation: str = None) -> Dict[str, Any]:
     """Create a new empty snapshot
-    
+
     Args:
         name: Display name for the snapshot
         is_historical: Whether this is a historical catalog
         description: Optional description
         tags: Optional list of tags
-        
+        session_only: If True, snapshot is deleted after 1 hour (default: False for persistent)
+        created_by_operation: Operation that triggered this snapshot
+
     Returns:
         Dictionary with snapshot info or error
     """
@@ -234,13 +251,13 @@ def create_snapshot(name: str, is_historical: bool = True,
         sanitized_name = sanitize_snapshot_name(name)
         db_filename = f"{sanitized_name}.db"
         db_path = get_snapshot_db_path(sanitized_name)
-        
-        # Check if already exists
-        if os.path.exists(db_path):
+
+        # Check if already exists (unless session only)
+        if os.path.exists(db_path) and not session_only:
             return {'error': f'Snapshot "{sanitized_name}" already exists'}
-        
+
         # Initialize the database
-        if not init_snapshot_db(db_path, name, is_historical, description, tags):
+        if not init_snapshot_db(db_path, name, is_historical, description, tags, session_only, created_by_operation):
             return {'error': 'Failed to initialize snapshot database'}
         
         return {
@@ -258,37 +275,57 @@ def create_snapshot(name: str, is_historical: bool = True,
 
 def list_snapshots() -> Dict[str, Any]:
     """List all available snapshots with metadata
-    
+
     Returns:
-        Dictionary with historical and new snapshot lists
+        Dictionary with historical and new snapshot lists (excludes expired session snapshots)
     """
     try:
         historical = []
         new_products = []
-        
+
         if not os.path.exists(CATALOGS_DIR):
             return {'historical': [], 'new': []}
-        
+
+        # Get active catalogs to mark them in the list
+        active_catalogs = get_active_catalogs()
+        all_active = active_catalogs.get('active_historical', []) + active_catalogs.get('active_new', [])
+
+        now = datetime.now()
+
         for filename in os.listdir(CATALOGS_DIR):
             if filename.endswith('.db'):
                 db_path = os.path.join(CATALOGS_DIR, filename)
                 info = get_snapshot_info(filename)
-                
+
                 if info and not info.get('error'):
+                    # Skip expired session snapshots
+                    if info.get('session_only'):
+                        expires_at = info.get('expires_at')
+                        if expires_at:
+                            try:
+                                expiry_time = datetime.fromisoformat(expires_at)
+                                if expiry_time < now:
+                                    continue  # Skip expired session snapshot
+                            except (ValueError, TypeError):
+                                pass  # If expiry time is invalid, include it
+
+                    # Mark if this snapshot is an active catalog
+                    info['is_active'] = filename in all_active
+
                     if info.get('is_historical', True):
                         historical.append(info)
                     else:
                         new_products.append(info)
-        
+
         # Sort by created_at descending
         historical.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         new_products.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-        
+
         return {
             'historical': historical,
             'new': new_products
         }
-        
+
     except Exception as e:
         logger.error(f"Error listing snapshots: {e}")
         return {'error': str(e), 'historical': [], 'new': []}
@@ -328,9 +365,19 @@ def get_snapshot_info(snapshot_file: str) -> Optional[Dict[str, Any]]:
                     'version': '1.0',
                     'description': None,
                     'is_historical': True,
-                    'tags': []
+                    'tags': [],
+                    'session_only': False,
+                    'expires_at': None,
+                    'created_by_operation': None
                 }
             else:
+                # Helper to safely get column value from Row object
+                def get_row_value(row, key, default=None):
+                    try:
+                        return row[key]
+                    except (KeyError, IndexError):
+                        return default
+
                 metadata = {
                     'name': metadata_row['name'],
                     'created_at': metadata_row['created_at'],
@@ -338,7 +385,10 @@ def get_snapshot_info(snapshot_file: str) -> Optional[Dict[str, Any]]:
                     'description': metadata_row['description'],
                     'is_historical': bool(metadata_row['is_historical']),
                     'tags': json.loads(metadata_row['tags'] or '[]'),
-                    'last_modified': metadata_row['last_modified']
+                    'last_modified': metadata_row['last_modified'],
+                    'session_only': bool(get_row_value(metadata_row, 'session_only', 0)),
+                    'expires_at': get_row_value(metadata_row, 'expires_at'),
+                    'created_by_operation': get_row_value(metadata_row, 'created_by_operation')
                 }
             
             # Get product count
@@ -384,6 +434,352 @@ def get_snapshot_info(snapshot_file: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error getting snapshot info for {snapshot_file}: {e}")
         return {'error': str(e), 'snapshot_file': snapshot_file}
+
+
+def get_total_snapshot_storage() -> Dict[str, Any]:
+    """Get total disk space used by all snapshots.
+
+    Returns:
+        Dictionary with:
+        - total_size_mb: Total disk space used by all snapshots
+        - snapshot_count: Number of snapshots
+        - breakdown: Per-snapshot size details
+    """
+    try:
+        all_snapshots = list_snapshots()
+
+        total_size = 0
+        breakdown = []
+
+        # Process historical snapshots
+        for snapshot_info in all_snapshots.get('historical', []):
+            if 'error' not in snapshot_info:
+                size = snapshot_info.get('total_size_mb', 0)
+                total_size += size
+                breakdown.append({
+                    'name': snapshot_info.get('name', ''),
+                    'type': 'historical',
+                    'size_mb': size,
+                    'products': snapshot_info.get('product_count', 0)
+                })
+
+        # Process new snapshots
+        for snapshot_info in all_snapshots.get('new', []):
+            if 'error' not in snapshot_info:
+                size = snapshot_info.get('total_size_mb', 0)
+                total_size += size
+                breakdown.append({
+                    'name': snapshot_info.get('name', ''),
+                    'type': 'new',
+                    'size_mb': size,
+                    'products': snapshot_info.get('product_count', 0)
+                })
+
+        # Sort by size (largest first)
+        breakdown.sort(key=lambda x: x['size_mb'], reverse=True)
+
+        return {
+            'total_size_mb': round(total_size, 2),
+            'snapshot_count': len(breakdown),
+            'breakdown': breakdown
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting total snapshot storage: {e}")
+        return {
+            'error': str(e),
+            'total_size_mb': 0,
+            'snapshot_count': 0,
+            'breakdown': []
+        }
+
+
+def cleanup_expired_session_autosaves() -> Dict[str, Any]:
+    """Delete session autosaves that have expired (older than 1 hour).
+
+    Called on app startup to clean old temporary snapshots.
+
+    Returns:
+        Dictionary with cleanup statistics:
+        - deleted_count: Number of session snapshots deleted
+        - freed_space_mb: Disk space freed
+    """
+    from datetime import datetime
+
+    deleted_count = 0
+    freed_space = 0
+    now = datetime.now().isoformat()
+
+    try:
+        if not os.path.exists(CATALOGS_DIR):
+            return {'deleted_count': 0, 'freed_space_mb': 0}
+
+        # Find and delete all expired session autosaves
+        for item_name in os.listdir(CATALOGS_DIR):
+            item_path = os.path.join(CATALOGS_DIR, item_name)
+
+            # Check if it's a session autosave directory (has .db file inside)
+            if os.path.isdir(item_path):
+                db_files = [f for f in os.listdir(item_path) if f.endswith('.db')]
+                if not db_files:
+                    continue
+
+                # Check metadata to see if it's a session autosave
+                try:
+                    db_path = os.path.join(item_path, db_files[0])
+                    with get_snapshot_connection(db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT session_only, expires_at FROM snapshot_metadata LIMIT 1')
+                        row = cursor.fetchone()
+
+                        if row and row['session_only']:
+                            expires_at = row['expires_at']
+
+                            # Check if expired
+                            if expires_at and expires_at < now:
+                                # Delete the entire directory
+                                try:
+                                    total_size = sum(
+                                        os.path.getsize(os.path.join(dirpath, f))
+                                        for dirpath, _, filenames in os.walk(item_path)
+                                        for f in filenames
+                                    )
+                                    freed_space += total_size
+
+                                    shutil.rmtree(item_path)
+                                    deleted_count += 1
+                                    logger.debug(f"Deleted expired session autosave: {item_name}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to delete session autosave {item_path}: {e}")
+                except Exception as e:
+                    logger.debug(f"Error checking snapshot metadata {item_path}: {e}")
+
+        result = {
+            'deleted_count': deleted_count,
+            'freed_space_mb': round(freed_space / (1024 * 1024), 2)
+        }
+
+        if deleted_count > 0:
+            logger.info(f"✓ Cleaned up session autosaves: {deleted_count} deleted, {result['freed_space_mb']}MB freed")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error cleaning up session autosaves: {e}")
+        return {'deleted_count': 0, 'freed_space_mb': 0, 'error': str(e)}
+
+
+def save_snapshot_with_dialog_choice(
+    section: str,
+    snapshot_name: str,
+    choice: str,
+    operation: str = None
+) -> Dict[str, Any]:
+    """
+    Save snapshot based on user's dialog choice.
+
+    NOTE: Snapshots always save the ENTIRE database (product_matching.db) which contains
+    both historical AND new products. The 'section' parameter is just a UI label/category.
+
+    Args:
+        section: 'historical' or 'new' (just a UI label for organization)
+        snapshot_name: User-provided name (only used if choice is 'persistent')
+        choice: 'skip', 'session', or 'persistent'
+        operation: What operation triggered this save
+
+    Returns:
+        Dictionary with save result
+    """
+    if choice == 'skip':
+        return {'success': True, 'action': 'skipped', 'message': 'Save cancelled'}
+
+    session_only = (choice == 'session')
+    is_historical = (section.lower() == 'historical')
+
+    try:
+        # Snapshot always saves from the main database (contains both historical and new products)
+        source_db = DEFAULT_DB_PATH
+
+        if not os.path.exists(source_db):
+            return {'error': f'Main database not found: {source_db}'}
+
+        # Generate snapshot name
+        if session_only:
+            # Auto-generate session name
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+            final_name = f"session-{section}-{timestamp}"
+        else:
+            final_name = snapshot_name
+
+        # Create empty snapshot with metadata
+        sanitized_name = sanitize_snapshot_name(final_name)
+        db_filename = f"{sanitized_name}.db"
+        db_path = get_snapshot_db_path(sanitized_name)
+
+        # Copy the main database to snapshot location
+        shutil.copy2(source_db, db_path)
+
+        # Add/update metadata table in the snapshot
+        with get_snapshot_connection(db_path) as conn:
+            cursor = conn.cursor()
+
+            # Check if metadata table exists
+            cursor.execute('''
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='snapshot_metadata'
+            ''')
+
+            if not cursor.fetchone():
+                cursor.execute('''
+                    CREATE TABLE snapshot_metadata (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        version TEXT DEFAULT '1.0',
+                        description TEXT,
+                        product_count INTEGER DEFAULT 0,
+                        is_historical BOOLEAN DEFAULT 1,
+                        is_workspace BOOLEAN DEFAULT 0,
+                        session_only BOOLEAN DEFAULT 0,
+                        expires_at TIMESTAMP,
+                        created_by_operation TEXT,
+                        tags TEXT,
+                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+            else:
+                # Table exists - ensure it has all required columns
+                cursor.execute('PRAGMA table_info(snapshot_metadata)')
+                existing_columns = {row[1] for row in cursor.fetchall()}
+
+                # Add missing columns with ALTER TABLE
+                if 'session_only' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN session_only BOOLEAN DEFAULT 0')
+                if 'expires_at' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN expires_at TIMESTAMP')
+                if 'created_by_operation' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN created_by_operation TEXT')
+                if 'tags' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN tags TEXT')
+
+            # Get product count
+            cursor.execute('SELECT COUNT(*) FROM products')
+            count = cursor.fetchone()[0]
+
+            # Set expiration time for session snapshots
+            expires_at = None
+            if session_only:
+                from datetime import datetime, timedelta
+                expires_at = (datetime.now() + timedelta(hours=1)).isoformat()
+
+            # Clear existing metadata and insert new
+            cursor.execute('DELETE FROM snapshot_metadata')
+            cursor.execute('''
+                INSERT INTO snapshot_metadata
+                (name, is_historical, description, product_count, session_only, expires_at, created_by_operation, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                final_name,
+                is_historical,
+                f"Auto-save from {operation}" if operation else None,
+                count,
+                session_only,
+                expires_at,
+                operation,
+                json.dumps([])
+            ))
+
+        # Create uploads directory for this snapshot (but don't copy files to save space)
+        uploads_dir = get_snapshot_uploads_dir(db_path)
+        os.makedirs(uploads_dir, exist_ok=True)
+
+        action_type = 'session' if session_only else 'persistent'
+        logger.info(f"✓ Created {action_type} snapshot: {final_name} (category: {section})")
+
+        return {
+            'success': True,
+            'action': action_type,
+            'snapshot_name': final_name,
+            'message': f"Snapshot saved as {final_name}"
+        }
+
+    except Exception as e:
+        logger.error(f"Error saving snapshot: {e}")
+        return {'error': str(e)}
+
+
+def check_snapshot_duplicate(section: str) -> Optional[Dict[str, Any]]:
+    """
+    Check if a snapshot with identical product data already exists.
+
+    This prevents creating duplicate backups of the same catalog state.
+    Useful for auto-backups where multiple rapid saves might create identical copies.
+
+    Args:
+        section: 'historical' or 'new' - which catalog to check
+
+    Returns:
+        Dictionary with duplicate info if found, None otherwise
+    """
+    try:
+        import hashlib
+
+        section_lower = section.lower()
+        db_path = os.path.join(BACKEND_DIR, f'{section_lower}.db')
+
+        # Get product count and category breakdown of current DB
+        with get_snapshot_connection(db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT COUNT(*) FROM products')
+            current_count = cursor.fetchone()[0]
+
+            cursor.execute('''
+                SELECT category, COUNT(*) as count
+                FROM products
+                GROUP BY category
+                ORDER BY category
+            ''')
+            current_categories = cursor.fetchall()
+
+        # Create a hash of the structure (not full data, just metadata)
+        category_str = '|'.join([f"{row['category']}:{row['count']}"
+                                 for row in current_categories])
+        structure_hash = hashlib.md5(f"{current_count}:{category_str}".encode()).hexdigest()
+
+        # Check all snapshots of this type for matching structure
+        all_snapshots = list_snapshots()
+        key = 'historical' if section_lower == 'historical' else 'new'
+
+        for snapshot_info in all_snapshots.get(key, []):
+            if 'error' in snapshot_info:
+                continue
+
+            snap_count = snapshot_info.get('product_count', 0)
+            snap_categories = snapshot_info.get('categories', [])
+
+            if snap_count == current_count:
+                # Quick check: same product count
+                snap_category_str = '|'.join([f"{cat['category']}:{cat['count']}"
+                                              for cat in snap_categories])
+                snap_hash = hashlib.md5(f"{snap_count}:{snap_category_str}".encode()).hexdigest()
+
+                if snap_hash == structure_hash:
+                    # Found a duplicate!
+                    logger.info(f"Found duplicate snapshot for {section}: {snapshot_info['name']}")
+                    return {
+                        'is_duplicate': True,
+                        'existing_snapshot': snapshot_info['name'],
+                        'created_at': snapshot_info.get('created_at'),
+                        'structure_hash': structure_hash
+                    }
+
+        return {'is_duplicate': False}
+
+    except Exception as e:
+        logger.warning(f"Error checking for snapshot duplicate: {e}")
+        return {'is_duplicate': False, 'error': str(e)}
 
 
 def delete_snapshot(snapshot_file: str) -> Dict[str, Any]:
@@ -1074,11 +1470,31 @@ def save_main_db_as_snapshot(name: str, description: str = None,
                         description TEXT,
                         product_count INTEGER DEFAULT 0,
                         is_historical BOOLEAN DEFAULT 1,
+                        is_workspace BOOLEAN DEFAULT 0,
+                        session_only BOOLEAN DEFAULT 0,
+                        expires_at TIMESTAMP,
+                        created_by_operation TEXT,
                         tags TEXT,
                         last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-            
+            else:
+                # Table exists - ensure it has all required columns
+                cursor.execute('PRAGMA table_info(snapshot_metadata)')
+                existing_columns = {row[1] for row in cursor.fetchall()}
+
+                # Add missing columns with ALTER TABLE
+                if 'is_workspace' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN is_workspace BOOLEAN DEFAULT 0')
+                if 'session_only' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN session_only BOOLEAN DEFAULT 0')
+                if 'expires_at' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN expires_at TIMESTAMP')
+                if 'created_by_operation' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN created_by_operation TEXT')
+                if 'tags' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN tags TEXT')
+
             # Get product count
             cursor.execute('SELECT COUNT(*) FROM products')
             count = cursor.fetchone()[0]
@@ -1158,30 +1574,15 @@ def load_snapshot_to_main_db(snapshot_file: str) -> Dict[str, Any]:
         
         # Copy snapshot to main database
         shutil.copy2(snapshot_path, DEFAULT_DB_PATH)
-        
-        # Copy uploaded images
-        snapshot_uploads = get_snapshot_uploads_dir(snapshot_path)
-        main_uploads = os.path.join(BACKEND_DIR, 'uploads')
-        
-        # Clear main uploads first
-        if os.path.exists(main_uploads):
-            for filename in os.listdir(main_uploads):
-                filepath = os.path.join(main_uploads, filename)
-                if os.path.isfile(filepath):
-                    try:
-                        os.remove(filepath)
-                    except:
-                        pass
-        
-        # NOTE: Image copying disabled - all snapshots use shared backend/uploads/
-        # # Copy snapshot uploads to main
-        # if os.path.exists(snapshot_uploads):
-        #     os.makedirs(main_uploads, exist_ok=True)
-        #     for filename in os.listdir(snapshot_uploads):
-        #         src = os.path.join(snapshot_uploads, filename)
-        #         dst = os.path.join(main_uploads, filename)
-        #         if os.path.isfile(src):
-        #             shutil.copy2(src, dst)
+
+        # NOTE: Image copying/management disabled
+        # All snapshots share the same backend/uploads/ folder to save space.
+        # When loading a snapshot, we only replace the database file.
+        # Images remain in the shared uploads/ directory and are referenced by all snapshots.
+        # This means:
+        # - Don't delete images from uploads/
+        # - Don't copy images from snapshot to uploads/
+        # - All snapshots reference the same image pool
         
         # Store which snapshot is loaded (for UI display)
         config = get_active_catalogs()

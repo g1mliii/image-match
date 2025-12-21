@@ -9,6 +9,75 @@
     <title>CATALOG MANAGER</title>
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="stylesheet" href="/static/styles-common.css">
+
+    <!-- Child window detection and notification handling -->
+    <script>
+        // Check if running in pywebview child window
+        function isChildWindow() {
+            return typeof window.pywebview !== 'undefined' && window.pywebview.api;
+        }
+
+        // Wait for pywebview API to be ready
+        function waitForPywebview(callback, maxWait = 3000) {
+            const startTime = Date.now();
+            const check = () => {
+                if (window.pywebview && window.pywebview.api) {
+                    callback(true);
+                } else if (Date.now() - startTime > maxWait) {
+                    console.log('[CATALOG-MANAGER] Pywebview not available after', maxWait, 'ms');
+                    callback(false);
+                } else {
+                    setTimeout(check, 100);
+                }
+            };
+            check();
+        }
+
+        // Get query params for context
+        function getWindowContext() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                windowId: params.get('window_id') || null
+            };
+        }
+
+        // Store context globally
+        window.catalogManagerContext = getWindowContext();
+        console.log('[CATALOG-MANAGER] Context:', window.catalogManagerContext);
+        console.log('[CATALOG-MANAGER] Pywebview available:', isChildWindow());
+
+        // Close window and return to app (child window mode)
+        async function closeAndReturn() {
+            if (isChildWindow()) {
+                try {
+                    // Use pywebview API to close the child window
+                    console.log('[CATALOG-MANAGER] Closing child window via pywebview API...');
+                    await window.pywebview.api.close_window();
+                } catch (e) {
+                    console.error('[CATALOG-MANAGER] Error closing window:', e);
+                    // Fallback to standard window.close()
+                    window.close();
+                }
+            } else {
+                // Browser mode - just close the tab/window
+                console.log('[CATALOG-MANAGER] Closing browser window...');
+                window.close();
+            }
+        }
+
+        // Signal catalog change to main app
+        async function signalCatalogChange(action, details) {
+            if (!isChildWindow()) return;
+
+            try {
+                await window.pywebview.api.signal_catalog_change(action, details || {});
+                console.log('[CATALOG-MANAGER] Signaled change:', action, details);
+            } catch (error) {
+                console.error('[CATALOG-MANAGER] Error signaling change:', error);
+            }
+        }
+    </script>
+
     <style>
         /* Catalog Manager specific styles */
         .stats-grid {
@@ -594,7 +663,7 @@
                 <button class="help-btn" onclick="toggleHelp('managerHelp')" style="position: static;">?</button>
             </div>
             <div class="help-text" id="managerHelp" style="display: none; margin-top: 15px; text-align: left;">
-                <p><strong>📚 WHAT IS THE CATALOG MANAGER?</strong></p>
+                <p><strong>WHAT IS THE CATALOG MANAGER?</strong></p>
                 <p>The Catalog Manager is your control center for managing product catalogs, creating snapshots, and maintaining database health. It works alongside the main matching app to give you full control over your product data.</p>
                 
                 <p><strong>KEY FEATURES:</strong></p>
@@ -614,7 +683,7 @@
                     <li>Changes made here immediately affect the main app</li>
                 </ul>
                 
-                <p><strong>💡 COMMON WORKFLOWS:</strong></p>
+                <p><strong>COMMON WORKFLOWS:</strong></p>
                 <ul>
                     <li><strong>Seasonal Catalogs:</strong> Save snapshots for Spring, Summer, Fall, Winter collections</li>
                     <li><strong>Testing:</strong> Create test snapshots to experiment without affecting production data</li>
@@ -622,9 +691,9 @@
                     <li><strong>Organization:</strong> Separate catalogs by product line, vendor, or project</li>
                 </ul>
                 
-                <p><strong>⚠️ IMPORTANT:</strong> This manager directly modifies your working catalog. Always save a snapshot before making major changes!</p>
+                <p><strong>IMPORTANT:</strong> This manager directly modifies your working catalog. Always save a snapshot before making major changes!</p>
             </div>
-            <a href="/" class="btn-link">← BACK TO APP</a>
+            <button onclick="closeAndReturn()" class="btn-link">CLOSE</button>
         </header>
 
         <main>
@@ -660,7 +729,7 @@
                     <button class="help-btn" onclick="toggleHelp('catalogHelp')" style="margin-left: 10px;">?</button>
                 </div>
                 <div class="help-text" id="catalogHelp" style="display: none; margin-bottom: 15px;">
-                    <p><strong>📊 OVERVIEW TAB</strong></p>
+                    <p><strong>OVERVIEW TAB</strong></p>
                     <p>View catalog statistics, data quality metrics, and access cleanup tools.</p>
                     
                     <p><strong>CATALOG STATISTICS:</strong></p>
@@ -681,7 +750,7 @@
                         <li><strong>Duplicate SKUs:</strong> Multiple products sharing the same SKU (potential data issue)</li>
                     </ul>
                     
-                    <p><strong>💡 TIPS:</strong></p>
+                    <p><strong>TIPS:</strong></p>
                     <ul>
                         <li>If database size exceeds 500MB, consider cleaning up old products or saving snapshots</li>
                         <li>Products with missing features won't appear in match results - use Browse tab to re-extract</li>
@@ -747,7 +816,7 @@
                 <!-- Cleanup Button -->
                 <div class="section" style="margin-top: 30px; text-align: center;">
                     <button class="btn" onclick="showCleanupModal()" style="padding: 15px 30px; font-size: 1em;">
-                        🗑️ CLEANUP DATABASE
+                        CLEANUP DATABASE
                     </button>
                 </div>
             </div>
@@ -759,27 +828,27 @@
                     <button class="help-btn" onclick="toggleHelp('snapshotsHelp')" style="margin-left: 10px;">?</button>
                 </div>
                 <div class="help-text" id="snapshotsHelp" style="display: none; margin-bottom: 20px;">
-                    <p><strong>📂 CATALOG SNAPSHOTS</strong></p>
+                    <p><strong>CATALOG SNAPSHOTS</strong></p>
                     <p>Save and load different versions of your catalog. Think of snapshots as version control for your products - perfect for managing seasonal catalogs, testing scenarios, or creating backups.</p>
                     
                     <p><strong>HOW IT WORKS:</strong></p>
                     <ul>
-                        <li>💾 <strong>Save Current Catalog:</strong> Creates a snapshot of your current working catalog with all products and metadata</li>
-                        <li>🔗 <strong>Merge Snapshots:</strong> Combine multiple snapshots into a new one (great for consolidating catalogs)</li>
+                        <li><strong>Save Current Catalog:</strong> Creates a snapshot of your current working catalog with all products and metadata</li>
+                        <li><strong>Merge Snapshots:</strong> Combine multiple snapshots into a new one (great for consolidating catalogs)</li>
                         <li><strong>LOAD:</strong> Replaces your working catalog with the selected snapshot (shown in 2-column list)</li>
                         <li><strong>RENAME:</strong> Change the snapshot name for better organization</li>
                         <li><strong>DEL:</strong> Remove snapshots you no longer need</li>
                         <li><strong>Currently Loaded:</strong> Shows which snapshot is active (if any)</li>
                     </ul>
                     
-                    <p><strong>⚠️ WARNING:</strong> Loading a snapshot replaces your current working catalog. Always save first if you want to keep your current work!</p>
+                    <p><strong>WARNING:</strong> Loading a snapshot replaces your current working catalog. Always save first if you want to keep your current work!</p>
                 </div>
                 
                 <!-- Snapshot Actions -->
                 <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
-                    <button class="btn" onclick="saveCurrentAsSnapshot()">💾 SAVE CURRENT CATALOG</button>
-                    <button class="btn" onclick="showMergeSnapshotsModal()">🔗 MERGE SNAPSHOTS</button>
-                    <button class="btn" onclick="loadSnapshots()">↻ REFRESH</button>
+                    <button class="btn" onclick="saveCurrentAsSnapshot()">SAVE CURRENT CATALOG</button>
+                    <button class="btn" onclick="showMergeSnapshotsModal()">MERGE SNAPSHOTS</button>
+                    <button class="btn" onclick="loadSnapshots()">REFRESH</button>
                 </div>
                 
                 <!-- Active Snapshot Info -->
@@ -802,7 +871,7 @@
                     <button class="help-btn" onclick="toggleHelp('browseHelp')" style="margin-left: 10px;">?</button>
                 </div>
                 <div class="help-text" id="browseHelp" style="display: none; margin-bottom: 20px;">
-                    <p><strong>🔍 BROWSE TAB</strong></p>
+                    <p><strong>BROWSE TAB</strong></p>
                     <p>View and manage individual products in a 2-column list layout. Products are displayed with thumbnails and lazy-loaded for performance.</p>
                     <ul>
                         <li><strong>Search:</strong> Find products by filename, SKU, or name</li>
@@ -846,9 +915,9 @@
                 
                 <!-- Pagination -->
                 <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px; padding: 15px; border-top: 2px solid #000;">
-                    <button id="prevBtn" onclick="prevPage()" disabled class="btn">← PREV</button>
+                    <button id="prevBtn" onclick="prevPage()" disabled class="btn">PREV</button>
                     <span id="pageInfo" style="font-weight: bold;">Page 1 of 1</span>
-                    <button id="nextBtn" onclick="nextPage()" disabled class="btn">NEXT →</button>
+                    <button id="nextBtn" onclick="nextPage()" disabled class="btn">NEXT</button>
                 </div>
             </div>
 
@@ -878,7 +947,7 @@
         <div class="modal-content" style="max-width: 700px;">
             <span class="modal-close" onclick="closeCleanupModal()">×</span>
             <h2 style="margin-bottom: 10px;">DATABASE CLEANUP</h2>
-            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">⚠️ Save a snapshot before cleanup! Deletions are permanent.</p>
+            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">Save a snapshot before cleanup! Deletions are permanent.</p>
             
             <div style="display: flex; flex-direction: column; gap: 12px;">
                 <button class="cleanup-btn danger" onclick="confirmCleanup('all'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">

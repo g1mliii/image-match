@@ -52,8 +52,8 @@ function initCountdown() {
   // Only run if countdown elements exist (on download page)
   if (!windowsCountdown || !macosCountdown) return;
   
-  // Set launch date to January 2, 2026 at midnight
-  const launchDate = new Date('2026-01-02T00:00:00').getTime();
+  // Set launch date to January 31, 2026 at midnight
+  const launchDate = new Date('2026-01-31T00:00:00').getTime();
   
   function updateCountdown() {
     const now = new Date().getTime();
