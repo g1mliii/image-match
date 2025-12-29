@@ -197,6 +197,37 @@ function cleanupResources() {
     }
 }
 
+// Native folder selection helper for pywebview (same as app.js)
+async function selectFolderNative(handleFilesCallback) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.select_folder) {
+        try {
+            const filesInfo = await window.pywebview.api.select_folder();
+            if (filesInfo && filesInfo.length > 0) {
+                // Convert to File-like objects for compatibility
+                const files = await Promise.all(filesInfo.map(async (info) => {
+                    // Fetch the base64 data as blob
+                    const response = await fetch(info.data);
+                    const blob = await response.blob();
+                    // Create a File-like object with webkitRelativePath
+                    const file = new File([blob], info.name, { type: blob.type });
+                    // Add webkitRelativePath for category detection
+                    Object.defineProperty(file, 'webkitRelativePath', {
+                        value: info.relativePath,
+                        writable: false
+                    });
+                    return file;
+                }));
+                handleFilesCallback(files);
+            }
+        } catch (e) {
+            console.error('Native folder selection error:', e);
+            showToast('Error selecting folder: ' + e.message, 'error');
+        }
+        return true; // Handled natively
+    }
+    return false; // Fall back to HTML input
+}
+
 // ===== STEP 1: Upload Images =====
 function initializeStep1() {
     const dropZone = document.getElementById('imageDropZone');
@@ -212,13 +243,23 @@ function initializeStep1() {
         }
     };
 
-    const browseBtnHandler = (e) => {
+    const browseBtnHandler = async (e) => {
         e.stopPropagation();
-        input.click();
+        // Try native folder selection first (for pywebview)
+        const handled = await selectFolderNative(handleImageFiles);
+        if (!handled) {
+            input.click();
+        }
     };
     addTrackedListener(browseBtn, 'click', browseBtnHandler);
 
-    const dropZoneClickHandler = () => input.click();
+    const dropZoneClickHandler = async () => {
+        // Try native folder selection first (for pywebview)
+        const handled = await selectFolderNative(handleImageFiles);
+        if (!handled) {
+            input.click();
+        }
+    };
     addTrackedListener(dropZone, 'click', dropZoneClickHandler);
 
     const dragoverHandler = (e) => {

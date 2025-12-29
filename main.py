@@ -129,6 +129,64 @@ class WebViewAPI:
             print(f"Error saving file: {e}")
             return None
 
+    def select_folder(self):
+        """
+        Open native folder selection dialog.
+        Returns list of image file info objects from selected folder, or None if cancelled.
+        """
+        try:
+            result = webview.windows[0].create_file_dialog(
+                webview.FOLDER_DIALOG
+            )
+
+            if not result:
+                return None
+
+            folder_path = result[0] if isinstance(result, tuple) else result
+            print(f"[FOLDER] Selected: {folder_path}")
+
+            # Get the selected folder name to prefix paths (mimics browser webkitRelativePath behavior)
+            # Browser gives: "SelectedFolder/Subfolder/image.jpg"
+            # We need to match this format for category detection
+            folder_name = os.path.basename(folder_path)
+
+            # Collect all image files from folder and subfolders
+            image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif'}
+            files_info = []
+
+            for root, dirs, files in os.walk(folder_path):
+                for filename in files:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in image_extensions:
+                        full_path = os.path.join(root, filename)
+                        # Get relative path from selected folder
+                        rel_path = os.path.relpath(full_path, folder_path)
+                        # Prefix with folder name to match browser webkitRelativePath format
+                        # "Subfolder/image.jpg" -> "SelectedFolder/Subfolder/image.jpg"
+                        webkit_style_path = os.path.join(folder_name, rel_path).replace(os.sep, '/')
+
+                        # Read file as base64 for transfer to JS
+                        try:
+                            with open(full_path, 'rb') as f:
+                                file_data = base64.b64encode(f.read()).decode('utf-8')
+
+                            files_info.append({
+                                'name': filename,
+                                'path': full_path,
+                                'relativePath': webkit_style_path,
+                                'data': f'data:image/{ext[1:]};base64,{file_data}',
+                                'size': os.path.getsize(full_path)
+                            })
+                        except Exception as e:
+                            print(f"[FOLDER] Error reading {filename}: {e}")
+
+            print(f"[FOLDER] Found {len(files_info)} images")
+            return files_info
+
+        except Exception as e:
+            print(f"Error selecting folder: {e}")
+            return None
+
     # ========== Multi-Window API ==========
 
     def open_csv_builder(self, current_mode='visual', target_section='historical', staging_window_id=None):

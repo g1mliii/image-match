@@ -522,6 +522,37 @@ window.addEventListener('pagehide', () => {
     cleanupMemory();
 });
 
+// Native folder selection helper for pywebview
+async function selectFolderNative(handleFilesCallback) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.select_folder) {
+        try {
+            const filesInfo = await window.pywebview.api.select_folder();
+            if (filesInfo && filesInfo.length > 0) {
+                // Convert to File-like objects for compatibility
+                const files = await Promise.all(filesInfo.map(async (info) => {
+                    // Fetch the base64 data as blob
+                    const response = await fetch(info.data);
+                    const blob = await response.blob();
+                    // Create a File-like object with webkitRelativePath
+                    const file = new File([blob], info.name, { type: blob.type });
+                    // Add webkitRelativePath for category detection
+                    Object.defineProperty(file, 'webkitRelativePath', {
+                        value: info.relativePath,
+                        writable: false
+                    });
+                    return file;
+                }));
+                handleFilesCallback(files);
+            }
+        } catch (e) {
+            console.error('Native folder selection error:', e);
+            showToast('Error selecting folder: ' + e.message, 'error');
+        }
+        return true; // Handled natively
+    }
+    return false; // Fall back to HTML input
+}
+
 // Historical Catalog Upload
 function initHistoricalUpload() {
     const dropZone = document.getElementById('historicalDropZone');
@@ -531,12 +562,21 @@ function initHistoricalUpload() {
     const processBtn = document.getElementById('processHistoricalBtn');
 
     // Use tracked listeners to prevent memory leaks
-    addTrackedListener(browseBtn, 'click', (e) => {
+    addTrackedListener(browseBtn, 'click', async (e) => {
         e.stopPropagation();
-        input.click();
+        // Try native folder selection first (for pywebview)
+        const handled = await selectFolderNative(handleHistoricalFiles);
+        if (!handled) {
+            input.click();
+        }
     }, 'historical');
 
-    addTrackedListener(dropZone, 'click', () => input.click(), 'historical');
+    addTrackedListener(dropZone, 'click', async () => {
+        const handled = await selectFolderNative(handleHistoricalFiles);
+        if (!handled) {
+            input.click();
+        }
+    }, 'historical');
 
     addTrackedListener(dropZone, 'dragover', (e) => {
         e.preventDefault();
@@ -1013,12 +1053,21 @@ function initNewUpload() {
     const processBtn = document.getElementById('processNewBtn');
 
     // Use tracked listeners to prevent memory leaks
-    addTrackedListener(browseBtn, 'click', (e) => {
+    addTrackedListener(browseBtn, 'click', async (e) => {
         e.stopPropagation();
-        input.click();
+        // Try native folder selection first (for pywebview)
+        const handled = await selectFolderNative(handleNewFiles);
+        if (!handled) {
+            input.click();
+        }
     }, 'new');
 
-    addTrackedListener(dropZone, 'click', () => input.click(), 'new');
+    addTrackedListener(dropZone, 'click', async () => {
+        const handled = await selectFolderNative(handleNewFiles);
+        if (!handled) {
+            input.click();
+        }
+    }, 'new');
 
     addTrackedListener(dropZone, 'dragover', (e) => {
         e.preventDefault();
