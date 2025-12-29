@@ -1152,6 +1152,159 @@ def compute_performance_similarity(perf1: Optional[Dict], perf2: Optional[Dict])
 
 
 # ============================================================================
+# DYNAMIC SIMILARITY FUNCTIONS - For dynamic Mode 2/3 matching
+# ============================================================================
+
+def compute_string_similarity(str1: Optional[str], str2: Optional[str]) -> float:
+    """
+    Compute fuzzy string similarity using ratio matching.
+
+    Used for any text/string columns in dynamic matching.
+
+    Args:
+        str1: First string value
+        str2: Second string value
+
+    Returns:
+        Similarity score 0-100 (100 = identical)
+    """
+    # Handle missing values - return neutral score
+    if str1 is None or str2 is None:
+        return 50.0
+
+    # Convert to strings and normalize
+    s1 = str(str1).strip().lower()
+    s2 = str(str2).strip().lower()
+
+    # Empty strings
+    if not s1 or not s2:
+        return 50.0
+
+    # Exact match
+    if s1 == s2:
+        return 100.0
+
+    # Use fuzzywuzzy for similarity
+    from fuzzywuzzy import fuzz
+
+    # Use token_sort_ratio for word order independence
+    # e.g., "blue ceramic mug" vs "ceramic mug blue" = high match
+    similarity = fuzz.token_sort_ratio(s1, s2)
+
+    return float(similarity)
+
+
+def compute_numeric_similarity(val1: Optional[float], val2: Optional[float]) -> float:
+    """
+    Compute numeric similarity based on percentage difference.
+
+    Used for any numeric columns in dynamic matching (price, rating, stock, etc.).
+
+    Args:
+        val1: First numeric value
+        val2: Second numeric value
+
+    Returns:
+        Similarity score 0-100 (100 = identical, 0 = very different)
+    """
+    # Handle missing values - return neutral score
+    if val1 is None or val2 is None:
+        return 50.0
+
+    try:
+        v1 = float(val1)
+        v2 = float(val2)
+    except (ValueError, TypeError):
+        return 50.0
+
+    # Exact match
+    if v1 == v2:
+        return 100.0
+
+    # Handle zeros
+    if v1 == 0 and v2 == 0:
+        return 100.0
+
+    if v1 <= 0 or v2 <= 0:
+        # One is zero/negative, use absolute difference
+        diff = abs(v1 - v2)
+        # Scale: 0 diff = 100, 100 diff = 0
+        return max(0.0, 100.0 - diff)
+
+    # Calculate percentage difference
+    avg_val = (v1 + v2) / 2
+    diff = abs(v1 - v2)
+    percent_diff = (diff / avg_val) * 100
+
+    # More lenient scoring: allow up to 100% difference
+    # 0% diff = 100, 50% diff = 50, 100% diff = 0
+    similarity = max(0.0, 100.0 - percent_diff)
+    return similarity
+
+
+def compute_dynamic_similarity(
+    val1: Any,
+    val2: Any,
+    data_type: str = 'string'
+) -> float:
+    """
+    Compute similarity based on detected data type.
+
+    This is the main entry point for dynamic matching - it routes
+    to the appropriate similarity function based on column data type.
+
+    Args:
+        val1: First value
+        val2: Second value
+        data_type: 'string' or 'numeric'
+
+    Returns:
+        Similarity score 0-100
+    """
+    if data_type == 'numeric':
+        return compute_numeric_similarity(val1, val2)
+    else:
+        return compute_string_similarity(val1, val2)
+
+
+def detect_column_type(values: List[Any]) -> str:
+    """
+    Detect if a column contains numeric or string data.
+
+    Samples values to determine type. If >80% parse as numbers,
+    treat as numeric.
+
+    Args:
+        values: List of column values
+
+    Returns:
+        'numeric' or 'string'
+    """
+    if not values:
+        return 'string'
+
+    # Sample up to 100 values
+    sample = values[:100]
+    numeric_count = 0
+
+    for val in sample:
+        if val is None or val == '':
+            continue
+        try:
+            float(val)
+            numeric_count += 1
+        except (ValueError, TypeError):
+            pass
+
+    # If >80% of non-empty values are numeric, treat as numeric column
+    non_empty = sum(1 for v in sample if v is not None and v != '')
+    if non_empty > 0 and (numeric_count / non_empty) > 0.8:
+        return 'numeric'
+
+    return 'string'
+
+
+# ============================================================================
 # MODE 3: HYBRID MATCHING (VISUAL + METADATA)
 # ============================================================================
 # NOTE: Mode 3 implementation has been moved to backend/hybrid_matching.py
@@ -1165,6 +1318,7 @@ def find_metadata_matches(
     product_id: int,
     threshold: float = 0.0,
     limit: int = 10,
+    weights: Optional[Dict[str, float]] = None,
     sku_weight: float = 0.30,
     name_weight: float = 0.30,
     category_weight: float = 0.25,
@@ -1176,39 +1330,48 @@ def find_metadata_matches(
 ) -> Dict[str, Any]:
     """
     Find similar products based on metadata only (Mode 2).
-    
-    This function matches products using CSV metadata without requiring images:
-    - SKU pattern matching
-    - Product name similarity
-    - Category matching
-    - Price range similarity
-    - Performance tier matching
-    
-    Handles all real-world data issues:
-    - Missing fields (NULL values)
-    - Malformed data
-    - Invalid formats
-    - Corrupted entries
-    
+
+    Supports two modes:
+    1. DYNAMIC MODE (when weights dict is provided): Matches on any columns
+       defined in the weights dict, using data from product.metadata JSON
+    2. LEGACY MODE (when weights dict is None): Uses hardcoded 5 columns
+       (sku, name, category, price, performance) with individual weight params
+
     Args:
         product_id: ID of product to match
         threshold: Minimum similarity score (0-100)
         limit: Maximum number of matches
-        sku_weight: Weight for SKU similarity (default: 0.30)
-        name_weight: Weight for name similarity (default: 0.30)
-        category_weight: Weight for category match (default: 0.25)
-        price_weight: Weight for price similarity (default: 0.10)
-        performance_weight: Weight for performance similarity (default: 0.05)
+        weights: Dynamic weights dict mapping column names to weights (0-1).
+                 Example: {'sku': 0.3, 'name': 0.3, 'brand': 0.2, 'price': 0.2}
+                 If provided, uses dynamic matching mode.
+        sku_weight: (Legacy) Weight for SKU similarity
+        name_weight: (Legacy) Weight for name similarity
+        category_weight: (Legacy) Weight for category match
+        price_weight: (Legacy) Weight for price similarity
+        performance_weight: (Legacy) Weight for performance similarity
         store_matches: Whether to store results in database
         skip_invalid_products: Continue on errors
-    
+        match_against_all: Match against all products regardless of category
+
     Returns:
-        Dictionary with matches and metadata
-    
+        Dictionary with matches and metadata.
+        In dynamic mode, each match includes 'metadata_scores' dict with per-column scores.
+
     Raises:
         ProductNotFoundError: If product doesn't exist
         EmptyCatalogError: If no products to match against
     """
+    # If dynamic weights provided, use dynamic matching
+    if weights is not None:
+        return _find_dynamic_metadata_matches(
+            product_id=product_id,
+            threshold=threshold,
+            limit=limit,
+            weights=weights,
+            store_matches=store_matches,
+            skip_invalid_products=skip_invalid_products,
+            match_against_all=match_against_all
+        )
     warnings_list = []
     errors_list = []
     data_quality_issues = {
@@ -1454,7 +1617,212 @@ def find_metadata_matches(
     }
     
     logger.info(f"Metadata matching complete: {len(matches)} matches, {successful_count} successful, {failed_count} failed")
-    
+
+    return result
+
+
+def _find_dynamic_metadata_matches(
+    product_id: int,
+    threshold: float = 0.0,
+    limit: int = 10,
+    weights: Dict[str, float] = None,
+    store_matches: bool = True,
+    skip_invalid_products: bool = True,
+    match_against_all: bool = False
+) -> Dict[str, Any]:
+    """
+    Internal function for dynamic metadata matching.
+
+    Matches products based on any columns defined in the weights dict,
+    using data from the product.metadata JSON field and standard columns.
+
+    Args:
+        product_id: ID of product to match
+        threshold: Minimum similarity score (0-100)
+        limit: Maximum number of matches
+        weights: Dict mapping column names to weights (must sum to ~1.0)
+        store_matches: Whether to store results in database
+        skip_invalid_products: Continue on errors
+        match_against_all: Match against all products
+
+    Returns:
+        Dictionary with matches and metadata_scores per match
+    """
+    import json
+    from database import get_metadata_schema, get_product_metadata as db_get_product_metadata
+
+    warnings_list = []
+    errors_list = []
+
+    logger.info(f"Finding dynamic metadata matches for product {product_id}")
+    logger.info(f"Weights: {weights}")
+
+    if not weights:
+        raise ValueError("Weights dict is required for dynamic matching")
+
+    # Normalize weights to sum to 1.0
+    total_weight = sum(weights.values())
+    if total_weight > 0:
+        weights = {k: v / total_weight for k, v in weights.items()}
+
+    # Get schema for data types
+    schema = get_metadata_schema()
+    schema_types = {col['column_name']: col['data_type'] for col in schema}
+
+    # Step 1: Get query product
+    product = get_product_by_id(product_id)
+    if not product:
+        raise ProductNotFoundError(product_id)
+
+    # Build query metadata from product fields + metadata JSON
+    query_metadata = {}
+
+    # Standard product fields
+    if product.get('sku'):
+        query_metadata['sku'] = product['sku']
+    if product.get('product_name'):
+        query_metadata['name'] = product['product_name']
+    if product.get('category'):
+        query_metadata['category'] = product['category']
+
+    # Parse metadata JSON if exists
+    product_meta = db_get_product_metadata(product_id)
+    if product_meta:
+        query_metadata.update(product_meta)
+
+    logger.info(f"Query metadata: {query_metadata}")
+
+    # Step 2: Get candidate products
+    from database import get_all_products_with_metadata
+
+    try:
+        candidates = get_all_products_with_metadata(is_historical=True)
+    except Exception as e:
+        logger.error(f"Failed to get candidates: {e}")
+        raise EmptyCatalogError()
+
+    if not candidates:
+        raise EmptyCatalogError()
+
+    logger.info(f"Found {len(candidates)} candidate products")
+
+    # Step 3: Compute similarities
+    matches = []
+    successful_count = 0
+    failed_count = 0
+
+    for candidate in candidates:
+        candidate_id = candidate['id']
+
+        # Skip self
+        if candidate_id == product_id:
+            continue
+
+        try:
+            # Build candidate metadata from product fields + metadata JSON
+            cand_metadata = {}
+
+            if candidate.get('sku'):
+                cand_metadata['sku'] = candidate['sku']
+            if candidate.get('product_name'):
+                cand_metadata['name'] = candidate['product_name']
+            if candidate.get('category'):
+                cand_metadata['category'] = candidate['category']
+
+            # Add metadata JSON fields
+            if candidate.get('metadata'):
+                cand_metadata.update(candidate['metadata'])
+
+            # Compute similarity for each weighted column
+            metadata_scores = {}
+            combined_sim = 0.0
+
+            for column, weight in weights.items():
+                query_val = query_metadata.get(column)
+                cand_val = cand_metadata.get(column)
+
+                # Get data type from schema, default to string
+                data_type = schema_types.get(column, 'string')
+
+                # Compute similarity
+                sim = compute_dynamic_similarity(query_val, cand_val, data_type)
+                metadata_scores[column] = sim
+
+                # Add weighted score
+                combined_sim += sim * weight
+
+            # Create match result
+            match_result = {
+                'product_id': candidate_id,
+                'image_path': candidate.get('image_path', ''),
+                'category': candidate.get('category'),
+                'product_name': candidate.get('product_name'),
+                'sku': candidate.get('sku'),
+                'similarity_score': combined_sim,
+                'metadata_scores': metadata_scores,
+                'is_potential_duplicate': combined_sim > 90,
+            }
+
+            matches.append(match_result)
+            successful_count += 1
+
+        except Exception as e:
+            logger.error(f"Error processing candidate {candidate_id}: {e}")
+            failed_count += 1
+            errors_list.append({
+                'product_id': candidate_id,
+                'error': str(e),
+                'error_code': 'PROCESSING_ERROR'
+            })
+            if not skip_invalid_products:
+                raise
+
+    # Step 4: Sort and filter
+    matches.sort(key=lambda x: x['similarity_score'], reverse=True)
+
+    filtered_count = 0
+    if threshold > 0:
+        original_count = len(matches)
+        matches = [m for m in matches if m['similarity_score'] >= threshold]
+        filtered_count = original_count - len(matches)
+
+    if limit > 0:
+        matches = matches[:limit]
+
+    # Step 5: Store matches (optional)
+    if store_matches and matches:
+        try:
+            from database import bulk_insert_matches
+
+            matches_to_insert = [
+                (product_id, match['product_id'], match['similarity_score'],
+                 0, 0, 0)
+                for match in matches
+            ]
+
+            inserted_count = bulk_insert_matches(matches_to_insert)
+            logger.info(f"Batch inserted {inserted_count} matches")
+        except Exception as e:
+            logger.error(f"Failed to store matches: {e}")
+            warnings_list.append(f"Failed to store matches: {str(e)}")
+
+    # Step 6: Prepare response
+    result = {
+        'matches': matches,
+        'total_candidates': len(candidates),
+        'successful_matches': successful_count,
+        'failed_matches': failed_count,
+        'filtered_by_threshold': filtered_count,
+        'threshold_used': threshold,
+        'limit_used': limit,
+        'matching_mode': 'metadata_dynamic',
+        'weights_used': weights,
+        'warnings': warnings_list,
+        'errors': errors_list if errors_list else None,
+    }
+
+    logger.info(f"Dynamic metadata matching complete: {len(matches)} matches")
+
     return result
 
 
@@ -1769,6 +2137,7 @@ def batch_find_metadata_matches(
     product_ids: List[int],
     threshold: float = 0.0,
     limit: int = 10,
+    weights: Optional[Dict[str, float]] = None,
     sku_weight: float = 0.30,
     name_weight: float = 0.30,
     category_weight: float = 0.25,
@@ -1781,29 +2150,30 @@ def batch_find_metadata_matches(
 ) -> Dict[str, Any]:
     """
     Find metadata matches for multiple products in batch with parallel processing.
-    
+
     Mode 2 (Metadata-only matching) with CPU multithreading optimization.
     Perfect for CSV-only workflows without images.
-    
+
     PERFORMANCE OPTIMIZATIONS:
     - Parallel processing using ThreadPoolExecutor
     - Batch metadata fetching (price/performance data loaded once)
     - Isolated error handling per product
-    
+
     Args:
         product_ids: List of product IDs to match
         threshold: Minimum similarity score (0-100)
         limit: Maximum matches per product
-        sku_weight: Weight for SKU similarity
-        name_weight: Weight for name similarity
-        category_weight: Weight for category similarity
-        price_weight: Weight for price similarity
-        performance_weight: Weight for performance similarity
+        weights: (NEW) Dynamic weights dict for metadata columns
+        sku_weight: (Legacy) Weight for SKU similarity
+        name_weight: (Legacy) Weight for name similarity
+        category_weight: (Legacy) Weight for category similarity
+        price_weight: (Legacy) Weight for price similarity
+        performance_weight: (Legacy) Weight for performance similarity
         store_matches: Store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories
         max_workers: Number of parallel workers (default: cpu_count + 4)
-    
+
     Returns:
         Dictionary with results and summary
     """
@@ -1825,19 +2195,31 @@ def batch_find_metadata_matches(
     def process_single_metadata_match(product_id: int) -> Tuple[int, Dict[str, Any]]:
         """Process a single product metadata match"""
         try:
-            match_result = find_metadata_matches(
-                product_id=product_id,
-                threshold=threshold,
-                limit=limit,
-                sku_weight=sku_weight,
-                name_weight=name_weight,
-                category_weight=category_weight,
-                price_weight=price_weight,
-                performance_weight=performance_weight,
-                store_matches=store_matches,
-                skip_invalid_products=skip_invalid_products,
-                match_against_all=match_against_all
-            )
+            # Use dynamic weights if provided, otherwise use legacy individual weights
+            if weights is not None:
+                match_result = find_metadata_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    weights=weights,
+                    store_matches=store_matches,
+                    skip_invalid_products=skip_invalid_products,
+                    match_against_all=match_against_all
+                )
+            else:
+                match_result = find_metadata_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    sku_weight=sku_weight,
+                    name_weight=name_weight,
+                    category_weight=category_weight,
+                    price_weight=price_weight,
+                    performance_weight=performance_weight,
+                    store_matches=store_matches,
+                    skip_invalid_products=skip_invalid_products,
+                    match_against_all=match_against_all
+                )
             
             return (product_id, {
                 'product_id': product_id,

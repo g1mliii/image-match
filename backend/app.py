@@ -22,7 +22,10 @@ from database import (
     delete_product, bulk_delete_products, bulk_update_products, clear_products_by_type,
     clear_all_matches, clear_products_by_categories, clear_products_by_date,
     vacuum_database, clear_uploaded_images, export_catalog_csv, delete_features,
-    get_db_connection
+    get_db_connection,
+    # Dynamic metadata schema functions
+    save_metadata_schema, get_metadata_schema, clear_metadata_schema,
+    update_product_metadata, get_product_metadata
 )
 from image_processing import (
     validate_image_file,
@@ -60,6 +63,24 @@ logger = logging.getLogger(__name__)
 
 # Suppress werkzeug HTTP request logs (too verbose)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+# Suppress noisy SWIG DeprecationWarnings from faiss/other C-extensions
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r"builtin type SwigPyPacked has no __module__ attribute",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"builtin type SwigPyObject has no __module__ attribute",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"builtin type swigvarlink has no __module__ attribute",
+    category=DeprecationWarning,
+)
 
 # App Lock and Crash Detection
 BACKEND_DIR = os.path.dirname(__file__)
@@ -889,6 +910,154 @@ def create_metadata_products_batch():
         )
 
 
+@app.route('/api/metadata-schema', methods=['GET'])
+def get_metadata_schema_endpoint():
+    """
+    Get the current metadata schema (detected columns from CSV upload).
+
+    Returns:
+    - 200: Schema with columns and their data types
+    - 500: Server error
+    """
+    try:
+        schema = get_metadata_schema()
+
+        return jsonify({
+            'success': True,
+            'schema': schema,
+            'column_count': len(schema)
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting metadata schema: {e}")
+        return create_error_response(
+            'SCHEMA_ERROR',
+            str(e),
+            'Failed to retrieve metadata schema',
+            status_code=500
+        )
+
+
+@app.route('/api/metadata-schema', methods=['POST'])
+def save_metadata_schema_endpoint():
+    """
+    Save metadata schema (called after CSV parsing to register detected columns).
+
+    JSON body:
+    {
+        "columns": [
+            {"column_name": "brand", "data_type": "string", "display_name": "Brand"},
+            {"column_name": "price", "data_type": "numeric", "display_name": "Price"},
+            ...
+        ],
+        "clear_existing": true  // Optional: clear existing schema first
+    }
+
+    Returns:
+    - 200: Schema saved successfully
+    - 400: Validation error
+    - 500: Server error
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return create_error_response(
+                'MISSING_DATA',
+                'No JSON data provided',
+                'Please provide schema columns in JSON format',
+                status_code=400
+            )
+
+        columns = data.get('columns', [])
+        clear_existing = data.get('clear_existing', True)
+
+        if not columns:
+            return create_error_response(
+                'MISSING_COLUMNS',
+                'No columns provided',
+                'Please provide at least one column definition',
+                status_code=400
+            )
+
+        # Validate column structure
+        for col in columns:
+            if 'column_name' not in col:
+                return create_error_response(
+                    'INVALID_COLUMN',
+                    'Each column must have a column_name',
+                    'Provide column_name for all columns',
+                    status_code=400
+                )
+
+        # Clear existing schema if requested
+        if clear_existing:
+            clear_metadata_schema()
+
+        # Save new schema
+        success = save_metadata_schema(columns)
+
+        if success:
+            logger.info(f"Saved metadata schema with {len(columns)} columns")
+            return jsonify({
+                'success': True,
+                'message': f'Saved {len(columns)} column definitions',
+                'columns': columns
+            }), 200
+        else:
+            return create_error_response(
+                'SCHEMA_SAVE_ERROR',
+                'Failed to save schema',
+                'Database operation failed',
+                status_code=500
+            )
+
+    except Exception as e:
+        logger.error(f"Error saving metadata schema: {e}")
+        return create_error_response(
+            'SCHEMA_ERROR',
+            str(e),
+            'Failed to save metadata schema',
+            status_code=500
+        )
+
+
+@app.route('/api/metadata-schema', methods=['DELETE'])
+def clear_metadata_schema_endpoint():
+    """
+    Clear the metadata schema.
+
+    Returns:
+    - 200: Schema cleared
+    - 500: Server error
+    """
+    try:
+        success = clear_metadata_schema()
+
+        if success:
+            logger.info("Cleared metadata schema")
+            return jsonify({
+                'success': True,
+                'message': 'Metadata schema cleared'
+            }), 200
+        else:
+            return create_error_response(
+                'SCHEMA_CLEAR_ERROR',
+                'Failed to clear schema',
+                'Database operation failed',
+                status_code=500
+            )
+
+    except Exception as e:
+        logger.error(f"Error clearing metadata schema: {e}")
+        return create_error_response(
+            'SCHEMA_ERROR',
+            str(e),
+            'Failed to clear metadata schema',
+            status_code=500
+        )
+
+
 @app.route('/api/products/upload', methods=['POST'])
 def upload_product():
     """
@@ -1688,14 +1857,54 @@ def match_products():
                 status_code=400
             )
         
-        # Get metadata weights if provided
-        sku_weight = data.get('sku_weight', 0.30)
-        name_weight = data.get('name_weight', 0.30)
-        category_weight_meta = data.get('category_weight', 0.25)
-        price_weight = data.get('price_weight', 0.10)
-        performance_weight = data.get('performance_weight', 0.05)
-        
-        logger.info(f"[MATCH] Metadata weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight_meta}, Price={price_weight}, Performance={performance_weight}")
+        # Get metadata weights - support both dynamic dict and legacy individual weights
+        metadata_weights = data.get('metadata_weights', None)
+
+        if metadata_weights is not None:
+            # Dynamic weights mode - normalize and validate
+            if not isinstance(metadata_weights, dict):
+                return create_error_response(
+                    'INVALID_METADATA_WEIGHTS',
+                    'metadata_weights must be a dictionary',
+                    'Provide weights as {"column_name": weight_value}',
+                    status_code=400
+                )
+
+            # Validate all weights are non-negative numbers
+            try:
+                for col, weight in metadata_weights.items():
+                    if float(weight) < 0:
+                        return create_error_response(
+                            'INVALID_METADATA_WEIGHTS',
+                            f'Weight for {col} must be non-negative',
+                            'All weights must be >= 0',
+                            status_code=400
+                        )
+                # Normalize to floats
+                metadata_weights = {k: float(v) for k, v in metadata_weights.items()}
+            except (ValueError, TypeError) as e:
+                return create_error_response(
+                    'INVALID_METADATA_WEIGHTS',
+                    'All weights must be numbers',
+                    str(e),
+                    status_code=400
+                )
+
+            # Normalize weights to sum to 1.0
+            total_weight = sum(metadata_weights.values())
+            if total_weight > 0:
+                metadata_weights = {k: v / total_weight for k, v in metadata_weights.items()}
+
+            logger.info(f"[MATCH] Using dynamic metadata weights: {metadata_weights}")
+        else:
+            # Legacy mode - use individual weight params
+            sku_weight = data.get('sku_weight', 0.30)
+            name_weight = data.get('name_weight', 0.30)
+            category_weight_meta = data.get('category_weight', 0.25)
+            price_weight = data.get('price_weight', 0.10)
+            performance_weight = data.get('performance_weight', 0.05)
+
+            logger.info(f"[MATCH] Metadata weights (legacy): SKU={sku_weight}, Name={name_weight}, Category={category_weight_meta}, Price={price_weight}, Performance={performance_weight}")
         
         # Get hybrid weights if provided
         visual_weight = data.get('visual_weight', 0.50)
@@ -1752,21 +1961,37 @@ def match_products():
             if use_hybrid:
                 # Mode 3: Hybrid matching (visual + metadata)
                 logger.info(f"Product {product_id} using hybrid matching (visual: {visual_weight*100}%, metadata: {metadata_weight*100}%)")
-                result = find_hybrid_matches(
-                    product_id=product_id,
-                    threshold=threshold,
-                    limit=limit,
-                    visual_weight=visual_weight,
-                    metadata_weight=metadata_weight,
-                    sku_weight=sku_weight,
-                    name_weight=name_weight,
-                    category_weight=category_weight_meta,
-                    price_weight=price_weight,
-                    performance_weight=performance_weight,
-                    store_matches=True,
-                    skip_invalid_products=True,
-                    match_against_all=match_against_all
-                )
+
+                if metadata_weights is not None:
+                    # Dynamic weights mode
+                    result = find_hybrid_matches(
+                        product_id=product_id,
+                        threshold=threshold,
+                        limit=limit,
+                        visual_weight=visual_weight,
+                        metadata_weight=metadata_weight,
+                        metadata_weights=metadata_weights,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
+                else:
+                    # Legacy mode
+                    result = find_hybrid_matches(
+                        product_id=product_id,
+                        threshold=threshold,
+                        limit=limit,
+                        visual_weight=visual_weight,
+                        metadata_weight=metadata_weight,
+                        sku_weight=sku_weight,
+                        name_weight=name_weight,
+                        category_weight=category_weight_meta,
+                        price_weight=price_weight,
+                        performance_weight=performance_weight,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
             elif has_features:
                 # Mode 1: Pure visual matching
                 logger.info(f"Product {product_id} using visual matching")
@@ -1785,19 +2010,33 @@ def match_products():
             else:
                 # Mode 2: Metadata matching only (no visual features)
                 logger.info(f"Product {product_id} has no visual features, using metadata matching")
-                result = find_metadata_matches(
-                    product_id=product_id,
-                    threshold=threshold,
-                    limit=limit,
-                    sku_weight=sku_weight,
-                    name_weight=name_weight,
-                    category_weight=category_weight_meta,
-                    price_weight=price_weight,
-                    performance_weight=performance_weight,
-                    store_matches=True,
-                    skip_invalid_products=True,
-                    match_against_all=match_against_all
-                )
+
+                if metadata_weights is not None:
+                    # Dynamic weights mode
+                    result = find_metadata_matches(
+                        product_id=product_id,
+                        threshold=threshold,
+                        limit=limit,
+                        weights=metadata_weights,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
+                else:
+                    # Legacy mode
+                    result = find_metadata_matches(
+                        product_id=product_id,
+                        threshold=threshold,
+                        limit=limit,
+                        sku_weight=sku_weight,
+                        name_weight=name_weight,
+                        category_weight=category_weight_meta,
+                        price_weight=price_weight,
+                        performance_weight=performance_weight,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
             
             # Prepare response
             response = {
@@ -1959,13 +2198,39 @@ def batch_match_products():
                 status_code=400
             )
         
-        # Get metadata weights
-        sku_weight = float(data.get('sku_weight', 0.30))
-        name_weight = float(data.get('name_weight', 0.30))
-        category_weight = float(data.get('category_weight', 0.25))
-        price_weight = float(data.get('price_weight', 0.10))
-        performance_weight = float(data.get('performance_weight', 0.05))
-        
+        # Get metadata weights - support both dynamic dict and legacy individual weights
+        metadata_weights = data.get('metadata_weights', None)
+
+        if metadata_weights is not None:
+            # Dynamic weights mode - normalize
+            if not isinstance(metadata_weights, dict):
+                return create_error_response(
+                    'INVALID_METADATA_WEIGHTS',
+                    'metadata_weights must be a dictionary',
+                    'Provide weights as {"column_name": weight_value}',
+                    status_code=400
+                )
+            try:
+                metadata_weights = {k: float(v) for k, v in metadata_weights.items()}
+                total_meta_weight = sum(metadata_weights.values())
+                if total_meta_weight > 0:
+                    metadata_weights = {k: v / total_meta_weight for k, v in metadata_weights.items()}
+            except (ValueError, TypeError) as e:
+                return create_error_response(
+                    'INVALID_METADATA_WEIGHTS',
+                    'All metadata weights must be numbers',
+                    str(e),
+                    status_code=400
+                )
+            logger.info(f"[BATCH] Using dynamic metadata weights: {metadata_weights}")
+        else:
+            # Legacy mode
+            sku_weight = float(data.get('sku_weight', 0.30))
+            name_weight = float(data.get('name_weight', 0.30))
+            category_weight = float(data.get('category_weight', 0.25))
+            price_weight = float(data.get('price_weight', 0.10))
+            performance_weight = float(data.get('performance_weight', 0.05))
+
         logger.info(f"[BATCH] Starting batch matching for {len(product_ids)} products")
         logger.info(f"[BATCH] Weights - Visual: {visual_weight*100}%, Metadata: {metadata_weight*100}%")
         logger.info(f"[BATCH] Parameters - Threshold: {threshold}, Limit: {limit}, Match all: {match_against_all}")
@@ -1984,21 +2249,37 @@ def batch_match_products():
                 # Mode 3: Hybrid batch matching
                 logger.info(f"[BATCH] Mode 3 (Hybrid) - Processing {len(product_ids)} products in parallel")
                 logger.info(f"[BATCH] Mode 3 will run Mode 1 (Visual) and Mode 2 (Metadata) simultaneously")
-                result = batch_find_hybrid_matches(
-                    product_ids=product_ids,
-                    threshold=threshold,
-                    limit=limit,
-                    visual_weight=visual_weight,
-                    metadata_weight=metadata_weight,
-                    sku_weight=sku_weight,
-                    name_weight=name_weight,
-                    category_weight=category_weight,
-                    price_weight=price_weight,
-                    performance_weight=performance_weight,
-                    store_matches=True,
-                    skip_invalid_products=True,
-                    match_against_all=match_against_all
-                )
+
+                if metadata_weights is not None:
+                    # Dynamic weights mode
+                    result = batch_find_hybrid_matches(
+                        product_ids=product_ids,
+                        threshold=threshold,
+                        limit=limit,
+                        visual_weight=visual_weight,
+                        metadata_weight=metadata_weight,
+                        metadata_weights=metadata_weights,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
+                else:
+                    # Legacy mode
+                    result = batch_find_hybrid_matches(
+                        product_ids=product_ids,
+                        threshold=threshold,
+                        limit=limit,
+                        visual_weight=visual_weight,
+                        metadata_weight=metadata_weight,
+                        sku_weight=sku_weight,
+                        name_weight=name_weight,
+                        category_weight=category_weight,
+                        price_weight=price_weight,
+                        performance_weight=performance_weight,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
             elif is_pure_visual:
                 # Mode 1: Visual batch matching
                 logger.info(f"[BATCH] Mode 1 (Visual) - Processing {len(product_ids)} products in parallel")
@@ -2014,37 +2295,64 @@ def batch_match_products():
             elif is_pure_metadata:
                 # Mode 2: Metadata batch matching
                 logger.info(f"[BATCH] Mode 2 (Metadata) - Processing {len(product_ids)} products in parallel")
-                logger.info(f"[BATCH] Mode 2 metadata weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight}, Price={price_weight}, Performance={performance_weight}")
                 logger.info(f"[BATCH] Mode 2 will use ThreadPoolExecutor for parallel metadata comparison (no GPU needed)")
-                result = batch_find_metadata_matches(
-                    product_ids=product_ids,
-                    threshold=threshold,
-                    limit=limit,
-                    sku_weight=sku_weight,
-                    name_weight=name_weight,
-                    category_weight=category_weight,
-                    price_weight=price_weight,
-                    performance_weight=performance_weight,
-                    store_matches=True,
-                    skip_invalid_products=True,
-                    match_against_all=match_against_all
-                )
+
+                if metadata_weights is not None:
+                    # Dynamic weights mode
+                    logger.info(f"[BATCH] Mode 2 using dynamic weights: {metadata_weights}")
+                    result = batch_find_metadata_matches(
+                        product_ids=product_ids,
+                        threshold=threshold,
+                        limit=limit,
+                        weights=metadata_weights,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
+                else:
+                    # Legacy mode
+                    logger.info(f"[BATCH] Mode 2 metadata weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight}, Price={price_weight}, Performance={performance_weight}")
+                    result = batch_find_metadata_matches(
+                        product_ids=product_ids,
+                        threshold=threshold,
+                        limit=limit,
+                        sku_weight=sku_weight,
+                        name_weight=name_weight,
+                        category_weight=category_weight,
+                        price_weight=price_weight,
+                        performance_weight=performance_weight,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
             else:
                 # Fallback: shouldn't happen, but default to metadata
                 logger.warning(f"[BATCH] Unexpected weight combination: visual={visual_weight}, metadata={metadata_weight}. Defaulting to Mode 2 (Metadata)")
-                result = batch_find_metadata_matches(
-                    product_ids=product_ids,
-                    threshold=threshold,
-                    limit=limit,
-                    sku_weight=sku_weight,
-                    name_weight=name_weight,
-                    category_weight=category_weight,
-                    price_weight=price_weight,
-                    performance_weight=performance_weight,
-                    store_matches=True,
-                    skip_invalid_products=True,
-                    match_against_all=match_against_all
-                )
+
+                if metadata_weights is not None:
+                    result = batch_find_metadata_matches(
+                        product_ids=product_ids,
+                        threshold=threshold,
+                        limit=limit,
+                        weights=metadata_weights,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
+                else:
+                    result = batch_find_metadata_matches(
+                        product_ids=product_ids,
+                        threshold=threshold,
+                        limit=limit,
+                        sku_weight=sku_weight,
+                        name_weight=name_weight,
+                        category_weight=category_weight,
+                        price_weight=price_weight,
+                        performance_weight=performance_weight,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        match_against_all=match_against_all
+                    )
             
             # Prepare response
             response = {

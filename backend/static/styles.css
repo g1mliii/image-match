@@ -1248,65 +1248,6 @@ img.image-loading::after {
     animation: spin 1s linear infinite;
 }
 
-/* PRICE/PERFORMANCE */
-.price-sparkline,
-.performance-sparkline {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 10px;
-    padding: 8px;
-    border: 2px solid #000;
-}
-
-.price-current,
-.performance-sales {
-    font-weight: bold;
-}
-
-.price-trend,
-.performance-trend {
-    font-size: 18px;
-    font-weight: bold;
-}
-
-.price-history-section,
-.performance-history-section {
-    margin-top: 20px;
-    padding: 20px;
-    border: 2px solid #000;
-}
-
-.price-statistics,
-.performance-statistics {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
-}
-
-.price-stat,
-.performance-stat {
-    text-align: center;
-    padding: 15px;
-    border: 2px solid #000;
-}
-
-.price-stat-label,
-.performance-stat-label {
-    display: block;
-    font-size: 11px;
-    font-weight: bold;
-    margin-bottom: 8px;
-}
-
-.price-stat-value,
-.performance-stat-value {
-    display: block;
-    font-size: 20px;
-    font-weight: bold;
-}
-
 /* DUPLICATE REPORT */
 .duplicate-item {
     display: flex;

@@ -48,15 +48,12 @@
         async function closeAndReturn() {
             if (isChildWindow()) {
                 try {
-                    // Use pywebview API to close the window
                     await window.pywebview.api.close_window();
                 } catch (e) {
                     console.error('Error closing window:', e);
-                    // Fallback - try window.close()
                     window.close();
                 }
             } else {
-                // Browser mode - navigate back
                 window.location.href = '/';
             }
         }
@@ -73,11 +70,9 @@
                 const productCount = window.state?.products?.length || 0;
                 const section = window.csvBuilderContext?.section || 'historical';
 
-                // Save to staging directory via pywebview API
                 const result = await window.pywebview.api.save_to_staging(csvContent, section, productCount);
 
                 if (result) {
-                    // Notify main app and close this window
                     await window.pywebview.api.close_and_notify('csv_builder_complete', {
                         section: section,
                         product_count: productCount
@@ -102,15 +97,12 @@
             </div>
             <div class="help-text" id="builderHelp" style="display: none; margin-top: 15px; text-align: left;">
                 <p><strong>WHAT IS THE CSV BUILDER?</strong></p>
-                <p>The CSV Builder helps you create a CSV file with product metadata (SKU, names, prices, sales data) that matches your product images.</p>
+                <p>The CSV Builder helps you create or import CSV files with product metadata that matches your product images.</p>
                 <p><strong>HOW IT WORKS:</strong></p>
-                <p>1. Upload your product images - filenames are automatically extracted</p>
-                <p>2. Link existing product data OR export template to fill in Excel</p>
-                <p>3. Review and edit metadata for each product</p>
-                <p>4. Optionally add price and performance history</p>
-                <p>5. Export or load directly to main app</p>
-                <p><strong>WHY USE IT?</strong> The CSV Builder ensures your filenames match perfectly and makes it easy to add metadata without manually creating a CSV file. It works with YOUR existing data structure!</p>
-                <p><strong>FLEXIBLE LINKING:</strong> Already have product data in Excel or your ERP? Import it and we'll automatically link it to your images using smart matching strategies.</p>
+                <p>1. Upload your product images OR import a CSV file directly</p>
+                <p>2. Link data to images using matching strategies, preview detected columns</p>
+                <p>3. Export or load directly to main app</p>
+                <p><strong>DYNAMIC COLUMNS:</strong> Any CSV columns you upload will be detected and available for weighted matching in the main app!</p>
             </div>
             <button onclick="closeAndReturn()" class="btn-link">CLOSE</button>
             <span id="targetSection" style="margin-left: 10px; font-size: 0.9em; color: #666;"></span>
@@ -121,22 +113,14 @@
             <div class="progress-steps">
                 <div class="progress-step active" data-step="1">
                     <span class="step">1</span>
-                    <span>UPLOAD IMAGES</span>
+                    <span>UPLOAD</span>
                 </div>
                 <div class="progress-step" data-step="2">
                     <span class="step">2</span>
-                    <span>IMPORT CSV</span>
+                    <span>LINK & PREVIEW</span>
                 </div>
                 <div class="progress-step" data-step="3">
                     <span class="step">3</span>
-                    <span>EDIT METADATA</span>
-                </div>
-                <div class="progress-step" data-step="4">
-                    <span class="step">4</span>
-                    <span>EDIT HISTORY</span>
-                </div>
-                <div class="progress-step" data-step="5">
-                    <span class="step">5</span>
                     <span>EXPORT</span>
                 </div>
             </div>
@@ -144,92 +128,77 @@
             <!-- Step 1: Upload -->
             <section class="section" id="step1" style="display: block;">
                 <div class="section-header">
-                    <h2>STEP 1: UPLOAD IMAGES</h2>
+                    <h2>STEP 1: UPLOAD</h2>
                     <button class="help-btn" onclick="toggleHelp('step1Help')">?</button>
                 </div>
                 <div class="help-text" id="step1Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>HOW TO UPLOAD:</strong></p>
-                    <p>1. Click "BROWSE" or drag and drop a folder</p>
-                    <p>2. Select a folder containing your product images</p>
-                    <p>3. Images can be in subfolders (categories will be auto-detected from folder names)</p>
-                    <p>4. Supported formats: JPG, PNG, WebP</p>
-                    <p><strong>WHAT HAPPENS:</strong> We'll extract filenames and detect categories from your folder structure. Next, you can link existing product data or enter metadata manually.</p>
-                    <p><strong>TIP:</strong> Organize images in subfolders by category (e.g., /plates/, /placemats/) for automatic categorization!</p>
+                    <p><strong>TWO WAYS TO START:</strong></p>
+                    <p><strong>OPTION 1: Upload Images</strong> - Drop a folder of images. Filenames will be extracted and you can link CSV data in the next step.</p>
+                    <p><strong>OPTION 2: Import CSV Directly</strong> - If you already have a complete CSV with all data, import it directly.</p>
+                    <p><strong>SUPPORTED FORMATS:</strong> Images (JPG, PNG, WebP), CSV files</p>
                 </div>
 
-                <div class="upload-box">
-                    <div class="drop-zone" id="imageDropZone">
-                        <p>DROP FOLDER HERE</p>
-                        <button class="btn" id="imageBrowseBtn">BROWSE</button>
-                        <input type="file" id="imageInput" webkitdirectory directory multiple hidden>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <!-- Image Upload -->
+                    <div class="upload-box">
+                        <h3 style="margin-bottom: 10px;">UPLOAD IMAGES</h3>
+                        <div class="drop-zone" id="imageDropZone">
+                            <p>DROP FOLDER HERE</p>
+                            <button class="btn" id="imageBrowseBtn">BROWSE</button>
+                            <input type="file" id="imageInput" webkitdirectory directory multiple hidden>
+                        </div>
+                        <div class="file-info" id="imageInfo"></div>
                     </div>
-                    <div class="file-info" id="imageInfo"></div>
+
+                    <!-- Direct CSV Import -->
+                    <div class="upload-box">
+                        <h3 style="margin-bottom: 10px;">OR IMPORT CSV</h3>
+                        <div class="drop-zone" id="csvDropZone">
+                            <p>DROP CSV HERE</p>
+                            <button class="btn" id="csvBrowseBtn">BROWSE</button>
+                            <input type="file" id="csvInput" accept=".csv" hidden>
+                        </div>
+                        <div class="file-info" id="csvInfo"></div>
+                    </div>
                 </div>
 
-                <div class="actions">
+                <div class="actions" style="margin-top: 20px;">
                     <button class="btn btn-primary" id="nextToLink" disabled>NEXT</button>
                 </div>
             </section>
 
-            <!-- Step 2: Import CSV -->
+            <!-- Step 2: Link & Preview -->
             <section class="section" id="step2" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 2: IMPORT CSV</h2>
+                    <h2>STEP 2: LINK & PREVIEW</h2>
                     <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
                 </div>
                 <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>TWO WAYS TO IMPORT DATA:</strong></p>
-
-                    <p><strong>OPTION 1: IMPORT & LINK (for existing data)</strong></p>
-                    <p>Use this if you have a CSV/Excel file with product data but filenames DON'T match your images exactly.</p>
-                    <p>• Upload your CSV - Choose linking strategy - System matches data to images automatically</p>
-                    <p>• Example: Your CSV has SKU "PM-001" and your image is "blue-plate-photo.jpg" - we'll link them!</p>
-                    <p>• <strong>Supports:</strong> sku, name, price, category, price_history, performance_history</p>
-
-                    <p><strong>OPTION 2: IMPORT COMPLETED TEMPLATE (exact filename match)</strong></p>
-                    <p>Use this if you've filled out the exported template OR your CSV filenames EXACTLY match your images.</p>
-                    <p>• Export template - Fill in Excel - Import completed template</p>
-                    <p>• Example: CSV has "blue-plate.jpg" in filename column, and you have "blue-plate.jpg" image</p>
-                    <p>• <strong>Supports:</strong> ALL columns including price_history, performance_history</p>
-
-                    <p><strong>HISTORY DATA FORMAT:</strong></p>
-                    <p>• <strong>price_history:</strong> date:price;date:price (e.g., "2024-01-01:19.99;2024-02-01:21.99")</p>
-                    <p>• <strong>performance_history:</strong> JSON array of sales numbers (e.g., "[100,150,200,180]" for monthly sales)</p>
-
-                    <p><strong>OR SKIP THIS STEP:</strong> If you don't have existing data, skip to manually enter metadata in Step 3.</p>
+                    <p><strong>LINK DATA TO IMAGES:</strong></p>
+                    <p>If you uploaded images, import a CSV to link product data to your images using the matching strategies below.</p>
+                    <p><strong>LINKING STRATEGIES:</strong></p>
+                    <p>• <strong>Filename = SKU:</strong> Use image filename (without extension) as SKU</p>
+                    <p>• <strong>Filename contains SKU:</strong> Extract SKU pattern from filename</p>
+                    <p>• <strong>Folder = SKU:</strong> Use parent folder name as SKU</p>
+                    <p>• <strong>Fuzzy match:</strong> Match filename to product name</p>
                 </div>
 
-                <div class="link-panel">
+                <!-- Import Panel (shown when images were uploaded) -->
+                <div id="importPanel" class="link-panel">
                     <h3>IMPORT PRODUCT DATA</h3>
-                    <p style="font-size: 0.9em; color: #666; margin-bottom: 15px;">Choose your import method below. Not sure? Click the ? button above for detailed explanations.</p>
-
-                    <div style="border: 2px solid #667eea; padding: 15px; margin-bottom: 15px; background: #f0f4ff;">
-                        <strong>OPTION 1: Import & Link Existing Data</strong>
-                        <p style="font-size: 0.85em; margin: 8px 0; color: #333;">Use when your CSV data doesn't have exact filename matches. We'll auto-link using SKU or name matching.</p>
-                        <div style="display: flex; gap: 10px; margin-top: 10px;">
-                            <button class="btn" onclick="importFromFile()" title="Upload CSV/Excel and link to images using matching strategies">IMPORT & LINK FROM FILE</button>
-                            <button class="btn" onclick="importFromClipboard()" title="Paste CSV data from clipboard and link to images">PASTE & LINK FROM CLIPBOARD</button>
-                        </div>
+                    <div style="display: flex; gap: 10px; margin: 15px 0;">
+                        <button class="btn" onclick="importFromFile()">IMPORT FROM FILE</button>
+                        <button class="btn" onclick="importFromClipboard()">PASTE FROM CLIPBOARD</button>
+                        <button class="btn" onclick="exportTemplate()">EXPORT TEMPLATE</button>
                     </div>
-
-                    <div style="border: 2px solid #48bb78; padding: 15px; background: #f0fff4;">
-                        <strong>OPTION 2: Import Completed Template</strong>
-                        <p style="font-size: 0.85em; margin: 8px 0; color: #333;">Use when CSV filenames EXACTLY match your image filenames (like exported template).</p>
-                        <div style="display: flex; gap: 10px; margin-top: 10px;">
-                            <button class="btn" onclick="exportTemplate()" title="Download CSV template with your image filenames to fill in Excel">EXPORT TEMPLATE</button>
-                            <button class="btn" onclick="importCompletedTemplate()" title="Upload completed template where filenames match exactly">IMPORT COMPLETED TEMPLATE</button>
-                        </div>
-                    </div>
-
                     <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" hidden>
-                    <input type="file" id="importCompletedInput" accept=".csv" hidden>
-                </div>
-                    
-                    <div id="importStatus" class="import-status" style="display: none;">
-                        <p id="importStatusText"></p>
-                    </div>
                 </div>
 
+                <div id="importStatus" class="import-status" style="display: none;">
+                    <p id="importStatusText"></p>
+                </div>
+
+                <!-- Linking Strategy Panel -->
                 <div id="linkingPanel" style="display: none;">
                     <div class="linking-strategy">
                         <h3>LINKING STRATEGY</h3>
@@ -255,7 +224,7 @@
                                 <small>Match filename to product name</small>
                             </label>
                         </div>
-                        
+
                         <div id="patternConfig" style="display: none; margin-top: 15px;">
                             <label>SKU Pattern (regex):</label>
                             <input type="text" id="skuPattern" value="[A-Z]+-\d+" placeholder="e.g., [A-Z]+-\d+ or \d{4,}">
@@ -264,233 +233,95 @@
                     </div>
 
                     <div class="linking-preview">
-                        <h3>PREVIEW</h3>
+                        <h3>LINK PREVIEW</h3>
                         <div class="preview-stats">
                             <span id="linkedCount" class="stat-success">Linked: 0</span>
                             <span id="unlinkedCount" class="stat-warning">Unlinked: 0</span>
                         </div>
-                        <div class="preview-list" id="previewList"></div>
+                        <div class="preview-list" id="previewList" style="max-height: 200px; overflow-y: auto;"></div>
                     </div>
 
                     <div class="actions">
-                        <button class="btn" onclick="goToStep(1)">BACK (change import)</button>
                         <button class="btn" onclick="applyLinking()">APPLY LINKING</button>
                     </div>
                 </div>
 
-                <div id="manualLinkingPanel" style="display: none;">
-                    <h3>MANUAL LINKING</h3>
-                    <p>Link unmatched images to product data manually:</p>
-                    <div class="manual-linking-container">
-                        <div class="unmatched-images">
-                            <h4>UNMATCHED IMAGES</h4>
-                            <div id="unmatchedImagesList"></div>
-                        </div>
-                        <div class="available-products">
-                            <h4>AVAILABLE PRODUCTS</h4>
-                            <input type="text" id="productSearchInput" placeholder="Search products..." onkeyup="filterAvailableProducts()">
-                            <div id="availableProductsList"></div>
-                        </div>
-                    </div>
-                    <div class="actions">
-                        <button class="btn" onclick="backToLinkingStrategy()">BACK (change strategy)</button>
-                        <button class="btn btn-primary" onclick="finishLinking()">SAVE LINKS & CONTINUE</button>
+                <!-- Column Preview Panel -->
+                <div id="columnPreviewPanel" style="margin-top: 20px; padding: 15px; border: 2px solid #000; background: #f9f9f9;">
+                    <h3>DETECTED COLUMNS</h3>
+                    <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">These columns will be available for weighted matching in the main app.</p>
+                    <div id="detectedColumnsContainer">
+                        <p style="color: #888; font-style: italic;">Import a CSV to see detected columns.</p>
                     </div>
                 </div>
 
-                <div class="actions" id="skipLinkingActions">
-                    <button class="btn" onclick="goToStep(1)">BACK (change import)</button>
-                    <button class="btn btn-primary" onclick="skipLinking()">SKIP LINKING (enter manually)</button>
+                <!-- Data Preview Table -->
+                <div id="dataPreviewPanel" style="margin-top: 20px; display: none;">
+                    <h3>DATA PREVIEW</h3>
+                    <div style="max-height: 300px; overflow: auto; border: 2px solid #000;">
+                        <table class="data-table" id="previewTable">
+                            <thead id="previewTableHead"></thead>
+                            <tbody id="previewTableBody"></tbody>
+                        </table>
+                    </div>
+                    <p id="previewRowCount" style="margin-top: 5px; font-size: 0.9em; color: #666;"></p>
+                </div>
+
+                <div class="actions" style="margin-top: 20px;">
+                    <button class="btn" onclick="goToStep(1)">BACK</button>
+                    <button class="btn btn-primary" id="nextToExport" onclick="goToStep(3)">NEXT: EXPORT</button>
                 </div>
             </section>
 
-            <!-- Step 3: Edit Metadata -->
+            <!-- Step 3: Export -->
             <section class="section" id="step3" style="display: none;">
                 <div class="section-header">
-                    <h2>STEP 3: EDIT METADATA</h2>
+                    <h2>STEP 3: EXPORT</h2>
                     <button class="help-btn" onclick="toggleHelp('step3Help')">?</button>
                 </div>
                 <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>EDIT PRODUCT METADATA:</strong></p>
-                    <p>• <strong>Filename:</strong> Auto-filled from your images (don't change this!)</p>
-                    <p>• <strong>Category:</strong> Auto-detected from folders or imported from CSV</p>
-                    <p>• <strong>SKU:</strong> Unique product identifier</p>
-                    <p>• <strong>Name:</strong> Descriptive product name</p>
-                    <p>• <strong>Price:</strong> Current price</p>
-                    <p><strong>BULK EDIT:</strong> Use the tools above the table to apply values to multiple products at once. Select products with checkboxes first.</p>
-                    <p><strong>PASTE FROM EXCEL:</strong> Copy data from Excel and paste it directly into the table!</p>
-                    <p><strong>NOTE:</strong> If you imported data in Step 2, metadata may already be filled in. Review and make any necessary edits. For historical data (price history, performance history), go to Step 4.</p>
-                </div>
-
-                <div class="bulk-panel">
-                    <h3>BULK EDIT</h3>
-                    <div class="bulk-controls">
-                        <div class="bulk-group">
-                            <label>CATEGORY:</label>
-                            <input type="text" id="bulkCategory" placeholder="e.g., placemats">
-                            <button class="btn" onclick="applyBulkEdit('category')">APPLY</button>
-                        </div>
-                        <div class="bulk-group">
-                            <label>PRICE:</label>
-                            <input type="number" id="bulkPrice" placeholder="29.99" step="0.01" min="0">
-                            <button class="btn" onclick="applyBulkEdit('price')">APPLY</button>
-                        </div>
-                        <div class="bulk-group">
-                            <button class="btn" onclick="selectAll()">SELECT ALL</button>
-                            <button class="btn" onclick="deselectAll()">DESELECT</button>
-                            <button class="btn" onclick="pasteFromExcel()">PASTE</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="table-container">
-                    <table class="data-table" id="productsTable">
-                        <thead>
-                            <tr>
-                                <th><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()"></th>
-                                <th>FILENAME</th>
-                                <th>CATEGORY</th>
-                                <th>SKU</th>
-                                <th>NAME</th>
-                                <th>PRICE</th>
-                                <th>ACTIONS</th>
-                            </tr>
-                        </thead>
-                        <tbody id="productsTableBody">
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="actions">
-                    <button class="btn" onclick="goToStep(2)">BACK</button>
-                    <button class="btn" onclick="saveDraft()">SAVE</button>
-                    <button class="btn" onclick="loadDraft()">LOAD</button>
-                    <button class="btn btn-primary" onclick="goToStep(4)">NEXT</button>
-                </div>
-            </section>
-
-            <!-- Step 4: Edit History -->
-            <section class="section" id="step4" style="display: none;">
-                <div class="section-header">
-                    <h2>STEP 4: EDIT HISTORY</h2>
-                    <button class="help-btn" onclick="toggleHelp('step4Help')">?</button>
-                </div>
-                <div class="help-text" id="step4Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>EDIT HISTORICAL DATA (OPTIONAL):</strong></p>
-                    <p>Select a product and edit its historical data:</p>
-                    <p><strong>Price History:</strong> Track how prices changed over time (up to 12 months). Add date and price for each entry.</p>
-                    <p><strong>Performance History:</strong> Track sales metrics including:</p>
-                    <p>• Sales volume (units sold)</p>
-                    <p>• Page views</p>
-                    <p>• Conversion rate (%)</p>
-                    <p>• Revenue ($)</p>
-                    <p><strong>WHY ADD THIS?</strong> Historical data enables trend charts, analytics, and performance comparisons in the main app.</p>
-                    <p><strong>TIP:</strong> You can skip this step if you only need basic matching. If you imported historical data in Step 2, it will be pre-populated here.</p>
-                </div>
-
-                <div class="selector">
-                    <label>SELECT PRODUCT:</label>
-                    <select id="productSelector" onchange="loadProductHistory()">
-                        <option value="">-- SELECT --</option>
-                    </select>
-                    <span id="productProgress"></span>
-                </div>
-
-                <div id="historyEditor" style="display: none;">
-                    <div class="tabs">
-                        <button class="tab active" onclick="switchTab('price')">PRICE</button>
-                        <button class="tab" onclick="switchTab('performance')">PERFORMANCE</button>
-                    </div>
-
-                    <!-- Price Tab -->
-                    <div class="tab-panel active" id="priceTab">
-                        <div class="controls">
-                            <button class="btn" onclick="addPriceEntry()">+ ADD</button>
-                            <button class="btn" onclick="importPriceFromClipboard()">IMPORT</button>
-                            <button class="btn" onclick="clearPriceHistory()">CLEAR</button>
-                        </div>
-                        <div class="entries" id="priceEntries">
-                            <p class="empty">No price history. Click "ADD" to start.</p>
-                        </div>
-                    </div>
-
-                    <!-- Performance Tab -->
-                    <div class="tab-panel" id="performanceTab">
-                        <div class="controls">
-                            <button class="btn" onclick="addPerformanceEntry()">+ ADD</button>
-                            <button class="btn" onclick="importPerformanceFromClipboard()">IMPORT</button>
-                            <button class="btn" onclick="clearPerformanceHistory()">CLEAR</button>
-                        </div>
-                        <div class="entries" id="performanceEntries">
-                            <p class="empty">No performance history. Click "ADD" to start.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="actions">
-                    <button class="btn" onclick="goToStep(3)">BACK</button>
-                    <button class="btn" onclick="skipHistory()">SKIP</button>
-                    <button class="btn btn-primary" onclick="goToStep(5)">NEXT</button>
-                </div>
-            </section>
-
-            <!-- Step 5: Export -->
-            <section class="section" id="step5" style="display: none;">
-                <div class="section-header">
-                    <h2>STEP 5: EXPORT CSV</h2>
-                    <button class="help-btn" onclick="toggleHelp('step5Help')">?</button>
-                </div>
-                <div class="help-text" id="step5Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>EXPORT YOUR CSV FILE:</strong></p>
+                    <p><strong>EXPORT YOUR CSV:</strong></p>
                     <p>1. Review the preview to make sure everything looks correct</p>
-                    <p>2. Choose your export options (headers, separator, etc.)</p>
-                    <p>3. Click "DOWNLOAD CSV" to save the file</p>
+                    <p>2. Download the CSV or load directly to the main app</p>
                     <p><strong>NEXT STEPS:</strong></p>
-                    <p>1. Go back to the main app</p>
-                    <p>2. Upload your product images (same images you used here)</p>
-                    <p>3. Upload this CSV file in the "Advanced Mode" section</p>
-                    <p>4. The filenames will match automatically!</p>
+                    <p>• Upload this CSV in the main app's "Advanced Mode" section</p>
+                    <p>• The columns will be detected and you can adjust weights for matching</p>
                 </div>
 
                 <div class="export-options">
                     <h3>OPTIONS</h3>
-                    <div class="option">
-                        <label>
-                            <input type="checkbox" id="includeHeaders" checked>
-                            INCLUDE HEADERS
-                        </label>
-                    </div>
-                    <div class="option">
-                        <label>SEPARATOR:</label>
-                        <select id="separatorSelect">
-                            <option value=",">COMMA</option>
-                            <option value="\t">TAB</option>
-                            <option value=";">SEMICOLON</option>
-                        </select>
-                    </div>
-                    <div class="option">
-                        <label>
-                            <input type="checkbox" id="includeEmptyFields">
-                            INCLUDE EMPTY
-                        </label>
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div class="option">
+                            <label>
+                                <input type="checkbox" id="includeHeaders" checked>
+                                INCLUDE HEADERS
+                            </label>
+                        </div>
+                        <div class="option">
+                            <label>SEPARATOR:</label>
+                            <select id="separatorSelect">
+                                <option value=",">COMMA</option>
+                                <option value="\t">TAB</option>
+                                <option value=";">SEMICOLON</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
-                <div class="preview">
-                    <h3>PREVIEW</h3>
+                <div class="preview" style="margin-top: 20px;">
+                    <h3>CSV PREVIEW</h3>
                     <div class="preview-controls">
                         <button class="btn" onclick="refreshPreview()">REFRESH</button>
                         <span id="previewStats"></span>
                     </div>
-                    <pre id="csvPreviewContent"></pre>
+                    <pre id="csvPreviewContent" style="max-height: 300px; overflow: auto; background: #fff; padding: 15px; border: 2px solid #000;"></pre>
                 </div>
 
-                <div class="actions" style="flex-wrap: wrap; gap: 10px;">
-                    <button class="btn" onclick="goToStep(4)">BACK</button>
+                <div class="actions" style="margin-top: 20px; flex-wrap: wrap; gap: 10px;">
+                    <button class="btn" onclick="goToStep(2)">BACK</button>
                     <button class="btn btn-primary" id="loadToAppBtn" onclick="loadToApp()" style="display: none; font-size: 1.1em; padding: 12px 24px;">LOAD TO MAIN APP</button>
-                    <button class="btn" onclick="downloadCSV()">DOWNLOAD CSV</button>
-                    <button class="btn" onclick="copyToClipboard()">COPY</button>
-                    <button class="btn" onclick="saveAsTemplate()">SAVE TEMPLATE</button>
+                    <button class="btn btn-primary" onclick="downloadCSV()">DOWNLOAD CSV</button>
+                    <button class="btn" onclick="copyToClipboard()">COPY TO CLIPBOARD</button>
                 </div>
                 <p id="loadToAppHint" style="display: none; margin-top: 10px; text-align: center; color: #667eea; font-weight: bold;">
                     Click "LOAD TO MAIN APP" to send this CSV to the main application
@@ -507,7 +338,6 @@
         document.addEventListener('DOMContentLoaded', function() {
             const context = window.csvBuilderContext;
 
-            // Show target section indicator
             if (context && context.section) {
                 const targetEl = document.getElementById('targetSection');
                 if (targetEl) {
@@ -515,28 +345,18 @@
                 }
             }
 
-            // Wait for pywebview API then show the LOAD TO APP button
             waitForPywebview(function(available) {
                 if (available) {
                     console.log('[CSV-BUILDER] Pywebview ready, showing LOAD TO APP button');
 
-                    // Show the LOAD TO APP button
                     const loadBtn = document.getElementById('loadToAppBtn');
-                    if (loadBtn) {
-                        loadBtn.style.display = 'inline-block';
-                    }
+                    if (loadBtn) loadBtn.style.display = 'inline-block';
 
-                    // Show the hint text
                     const hint = document.getElementById('loadToAppHint');
-                    if (hint) {
-                        hint.style.display = 'block';
-                    }
+                    if (hint) hint.style.display = 'block';
 
-                    // Update close button text to be clearer
                     const closeBtn = document.querySelector('button[onclick="closeAndReturn()"]');
-                    if (closeBtn) {
-                        closeBtn.textContent = '← CANCEL';
-                    }
+                    if (closeBtn) closeBtn.textContent = '← CANCEL';
                 } else {
                     console.log('[CSV-BUILDER] Browser mode - LOAD TO APP hidden, use DOWNLOAD instead');
                 }

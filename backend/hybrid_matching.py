@@ -28,6 +28,7 @@ def find_hybrid_matches(
     limit: int = 10,
     visual_weight: float = 0.50,
     metadata_weight: float = 0.50,
+    metadata_weights: Optional[Dict[str, float]] = None,
     sku_weight: float = 0.30,
     name_weight: float = 0.30,
     category_weight: float = 0.25,
@@ -39,31 +40,35 @@ def find_hybrid_matches(
 ) -> Dict[str, Any]:
     """
     Find similar products using hybrid approach (Mode 3).
-    
+
     Orchestrates Mode 1 (visual) and Mode 2 (metadata) matching, then combines
     results with weighted scoring.
-    
+
     The hybrid score is calculated as:
     hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
-    
+
     Args:
         product_id: ID of product to match
         threshold: Minimum similarity score (0-100)
         limit: Maximum number of matches
         visual_weight: Weight for visual similarity (default: 0.50)
         metadata_weight: Weight for metadata similarity (default: 0.50)
-        sku_weight: Weight for SKU within metadata (default: 0.30)
-        name_weight: Weight for name within metadata (default: 0.30)
-        category_weight: Weight for category within metadata (default: 0.25)
-        price_weight: Weight for price within metadata (default: 0.10)
-        performance_weight: Weight for performance within metadata (default: 0.05)
+        metadata_weights: (NEW) Dynamic weights dict for metadata columns.
+                         If provided, uses dynamic metadata matching.
+                         Example: {'sku': 0.3, 'name': 0.3, 'brand': 0.4}
+        sku_weight: (Legacy) Weight for SKU within metadata
+        name_weight: (Legacy) Weight for name within metadata
+        category_weight: (Legacy) Weight for category within metadata
+        price_weight: (Legacy) Weight for price within metadata
+        performance_weight: (Legacy) Weight for performance within metadata
         store_matches: Whether to store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories
-    
+
     Returns:
-        Dictionary with matches and comprehensive scoring
-    
+        Dictionary with matches and comprehensive scoring.
+        When using dynamic metadata_weights, includes 'metadata_scores' dict per match.
+
     Raises:
         ProductNotFoundError: If product doesn't exist
         MissingFeaturesError: If product doesn't have visual features
@@ -93,19 +98,31 @@ def find_hybrid_matches(
     
     # Step 2: Run Mode 2 (metadata matching) - already optimized with batch fetching
     try:
-        metadata_result = find_metadata_matches(
-            product_id=product_id,
-            threshold=0.0,  # No threshold - we'll filter combined scores later
-            limit=limit * 10 if limit > 0 else 1000,  # Get more candidates for merging
-            sku_weight=sku_weight,
-            name_weight=name_weight,
-            category_weight=category_weight,
-            price_weight=price_weight,
-            performance_weight=performance_weight,
-            store_matches=False,  # Don't store yet - we'll store hybrid scores
-            skip_invalid_products=skip_invalid_products,
-            match_against_all=match_against_all
-        )
+        # Use dynamic weights if provided, otherwise use legacy individual weights
+        if metadata_weights is not None:
+            metadata_result = find_metadata_matches(
+                product_id=product_id,
+                threshold=0.0,
+                limit=limit * 10 if limit > 0 else 1000,
+                weights=metadata_weights,  # Dynamic weights mode
+                store_matches=False,
+                skip_invalid_products=skip_invalid_products,
+                match_against_all=match_against_all
+            )
+        else:
+            metadata_result = find_metadata_matches(
+                product_id=product_id,
+                threshold=0.0,
+                limit=limit * 10 if limit > 0 else 1000,
+                sku_weight=sku_weight,
+                name_weight=name_weight,
+                category_weight=category_weight,
+                price_weight=price_weight,
+                performance_weight=performance_weight,
+                store_matches=False,
+                skip_invalid_products=skip_invalid_products,
+                match_against_all=match_against_all
+            )
     except Exception as e:
         logger.error(f"Mode 2 (metadata) failed: {e}")
         raise
@@ -149,12 +166,17 @@ def find_hybrid_matches(
         
         # Add metadata sub-scores if available
         if metadata_match:
-            match_data['sku_score'] = metadata_match.get('sku_score', 0.0)
-            match_data['name_score'] = metadata_match.get('name_score', 0.0)
-            match_data['category_score'] = metadata_match.get('category_score', 0.0)
-            match_data['price_score'] = metadata_match.get('price_score', 0.0)
-            match_data['performance_score'] = metadata_match.get('performance_score', 0.0)
-        
+            # Check for dynamic metadata_scores (new mode)
+            if 'metadata_scores' in metadata_match:
+                match_data['metadata_scores'] = metadata_match['metadata_scores']
+            else:
+                # Legacy mode - copy individual scores
+                match_data['sku_score'] = metadata_match.get('sku_score', 0.0)
+                match_data['name_score'] = metadata_match.get('name_score', 0.0)
+                match_data['category_score'] = metadata_match.get('category_score', 0.0)
+                match_data['price_score'] = metadata_match.get('price_score', 0.0)
+                match_data['performance_score'] = metadata_match.get('performance_score', 0.0)
+
         hybrid_matches.append(match_data)
     
     # Step 4: Sort and filter
@@ -234,6 +256,7 @@ def batch_find_hybrid_matches(
     limit: int = 10,
     visual_weight: float = 0.50,
     metadata_weight: float = 0.50,
+    metadata_weights: Optional[Dict[str, float]] = None,
     sku_weight: float = 0.30,
     name_weight: float = 0.30,
     category_weight: float = 0.25,
@@ -246,33 +269,34 @@ def batch_find_hybrid_matches(
 ) -> Dict[str, Any]:
     """
     Find hybrid matches for multiple products in batch with parallel processing.
-    
+
     Mode 3 (Hybrid matching) with full parallelization:
     - Mode 1 (visual) runs in parallel via batch_find_matches()
     - Mode 2 (metadata) runs in parallel via batch_find_metadata_matches()
     - Results are merged in parallel using ThreadPoolExecutor
-    
+
     PERFORMANCE OPTIMIZATIONS:
     - Parallel Mode 1 + Mode 2 execution (independent operations)
     - Parallel merge of results across all products
     - Minimal code - delegates to existing optimized functions
-    
+
     Args:
         product_ids: List of product IDs to match
         threshold: Minimum similarity score (0-100)
         limit: Maximum matches per product
         visual_weight: Weight for visual similarity (default: 0.50)
         metadata_weight: Weight for metadata similarity (default: 0.50)
-        sku_weight: Weight for SKU within metadata (default: 0.30)
-        name_weight: Weight for name within metadata (default: 0.30)
-        category_weight: Weight for category within metadata (default: 0.25)
-        price_weight: Weight for price within metadata (default: 0.10)
-        performance_weight: Weight for performance within metadata (default: 0.05)
+        metadata_weights: (NEW) Dynamic weights dict for metadata columns
+        sku_weight: (Legacy) Weight for SKU within metadata
+        name_weight: (Legacy) Weight for name within metadata
+        category_weight: (Legacy) Weight for category within metadata
+        price_weight: (Legacy) Weight for price within metadata
+        performance_weight: (Legacy) Weight for performance within metadata
         store_matches: Store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories
         max_workers: Number of parallel workers (default: cpu_count + 4)
-    
+
     Returns:
         Dictionary with results and summary
     """
@@ -327,22 +351,35 @@ def batch_find_hybrid_matches(
         nonlocal mode2_time, metadata_results
         logger.info(f"[BATCH-HYBRID] [MODE 2] ▶ Starting parallel metadata matching for {len(product_ids)} products...")
         mode2_start = time.time()
-        
-        metadata_results = batch_find_metadata_matches(
-            product_ids=product_ids,
-            threshold=0.0,
-            limit=limit * 10 if limit > 0 else 1000,
-            sku_weight=sku_weight,
-            name_weight=name_weight,
-            category_weight=category_weight,
-            price_weight=price_weight,
-            performance_weight=performance_weight,
-            store_matches=False,
-            skip_invalid_products=skip_invalid_products,
-            match_against_all=match_against_all,
-            max_workers=max_workers
-        )
-        
+
+        # Use dynamic weights if provided, otherwise use legacy individual weights
+        if metadata_weights is not None:
+            metadata_results = batch_find_metadata_matches(
+                product_ids=product_ids,
+                threshold=0.0,
+                limit=limit * 10 if limit > 0 else 1000,
+                weights=metadata_weights,
+                store_matches=False,
+                skip_invalid_products=skip_invalid_products,
+                match_against_all=match_against_all,
+                max_workers=max_workers
+            )
+        else:
+            metadata_results = batch_find_metadata_matches(
+                product_ids=product_ids,
+                threshold=0.0,
+                limit=limit * 10 if limit > 0 else 1000,
+                sku_weight=sku_weight,
+                name_weight=name_weight,
+                category_weight=category_weight,
+                price_weight=price_weight,
+                performance_weight=performance_weight,
+                store_matches=False,
+                skip_invalid_products=skip_invalid_products,
+                match_against_all=match_against_all,
+                max_workers=max_workers
+            )
+
         mode2_time = time.time() - mode2_start
         logger.info(f"[BATCH-HYBRID] [MODE 2] ✓ Completed in {mode2_time:.2f}s - {metadata_results['summary']['successful']} successful, {metadata_results['summary']['failed']} failed")
         return metadata_results

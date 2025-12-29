@@ -230,11 +230,6 @@ async function selectFolderNative(handleFilesCallback) {
 
 // ===== STEP 1: Upload Images =====
 function initializeStep1() {
-    const dropZone = document.getElementById('imageDropZone');
-    const input = document.getElementById('imageInput');
-    const browseBtn = document.getElementById('imageBrowseBtn');
-    const nextBtn = document.getElementById('nextToLink');
-
     // Helper to track event listeners
     const addTrackedListener = (element, event, handler) => {
         if (element) {
@@ -243,64 +238,152 @@ function initializeStep1() {
         }
     };
 
-    const browseBtnHandler = async (e) => {
+    // ===== Image Upload =====
+    const imageDropZone = document.getElementById('imageDropZone');
+    const imageInput = document.getElementById('imageInput');
+    const imageBrowseBtn = document.getElementById('imageBrowseBtn');
+    const nextBtn = document.getElementById('nextToLink');
+
+    const imageBrowseBtnHandler = async (e) => {
         e.stopPropagation();
-        // Try native folder selection first (for pywebview)
         const handled = await selectFolderNative(handleImageFiles);
         if (!handled) {
-            input.click();
+            imageInput.click();
         }
     };
-    addTrackedListener(browseBtn, 'click', browseBtnHandler);
+    addTrackedListener(imageBrowseBtn, 'click', imageBrowseBtnHandler);
 
-    const dropZoneClickHandler = async () => {
-        // Try native folder selection first (for pywebview)
+    const imageDropZoneClickHandler = async () => {
         const handled = await selectFolderNative(handleImageFiles);
         if (!handled) {
-            input.click();
+            imageInput.click();
         }
     };
-    addTrackedListener(dropZone, 'click', dropZoneClickHandler);
+    addTrackedListener(imageDropZone, 'click', imageDropZoneClickHandler);
 
-    const dragoverHandler = (e) => {
+    const imageDragoverHandler = (e) => {
         e.preventDefault();
-        dropZone.classList.add('drag-over');
+        imageDropZone.classList.add('drag-over');
     };
-    addTrackedListener(dropZone, 'dragover', dragoverHandler);
+    addTrackedListener(imageDropZone, 'dragover', imageDragoverHandler);
 
-    const dragleaveHandler = () => {
-        dropZone.classList.remove('drag-over');
+    const imageDragleaveHandler = () => {
+        imageDropZone.classList.remove('drag-over');
     };
-    addTrackedListener(dropZone, 'dragleave', dragleaveHandler);
+    addTrackedListener(imageDropZone, 'dragleave', imageDragleaveHandler);
 
-    const dropHandler = (e) => {
+    const imageDropHandler = (e) => {
         e.preventDefault();
-        dropZone.classList.remove('drag-over');
+        imageDropZone.classList.remove('drag-over');
         handleImageFiles(Array.from(e.dataTransfer.files));
     };
-    addTrackedListener(dropZone, 'drop', dropHandler);
+    addTrackedListener(imageDropZone, 'drop', imageDropHandler);
 
-    const inputChangeHandler = (e) => {
+    const imageInputChangeHandler = (e) => {
         handleImageFiles(Array.from(e.target.files));
     };
-    addTrackedListener(input, 'change', inputChangeHandler);
+    addTrackedListener(imageInput, 'change', imageInputChangeHandler);
 
+    // ===== Direct CSV Upload (Step 1) =====
+    const csvDropZone = document.getElementById('csvDropZone');
+    const csvInput = document.getElementById('csvInput');
+    const csvBrowseBtn = document.getElementById('csvBrowseBtn');
+
+    if (csvBrowseBtn) {
+        const csvBrowseBtnHandler = (e) => {
+            e.stopPropagation();
+            csvInput.click();
+        };
+        addTrackedListener(csvBrowseBtn, 'click', csvBrowseBtnHandler);
+    }
+
+    if (csvDropZone) {
+        const csvDropZoneClickHandler = () => {
+            csvInput.click();
+        };
+        addTrackedListener(csvDropZone, 'click', csvDropZoneClickHandler);
+
+        const csvDragoverHandler = (e) => {
+            e.preventDefault();
+            csvDropZone.classList.add('drag-over');
+        };
+        addTrackedListener(csvDropZone, 'dragover', csvDragoverHandler);
+
+        const csvDragleaveHandler = () => {
+            csvDropZone.classList.remove('drag-over');
+        };
+        addTrackedListener(csvDropZone, 'dragleave', csvDragleaveHandler);
+
+        const csvDropHandler = (e) => {
+            e.preventDefault();
+            csvDropZone.classList.remove('drag-over');
+            const files = Array.from(e.dataTransfer.files);
+            const csvFile = files.find(f => f.name.endsWith('.csv'));
+            if (csvFile) {
+                handleDirectCsvUpload(csvFile);
+            } else {
+                showToast('Please drop a CSV file', 'error');
+            }
+        };
+        addTrackedListener(csvDropZone, 'drop', csvDropHandler);
+    }
+
+    if (csvInput) {
+        const csvInputChangeHandler = (e) => {
+            if (e.target.files.length > 0) {
+                handleDirectCsvUpload(e.target.files[0]);
+            }
+        };
+        addTrackedListener(csvInput, 'change', csvInputChangeHandler);
+    }
+
+    // ===== Next Button =====
     const nextBtnHandler = () => {
         goToStep(2);
     };
     addTrackedListener(nextBtn, 'click', nextBtnHandler);
-    
-    // Initialize import file input
+
+    // ===== Import Inputs for Step 2 =====
     const importInput = document.getElementById('importFileInput');
     if (importInput) {
         addTrackedListener(importInput, 'change', handleImportFile);
     }
-    
-    // Initialize import completed input
-    const importCompletedInput = document.getElementById('importCompletedInput');
-    if (importCompletedInput) {
-        addTrackedListener(importCompletedInput, 'change', handleImportCompletedFile);
-    }
+}
+
+/**
+ * Handle direct CSV upload from Step 1
+ */
+function handleDirectCsvUpload(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const content = e.target.result;
+        parseImportedData(content, 'direct upload');
+
+        // Copy imported data to products for export
+        if (state.importedData.length > 0) {
+            state.products = state.importedData.map(item => ({
+                filename: item.filename || '',
+                category: item.category || '',
+                sku: item.sku || '',
+                name: item.name || '',
+                price: item.price || '',
+                ...item // Include all other columns
+            }));
+
+            // Update UI
+            const csvInfo = document.getElementById('csvInfo');
+            if (csvInfo) {
+                csvInfo.innerHTML = `<p style="color: #4CAF50; font-weight: bold;">${state.products.length} rows loaded from ${file.name}</p>`;
+            }
+
+            // Enable next button
+            const nextBtn = document.getElementById('nextToLink');
+            if (nextBtn) nextBtn.disabled = false;
+
+            showToast(`Loaded ${state.products.length} rows from CSV`, 'success');
+        }
+    };
+    reader.readAsText(file);
 }
 
 
@@ -621,15 +704,88 @@ function parseImportedData(content, source) {
     // Show import status
     document.getElementById('importStatus').style.display = 'block';
     document.getElementById('importStatusText').innerHTML = statusMessage;
-    
+
     // Show linking panel
     document.getElementById('linkingPanel').style.display = 'block';
     document.getElementById('skipLinkingActions').style.display = 'none';
-    
+
     // Auto-preview with default strategy
     previewLinking();
-    
+
+    // Save detected schema to backend for dynamic weight sliders
+    if (hasHeaders && headers.length > 0) {
+        saveDetectedSchemaToBackend(headers, dataRows);
+    }
+
+    // Update column preview and data preview
+    updateColumnPreview();
+    updateDataPreviewTable();
+
     showToast(`Imported ${state.importedData.length} products`, 'success');
+}
+
+/**
+ * Detect column types and save schema to backend
+ * @param {Array} headers - Array of header names
+ * @param {Array} dataRows - Array of data row arrays
+ */
+async function saveDetectedSchemaToBackend(headers, dataRows) {
+    try {
+        // Detect column types based on data
+        const columns = headers.map(header => {
+            const colIndex = headers.indexOf(header);
+            const values = dataRows.map(row => row[colIndex]).filter(v => v && v.trim());
+            const dataType = detectColumnType(values);
+
+            return {
+                column_name: normalizeHeaderName(header) || header.toLowerCase().replace(/\s+/g, '_'),
+                data_type: dataType,
+                display_name: header.toUpperCase()
+            };
+        }).filter(col => col.column_name); // Remove empty columns
+
+        console.log('[CSV-BUILDER] Detected schema:', columns);
+
+        // Save to backend
+        const response = await fetch('/api/metadata-schema', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ columns: columns, clear_existing: true })
+        });
+
+        if (response.ok) {
+            console.log('[CSV-BUILDER] Schema saved to backend');
+        } else {
+            console.warn('[CSV-BUILDER] Failed to save schema:', response.statusText);
+        }
+    } catch (error) {
+        console.error('[CSV-BUILDER] Error saving schema:', error);
+    }
+}
+
+/**
+ * Detect if a column is numeric or string based on its values
+ * @param {Array} values - Sample values from the column
+ * @returns {string} 'numeric' or 'string'
+ */
+function detectColumnType(values) {
+    if (!values || values.length === 0) return 'string';
+
+    // Sample up to 50 values
+    const sampleSize = Math.min(50, values.length);
+    const sample = values.slice(0, sampleSize);
+
+    // Count how many values parse as numbers
+    let numericCount = 0;
+    sample.forEach(val => {
+        const cleaned = val.toString().replace(/[$,]/g, '').trim();
+        if (cleaned && !isNaN(parseFloat(cleaned))) {
+            numericCount++;
+        }
+    });
+
+    // If >80% of values are numeric, consider it a numeric column
+    return (numericCount / sample.length) >= 0.8 ? 'numeric' : 'string';
 }
 
 function normalizeHeaderName(header) {
@@ -2015,40 +2171,182 @@ function saveAsTemplate() {
 }
 
 
+// ===== Column Preview Functions =====
+
+/**
+ * Update the column preview panel with detected columns
+ */
+function updateColumnPreview() {
+    const container = document.getElementById('detectedColumnsContainer');
+    if (!container) return;
+
+    // Get columns from imported data or products
+    let columns = [];
+    if (state.importedData.length > 0) {
+        // Get all unique keys from imported data
+        const keySet = new Set();
+        state.importedData.forEach(item => {
+            Object.keys(item).forEach(key => keySet.add(key));
+        });
+        columns = Array.from(keySet);
+    } else if (state.products.length > 0) {
+        // Get columns from products
+        columns = Object.keys(state.products[0] || {}).filter(k => k !== 'priceHistory' && k !== 'performanceHistory');
+    }
+
+    if (columns.length === 0) {
+        container.innerHTML = '<p style="color: #888; font-style: italic;">Import a CSV to see detected columns.</p>';
+        return;
+    }
+
+    // Detect column types
+    const columnInfo = columns.map(col => {
+        const values = (state.importedData.length > 0 ? state.importedData : state.products)
+            .map(item => item[col])
+            .filter(v => v !== null && v !== undefined && v !== '');
+
+        const dataType = detectColumnTypeFromValues(values);
+        return { name: col, type: dataType, sampleCount: values.length };
+    });
+
+    // Render column chips
+    let html = '<div style="display: flex; flex-wrap: wrap; gap: 8px;">';
+    columnInfo.forEach(col => {
+        const typeIcon = col.type === 'numeric' ? '#' : 'Aa';
+        const typeColor = col.type === 'numeric' ? '#4CAF50' : '#2196F3';
+        html += `
+            <div style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; background: white; border: 2px solid ${typeColor}; border-radius: 4px;">
+                <span style="font-size: 11px; color: ${typeColor}; font-weight: bold;">${typeIcon}</span>
+                <span style="font-weight: bold; text-transform: uppercase;">${col.name}</span>
+                <span style="font-size: 11px; color: #888;">(${col.sampleCount})</span>
+            </div>
+        `;
+    });
+    html += '</div>';
+    html += `<p style="margin-top: 10px; font-size: 0.85em; color: #666;">${columnInfo.length} columns detected. <span style="color: #4CAF50;"># = numeric</span>, <span style="color: #2196F3;">Aa = text</span></p>`;
+
+    container.innerHTML = html;
+}
+
+/**
+ * Detect column type from values
+ */
+function detectColumnTypeFromValues(values) {
+    if (!values || values.length === 0) return 'string';
+
+    const sampleSize = Math.min(50, values.length);
+    const sample = values.slice(0, sampleSize);
+
+    let numericCount = 0;
+    sample.forEach(val => {
+        const cleaned = String(val).replace(/[$,]/g, '').trim();
+        if (cleaned && !isNaN(parseFloat(cleaned))) {
+            numericCount++;
+        }
+    });
+
+    return (numericCount / sample.length) >= 0.8 ? 'numeric' : 'string';
+}
+
+/**
+ * Update the data preview table
+ */
+function updateDataPreviewTable() {
+    const panel = document.getElementById('dataPreviewPanel');
+    const thead = document.getElementById('previewTableHead');
+    const tbody = document.getElementById('previewTableBody');
+    const rowCount = document.getElementById('previewRowCount');
+
+    if (!panel || !thead || !tbody) return;
+
+    // Use imported data or products
+    const data = state.importedData.length > 0 ? state.importedData : state.products;
+
+    if (data.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+
+    // Get all columns
+    const columns = [];
+    const keySet = new Set();
+    data.forEach(item => {
+        Object.keys(item).forEach(key => {
+            if (key !== 'priceHistory' && key !== 'performanceHistory') {
+                keySet.add(key);
+            }
+        });
+    });
+    columns.push(...Array.from(keySet));
+
+    // Render header
+    thead.innerHTML = `<tr>${columns.map(col => `<th style="text-transform: uppercase;">${col}</th>`).join('')}</tr>`;
+
+    // Render first 10 rows as preview
+    const previewRows = data.slice(0, 10);
+    tbody.innerHTML = previewRows.map(item => {
+        return `<tr>${columns.map(col => {
+            const val = item[col] || '';
+            const displayVal = String(val).length > 30 ? String(val).substring(0, 30) + '...' : val;
+            return `<td>${displayVal}</td>`;
+        }).join('')}</tr>`;
+    }).join('');
+
+    // Show row count
+    if (rowCount) {
+        rowCount.textContent = `Showing ${previewRows.length} of ${data.length} rows`;
+    }
+}
+
+
 // ===== Navigation & State Management =====
 function goToStep(step) {
-    // Hide all sections
-    for (let i = 1; i <= 5; i++) {
-        document.getElementById(`step${i}`).style.display = 'none';
-        document.querySelector(`.progress-step[data-step="${i}"]`).classList.remove('active', 'completed');
+    // Hide all sections (now only 3 steps)
+    for (let i = 1; i <= 3; i++) {
+        const stepEl = document.getElementById(`step${i}`);
+        const progressEl = document.querySelector(`.progress-step[data-step="${i}"]`);
+        if (stepEl) stepEl.style.display = 'none';
+        if (progressEl) progressEl.classList.remove('active', 'completed');
     }
-    
+
     // Show current step
-    document.getElementById(`step${step}`).style.display = 'block';
-    document.querySelector(`.progress-step[data-step="${step}"]`).classList.add('active');
-    
+    const currentStepEl = document.getElementById(`step${step}`);
+    const currentProgressEl = document.querySelector(`.progress-step[data-step="${step}"]`);
+    if (currentStepEl) currentStepEl.style.display = 'block';
+    if (currentProgressEl) currentProgressEl.classList.add('active');
+
     // Mark previous steps as completed
     for (let i = 1; i < step; i++) {
-        document.querySelector(`.progress-step[data-step="${i}"]`).classList.add('completed');
+        const progressEl = document.querySelector(`.progress-step[data-step="${i}"]`);
+        if (progressEl) progressEl.classList.add('completed');
     }
-    
+
     state.currentStep = step;
-    
+
     // Initialize step-specific content
     if (step === 2) {
-        // Link step - reset panels
-        document.getElementById('linkingPanel').style.display = 'none';
-        document.getElementById('manualLinkingPanel').style.display = 'none';
-        document.getElementById('skipLinkingActions').style.display = 'block';
+        // Link & Preview step
+        const linkingPanel = document.getElementById('linkingPanel');
+        if (linkingPanel) linkingPanel.style.display = 'none';
+
+        // Show import panel if we have images but no imported data
+        const importPanel = document.getElementById('importPanel');
+        if (importPanel) {
+            importPanel.style.display = state.products.length > 0 && state.importedData.length === 0 ? 'block' : 'none';
+        }
+
+        // Update column preview
+        updateColumnPreview();
+
+        // Update data preview table
+        updateDataPreviewTable();
     } else if (step === 3) {
-        renderProductsTable();
-    } else if (step === 4) {
-        populateProductSelector();
-        updateProductProgress();
-    } else if (step === 5) {
+        // Export step
         refreshPreview();
     }
-    
+
     // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }

@@ -33,6 +33,10 @@ let similarityWeights = {
     texture: 0.34
 };
 
+// Dynamic metadata schema and weights (loaded from backend after CSV upload)
+let metadataSchema = [];  // Array of {column_name, data_type, display_name}
+let metadataWeights = {}; // Dictionary of column_name -> weight (0-100)
+
 // Pagination state
 let currentPage = 1;
 const RESULTS_PER_PAGE = 20; // Show 20 products per page
@@ -707,6 +711,8 @@ async function processHistoricalCatalog() {
     if (historicalCsv) {
         try {
             categoryMap = await parseCsv(historicalCsv);
+            // Load metadata schema for dynamic weight sliders
+            await loadMetadataSchema();
         } catch (error) {
             showToast('Failed to parse CSV file. Please check the format.', 'error');
             processBtn.disabled = false;
@@ -1192,6 +1198,8 @@ async function processNewProducts() {
     if (newCsv) {
         try {
             categoryMap = await parseCsv(newCsv);
+            // Load metadata schema for dynamic weight sliders
+            await loadMetadataSchema();
         } catch (error) {
             showToast('Failed to parse CSV file. Please check the format.', 'error');
             processBtn.disabled = false;
@@ -1591,6 +1599,12 @@ async function startMatching() {
             visual_weight: visualWeight,
             metadata_weight: metadataWeight
         };
+
+        // Add dynamic metadata weights if available (Mode 2 or Mode 3)
+        if ((effectiveMode === 'metadata' || effectiveMode === 'hybrid') && Object.keys(metadataWeights).length > 0) {
+            batchPayload.metadata_weights = getNormalizedMetadataWeights();
+            console.log(`[BATCH-MATCHING] Using dynamic metadata weights:`, batchPayload.metadata_weights);
+        }
 
         console.log(`[BATCH-MATCHING] Step 1: Prepare batch request`);
         console.log(`[BATCH-MATCHING] Mode: Backend will query new product IDs`);
@@ -2361,38 +2375,19 @@ function closeModal() {
 }
 
 async function exportResults() {
-    let csv = 'New Product,Category,Match Count,Top Match,Top Score,Price Current,Price Avg,Price Min,Price Max,Price Trend,Total Sales,Avg Sales,Sales Trend\n';
+    let csv = 'New Product,Category,SKU,Match Count,Top Match,Top Score\n';
 
     matchResults.forEach(result => {
-        const product = result.product;
-        const topMatch = result.matches[0];
+        const product = result.p;  // Use compact format
+        const topMatch = result.m[0];  // Use compact matches
 
-        csv += `"${product.filename}","${product.category || 'Uncategorized'}",${result.matches.length}`;
+        csv += `"${product.name}","${product.cat || 'Uncategorized'}","${product.sku || ''}",${result.m.length}`;
 
         if (topMatch) {
-            csv += `,"${topMatch.product_name || 'Unknown'}",${topMatch.similarity_score.toFixed(1)}`;
-            
-            // Add price history data if available
-            if (topMatch.priceStatistics) {
-                csv += `,${topMatch.priceStatistics.current}`;
-                csv += `,${topMatch.priceStatistics.average}`;
-                csv += `,${topMatch.priceStatistics.min}`;
-                csv += `,${topMatch.priceStatistics.max}`;
-                csv += `,"${topMatch.priceStatistics.trend}"`;
-            } else {
-                csv += ',,,,,';
-            }
-            
-            // Add performance history data if available (SIMPLE FORMAT: just sales)
-            if (topMatch.performanceStatistics) {
-                csv += `,${topMatch.performanceStatistics.total_sales}`;
-                csv += `,${topMatch.performanceStatistics.average_sales}`;
-                csv += `,"${topMatch.performanceStatistics.sales_trend}"`;
-            } else {
-                csv += ',,,';
-            }
+            const score = getScore(topMatch, 'similarity');
+            csv += `,"${topMatch.name || 'Unknown'}",${score.toFixed(1)}`;
         } else {
-            csv += ',"No matches",0,,,,,,,,';
+            csv += ',"No matches",0';
         }
 
         csv += '\n';
@@ -3481,13 +3476,195 @@ function updateWeights() {
     }
 }
 
-// Update Metadata Weights (Mode 2)
-// NOTE: Metadata sub-weights are now fixed and displayed statically
-// This function is kept for backwards compatibility but does nothing
+// ============ DYNAMIC METADATA WEIGHTS ============
+
+/**
+ * Load metadata schema from backend API
+ * Called after CSV upload to discover available columns
+ */
+async function loadMetadataSchema() {
+    try {
+        const response = await fetch('/api/metadata-schema');
+        if (!response.ok) {
+            console.warn('Failed to load metadata schema:', response.statusText);
+            return;
+        }
+        const data = await response.json();
+        metadataSchema = data.schema || [];
+        console.log('[METADATA] Loaded schema:', metadataSchema);
+
+        // Initialize equal weights for all columns
+        initializeEqualWeights();
+
+        // Render sliders in both Mode 2 and Mode 3 containers
+        renderDynamicWeightSliders('dynamicMetadataWeightsContainer', 'mode2');
+        renderDynamicWeightSliders('dynamicHybridMetadataWeightsContainer', 'hybrid');
+    } catch (error) {
+        console.error('Error loading metadata schema:', error);
+    }
+}
+
+/**
+ * Save metadata schema to backend (after parsing CSV headers)
+ * @param {Array} columns - Array of {column_name, data_type, display_name}
+ */
+async function saveMetadataSchema(columns) {
+    try {
+        const response = await fetch('/api/metadata-schema', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ columns: columns, clear_existing: true })
+        });
+        if (response.ok) {
+            console.log('[METADATA] Schema saved successfully');
+            // Reload the schema to populate sliders
+            await loadMetadataSchema();
+        }
+    } catch (error) {
+        console.error('Error saving metadata schema:', error);
+    }
+}
+
+/**
+ * Initialize equal weights for all columns in schema
+ */
+function initializeEqualWeights() {
+    if (metadataSchema.length === 0) return;
+
+    const equalWeight = Math.round(100 / metadataSchema.length);
+    metadataWeights = {};
+    metadataSchema.forEach((col, idx) => {
+        // Last column gets remaining weight to ensure sum = 100
+        if (idx === metadataSchema.length - 1) {
+            metadataWeights[col.column_name] = 100 - (equalWeight * (metadataSchema.length - 1));
+        } else {
+            metadataWeights[col.column_name] = equalWeight;
+        }
+    });
+    console.log('[METADATA] Initialized equal weights:', metadataWeights);
+}
+
+/**
+ * Render dynamic weight sliders in a container
+ * @param {string} containerId - DOM container ID
+ * @param {string} prefix - Prefix for element IDs ('mode2' or 'hybrid')
+ */
+function renderDynamicWeightSliders(containerId, prefix) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (metadataSchema.length === 0) {
+        container.innerHTML = `
+            <div style="padding: 20px; text-align: center; color: #666; font-style: italic;">
+                Upload a CSV to see available columns for weighting.
+            </div>
+        `;
+        return;
+    }
+
+    let html = '<div style="display: flex; flex-direction: column; gap: 10px;">';
+
+    metadataSchema.forEach(col => {
+        const colName = col.column_name;
+        const displayName = col.display_name || colName.toUpperCase();
+        const dataType = col.data_type || 'string';
+        const weight = metadataWeights[colName] || 0;
+        const typeIcon = dataType === 'numeric' ? '#' : 'Aa';
+
+        html += `
+            <div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: white; border: 1px solid #ddd;">
+                <span style="width: 30px; text-align: center; font-size: 11px; color: #888; background: #f0f0f0; padding: 2px 4px; border-radius: 3px;"
+                      title="${dataType === 'numeric' ? 'Numeric column' : 'Text column'}">${typeIcon}</span>
+                <span style="flex: 1; font-weight: bold; font-size: 13px;">${displayName}</span>
+                <input type="range" id="${prefix}_weight_${colName}"
+                       min="0" max="100" value="${weight}"
+                       style="width: 100px;"
+                       oninput="updateDynamicWeight('${colName}', this.value, '${prefix}')">
+                <span id="${prefix}_weight_val_${colName}" style="width: 40px; text-align: right; font-weight: bold;">${weight}%</span>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Update totals
+    updateWeightsTotal(prefix);
+}
+
+/**
+ * Update a dynamic weight value
+ */
+function updateDynamicWeight(columnName, value, prefix) {
+    metadataWeights[columnName] = parseInt(value);
+
+    // Update display value
+    const valSpan = document.getElementById(`${prefix}_weight_val_${columnName}`);
+    if (valSpan) valSpan.textContent = value + '%';
+
+    // Sync sliders between Mode 2 and Hybrid containers
+    const otherPrefix = prefix === 'mode2' ? 'hybrid' : 'mode2';
+    const otherSlider = document.getElementById(`${otherPrefix}_weight_${columnName}`);
+    const otherValSpan = document.getElementById(`${otherPrefix}_weight_val_${columnName}`);
+    if (otherSlider) otherSlider.value = value;
+    if (otherValSpan) otherValSpan.textContent = value + '%';
+
+    // Update totals
+    updateWeightsTotal('mode2');
+    updateWeightsTotal('hybrid');
+}
+
+/**
+ * Update the total weight display
+ */
+function updateWeightsTotal(prefix) {
+    const total = Object.values(metadataWeights).reduce((sum, w) => sum + w, 0);
+
+    const totalSpan = prefix === 'mode2'
+        ? document.getElementById('metadataWeightsTotal')
+        : document.getElementById('hybridMetadataWeightsTotal');
+
+    if (totalSpan) {
+        totalSpan.textContent = total + '%';
+        // Visual feedback for valid/invalid total
+        totalSpan.style.color = (total === 100) ? '#4caf50' : '#f44336';
+    }
+}
+
+/**
+ * Equalize all metadata weights (Mode 2)
+ */
+function equalizeMetadataWeights() {
+    initializeEqualWeights();
+    renderDynamicWeightSliders('dynamicMetadataWeightsContainer', 'mode2');
+    renderDynamicWeightSliders('dynamicHybridMetadataWeightsContainer', 'hybrid');
+    console.log('[METADATA] Weights equalized');
+}
+
+/**
+ * Equalize all metadata weights (Hybrid mode)
+ */
+function equalizeHybridMetadataWeights() {
+    equalizeMetadataWeights(); // Same logic
+}
+
+/**
+ * Get normalized metadata weights dict for API (sums to 1.0)
+ */
+function getNormalizedMetadataWeights() {
+    const total = Object.values(metadataWeights).reduce((sum, w) => sum + w, 0);
+    if (total === 0) return {};
+
+    const normalized = {};
+    Object.entries(metadataWeights).forEach(([col, weight]) => {
+        normalized[col] = weight / total;
+    });
+    return normalized;
+}
+
+// Legacy function kept for backwards compatibility
 function updateMetadataWeights() {
-    // Metadata sub-weights are fixed at:
-    // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
-    // No user adjustment needed - backend uses fixed optimized values
+    // Now handled by updateDynamicWeight()
 }
 
 // Update Hybrid Weights (Mode 3) - Single slider balances between visual and metadata
@@ -3522,12 +3699,9 @@ function updateHybridVisualSubWeights() {
 }
 
 // Update Hybrid Metadata Sub-Weights
-// NOTE: Metadata sub-weights are now fixed and displayed statically
-// This function is kept for backwards compatibility but does nothing
+// Legacy function - now handled by updateDynamicWeight()
 function updateHybridMetadataSubWeights() {
-    // Metadata sub-weights are fixed at:
-    // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
-    // No user adjustment needed - backend uses fixed optimized values
+    // Dynamic metadata weights are managed via renderDynamicWeightSliders()
 }
 
 // Reset Weights to Default
@@ -3546,8 +3720,8 @@ function resetWeights() {
     }
     
     if (metadataSection.style.display !== 'none') {
-        // Mode 2 (Metadata) weights are fixed and cannot be reset
-        // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
+        // Mode 2 (Metadata) - reset to equal weights
+        equalizeMetadataWeights();
     }
     
     if (hybridSection.style.display !== 'none') {
@@ -3561,8 +3735,8 @@ function resetWeights() {
         document.getElementById('hybridTextureWeightSlider').value = 20;
         updateHybridVisualSubWeights();
 
-        // Metadata sub-weights are fixed and cannot be reset
-        // SKU: 30%, Name: 30%, Category: 25%, Price: 10%, Performance: 5%
+        // Reset metadata sub-weights to equal
+        equalizeHybridMetadataWeights();
     }
     
     showToast('Weights reset to default values', 'success');
@@ -3642,26 +3816,23 @@ async function exportWithImages() {
         };
         
         for (const result of matchResults) {
-            const product = result.product;
-            const matches = result.matches;
-            
+            const product = result.p;  // Use compact format
+            const matches = result.m;  // Use compact matches
+
             exportData.results.push({
                 product: {
                     id: product.id,
-                    filename: product.filename,
-                    category: product.category,
-                    sku: product.sku,
-                    name: product.name
+                    name: product.name,
+                    category: product.cat,
+                    sku: product.sku
                 },
                 matches: matches.map(m => ({
-                    product_id: m.product_id,
-                    product_name: m.product_name,
-                    similarity_score: m.similarity_score,
-                    color_score: m.color_score,
-                    shape_score: m.shape_score,
-                    texture_score: m.texture_score,
-                    priceStatistics: m.priceStatistics,
-                    performanceStatistics: m.performanceStatistics
+                    product_id: m.mid,
+                    product_name: m.name,
+                    similarity_score: getScore(m, 'similarity'),
+                    color_score: getScore(m, 'color'),
+                    shape_score: getScore(m, 'shape'),
+                    texture_score: getScore(m, 'texture')
                 }))
             });
         }
@@ -3715,11 +3886,11 @@ function showDuplicateReport() {
     
     // Find all duplicates (similarity > 90%)
     const duplicates = [];
-    
+
     matchResults.forEach(result => {
-        const product = result.product;
-        const highMatches = result.matches.filter(m => m.similarity_score > 90);
-        
+        const product = result.p;  // Use compact format
+        const highMatches = result.m.filter(m => getScore(m, 'similarity') > 90);
+
         if (highMatches.length > 0) {
             duplicates.push({
                 product: product,
@@ -3769,27 +3940,22 @@ function showDuplicateReport() {
     
     duplicates.forEach(dup => {
         const product = dup.product;
-        
+
         dup.matches.forEach(match => {
+            const similarityScore = getScore(match, 'similarity');
             html += `
-                <div class="duplicate-item" data-similarity="${match.similarity_score}">
+                <div class="duplicate-item" data-similarity="${similarityScore}">
                     <div class="duplicate-images">
-                        <img src="/api/products/${product.id}/image" alt="${product.filename}">
-                        <img src="/api/products/${match.product_id}/image" alt="${match.product_name}">
+                        <img src="/api/products/${product.id}/image" alt="${product.name}">
+                        <img src="/api/products/${match.mid}/image" alt="${match.name}">
                     </div>
                     <div class="duplicate-info">
                         <h4>Potential Duplicate Detected</h4>
-                        <div class="duplicate-score">${match.similarity_score.toFixed(1)}% Similar</div>
+                        <div class="duplicate-score">${similarityScore.toFixed(1)}% Similar</div>
                         <div class="duplicate-details">
-                            <p><strong>New Product:</strong> ${escapeHtml(product.filename)} ${product.category ? `(${product.category})` : ''}</p>
-                            <p><strong>Matched Product:</strong> ${escapeHtml(match.product_name || 'Unknown')} ${match.category ? `(${match.category})` : ''}</p>
-                            ${match.priceStatistics ? `
-                                <p><strong>Price:</strong> ${match.priceStatistics.current} (Trend: ${match.priceStatistics.trend})</p>
-                            ` : ''}
-                            ${match.performanceStatistics ? `
-                                <p><strong>Performance:</strong> ${match.performanceStatistics.total_sales} sales, ${match.performanceStatistics.total_revenue} revenue</p>
-                            ` : ''}
-                            <p><strong>Recommendation:</strong> ${match.similarity_score > 95 ? 'Very likely duplicate - review carefully' : 'Possible duplicate - manual review recommended'}</p>
+                            <p><strong>New Product:</strong> ${escapeHtml(product.name)} ${product.cat ? `(${product.cat})` : ''}</p>
+                            <p><strong>Matched Product:</strong> ${escapeHtml(match.name || 'Unknown')}</p>
+                            <p><strong>Recommendation:</strong> ${similarityScore > 95 ? 'Very likely duplicate - review carefully' : 'Possible duplicate - manual review recommended'}</p>
                         </div>
                     </div>
                 </div>
@@ -3813,33 +3979,30 @@ function showDuplicateReport() {
 // Export Duplicate Report
 async function exportDuplicateReport() {
     const duplicates = [];
-    
+
     matchResults.forEach(result => {
-        const product = result.product;
-        const highMatches = result.matches.filter(m => m.similarity_score > 90);
-        
+        const product = result.p;  // Use compact format
+        const highMatches = result.m.filter(m => getScore(m, 'similarity') > 90);
+
         if (highMatches.length > 0) {
             highMatches.forEach(match => {
+                const similarityScore = getScore(match, 'similarity');
                 duplicates.push({
-                    new_product: product.filename,
-                    new_category: product.category || 'Uncategorized',
-                    matched_product: match.product_name || 'Unknown',
-                    matched_category: match.category || 'Uncategorized',
-                    similarity_score: match.similarity_score.toFixed(1),
-                    price_current: match.priceStatistics?.current || 'N/A',
-                    price_trend: match.priceStatistics?.trend || 'N/A',
-                    total_sales: match.performanceStatistics?.total_sales || 'N/A',
-                    total_revenue: match.performanceStatistics?.total_revenue || 'N/A',
-                    recommendation: match.similarity_score > 95 ? 'Very likely duplicate' : 'Possible duplicate'
+                    new_product: product.name,
+                    new_category: product.cat || 'Uncategorized',
+                    new_sku: product.sku || 'N/A',
+                    matched_product: match.name || 'Unknown',
+                    similarity_score: similarityScore.toFixed(1),
+                    recommendation: similarityScore > 95 ? 'Very likely duplicate' : 'Possible duplicate'
                 });
             });
         }
     });
-    
-    let csv = 'New Product,New Category,Matched Product,Matched Category,Similarity Score,Price Current,Price Trend,Total Sales,Avg Sales,Sales Trend,Recommendation\n';
-    
+
+    let csv = 'New Product,New Category,New SKU,Matched Product,Similarity Score,Recommendation\n';
+
     duplicates.forEach(dup => {
-        csv += `"${dup.new_product}","${dup.new_category}","${dup.matched_product}","${dup.matched_category}",${dup.similarity_score},"${dup.price_current}","${dup.price_trend}","${dup.total_sales}","${dup.total_revenue}","${dup.recommendation}"\n`;
+        csv += `"${dup.new_product}","${dup.new_category}","${dup.new_sku}","${dup.matched_product}",${dup.similarity_score},"${dup.recommendation}"\n`;
     });
 
     const filename = `duplicate_report_${new Date().toISOString().slice(0, 10)}.csv`;
@@ -4020,8 +4183,8 @@ function updateMainSearchStatus() {
     // Count how many products match the search
     if (matchResults && matchResults.length > 0) {
         const filtered = matchResults.map(result => {
-            const product = result.product;
-            const searchText = `${product.filename} ${product.name || ''} ${product.sku || ''} ${product.category || ''}`.toLowerCase();
+            const product = result.p;  // Use compact format
+            const searchText = `${product.name || ''} ${product.sku || ''} ${product.cat || ''}`.toLowerCase();
             if (!searchText.includes(searchQuery)) {
                 return null;
             }

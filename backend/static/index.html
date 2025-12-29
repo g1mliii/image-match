@@ -516,35 +516,29 @@
                         <h4>METADATA MATCHING WEIGHTS</h4>
 
                         <div style="padding: 15px; background: #f9f9f9; border: 2px solid #000; margin-bottom: 15px;">
-                            <p style="margin: 0 0 10px 0; font-weight: bold;">Fixed Backend Weights:</p>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 14px;">
-                                <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                    <span>SKU SIMILARITY:</span>
-                                    <span style="font-weight: bold;">30%</span>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                    <span>NAME SIMILARITY:</span>
-                                    <span style="font-weight: bold;">30%</span>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                    <span>CATEGORY MATCH:</span>
-                                    <span style="font-weight: bold;">25%</span>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                    <span>PRICE RANGE:</span>
-                                    <span style="font-weight: bold;">10%</span>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                    <span>PERFORMANCE:</span>
-                                    <span style="font-weight: bold;">5%</span>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: #e8f5e9; border: 1px solid #4caf50; font-weight: bold;">
-                                    <span>TOTAL:</span>
-                                    <span>100%</span>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <p style="margin: 0; font-weight: bold;">Column Weights:</p>
+                                <button onclick="equalizeMetadataWeights()"
+                                        style="padding: 5px 15px; background: #4CAF50; color: white; border: none; cursor: pointer; font-size: 12px;">
+                                    EQUALIZE ALL
+                                </button>
+                            </div>
+
+                            <!-- Dynamic sliders container - populated by JS after CSV upload -->
+                            <div id="dynamicMetadataWeightsContainer">
+                                <div style="padding: 20px; text-align: center; color: #666; font-style: italic;">
+                                    Upload a CSV to see available columns for weighting.
                                 </div>
                             </div>
+
+                            <!-- Total weight indicator -->
+                            <div style="display: flex; justify-content: space-between; padding: 8px 10px; background: #e8f5e9; border: 2px solid #4caf50; font-weight: bold; margin-top: 10px;">
+                                <span>TOTAL:</span>
+                                <span id="metadataWeightsTotal">0%</span>
+                            </div>
+
                             <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">
-                                <em>These weights are optimized by the backend and cannot be changed.</em>
+                                <em>Adjust sliders to prioritize columns for matching. Weights are normalized automatically.</em>
                             </p>
                         </div>
                     </div>
@@ -575,43 +569,33 @@
                             <p>CLIP automatically analyzes all visual features (color, shape, texture, patterns) in a unified embedding. No manual tuning required!</p>
                         </div>
                         
-                        <details style="margin-top: 10px;">
+                        <details style="margin-top: 10px;" id="hybridMetadataSubweightsDetails">
                             <summary style="cursor: pointer; font-weight: bold; padding: 10px; background: #f0f0f0; border: 2px solid #000;">
-                                METADATA SUB-WEIGHTS (Fixed) ▼
+                                METADATA SUB-WEIGHTS (Adjustable) ▼
                             </summary>
                             <div style="padding: 15px; border: 2px solid #000; border-top: none; background: #f9f9f9;">
-                                <p style="margin: 0 0 10px 0; font-size: 13px; color: #666;">
-                                    <em>These weights are applied to the metadata component ({{METADATA MATCHING %}} above):</em>
-                                </p>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
-                                    <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                        <span>SKU:</span>
-                                        <span style="font-weight: bold;">30%</span>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                        <span>NAME:</span>
-                                        <span style="font-weight: bold;">30%</span>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                        <span>CATEGORY:</span>
-                                        <span style="font-weight: bold;">25%</span>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                        <span>PRICE:</span>
-                                        <span style="font-weight: bold;">10%</span>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: white; border: 1px solid #ddd;">
-                                        <span>PERFORMANCE:</span>
-                                        <span style="font-weight: bold;">5%</span>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 5px 10px; background: #e8f5e9; border: 1px solid #4caf50; font-weight: bold;">
-                                        <span>TOTAL:</span>
-                                        <span>100%</span>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <p style="margin: 0; font-size: 13px; color: #666;">
+                                        <em>Applied to the metadata component above:</em>
+                                    </p>
+                                    <button onclick="equalizeHybridMetadataWeights()"
+                                            style="padding: 4px 10px; background: #4CAF50; color: white; border: none; cursor: pointer; font-size: 11px;">
+                                        EQUALIZE
+                                    </button>
+                                </div>
+
+                                <!-- Dynamic sliders container for hybrid mode -->
+                                <div id="dynamicHybridMetadataWeightsContainer">
+                                    <div style="padding: 15px; text-align: center; color: #666; font-style: italic; font-size: 12px;">
+                                        Upload a CSV to configure metadata weights.
                                     </div>
                                 </div>
-                                <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">
-                                    <em>Optimized by the backend and cannot be changed.</em>
-                                </p>
+
+                                <!-- Total weight indicator -->
+                                <div style="display: flex; justify-content: space-between; padding: 6px 10px; background: #e8f5e9; border: 1px solid #4caf50; font-weight: bold; margin-top: 8px; font-size: 13px;">
+                                    <span>TOTAL:</span>
+                                    <span id="hybridMetadataWeightsTotal">0%</span>
+                                </div>
                             </div>
                         </details>
                     </div>

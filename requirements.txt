@@ -55,7 +55,7 @@ sentence-transformers>=2.7.0,<3.0.0
 
 # Intel GPU Acceleration (optional - for Intel Arc/Iris GPUs)
 # Uncomment to enable Intel GPU support:
-# intel-extension-for-pytorch>=2.1.0
+# intel-extension-for-pytorch>=2.1.0  # Optional: install on Intel hardware only
 # Provides 3-5x speedup on Intel GPUs vs CPU
 # Works on: Intel Arc, Intel Iris Xe, Intel UHD Graphics (11th gen+)
 # Installation: pip install intel-extension-for-pytorch
@@ -73,3 +73,8 @@ psutil>=5.9.0
 # Testing (optional - for development)
 pytest>=7.0.0
 pytest-timeout>=2.1.0
+
+# Fuzzy string matching (used in some matching heuristics)
+fuzzywuzzy==0.18.0
+# Optional C speedups for fuzzywuzzy
+python-Levenshtein>=0.20.0

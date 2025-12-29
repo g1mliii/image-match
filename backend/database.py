@@ -310,7 +310,27 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_performance_history_date
             ON performance_history(product_id, date)
         ''')
-        
+
+        # Create metadata_schema table for tracking dynamic CSV column headers
+        # This enables dynamic weight configuration in Mode 2/3 matching
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata_schema (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                column_name TEXT UNIQUE NOT NULL,
+                data_type TEXT DEFAULT 'string',
+                display_name TEXT,
+                default_weight REAL DEFAULT 0.0,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Index for quick schema lookups
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_metadata_schema_column_name
+            ON metadata_schema(column_name)
+        ''')
+
         conn.commit()
         print("Database initialized successfully with performance indexes")
     
@@ -2899,4 +2919,255 @@ def search_matched_products(query: str, limit: int = 100) -> List[Dict[str, Any]
     
     except Exception as e:
         logger.error(f"Error searching products: {e}")
+        return []
+
+
+# ============================================================================
+# METADATA SCHEMA FUNCTIONS - For dynamic Mode 2/3 matching
+# ============================================================================
+
+def save_metadata_schema(columns: List[Dict[str, Any]]) -> bool:
+    """
+    Save detected metadata columns from CSV upload.
+    Replaces existing schema with new columns.
+
+    Args:
+        columns: List of column definitions, each containing:
+            - column_name: str (required) - The column header name
+            - data_type: str (optional) - 'string' or 'numeric', defaults to 'string'
+            - display_name: str (optional) - Human-readable name
+            - default_weight: float (optional) - Default weight 0-100
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Clear existing schema
+            cursor.execute('DELETE FROM metadata_schema')
+
+            # Insert new columns
+            for col in columns:
+                column_name = col.get('column_name', '').strip().lower()
+                if not column_name:
+                    continue
+
+                data_type = col.get('data_type', 'string')
+                display_name = col.get('display_name', column_name.replace('_', ' ').title())
+                default_weight = col.get('default_weight', 0.0)
+
+                cursor.execute('''
+                    INSERT OR REPLACE INTO metadata_schema
+                    (column_name, data_type, display_name, default_weight, is_active)
+                    VALUES (?, ?, ?, ?, 1)
+                ''', (column_name, data_type, display_name, default_weight))
+
+            conn.commit()
+            logger.info(f"Saved metadata schema with {len(columns)} columns")
+            return True
+
+    except Exception as e:
+        logger.error(f"Error saving metadata schema: {e}")
+        return False
+
+
+def get_metadata_schema() -> List[Dict[str, Any]]:
+    """
+    Get all active metadata columns.
+
+    Returns:
+        List of column definitions with column_name, data_type, display_name, default_weight
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT column_name, data_type, display_name, default_weight
+                FROM metadata_schema
+                WHERE is_active = 1
+                ORDER BY id
+            ''')
+
+            results = cursor.fetchall()
+            return [
+                {
+                    'column_name': r[0],
+                    'data_type': r[1],
+                    'display_name': r[2],
+                    'default_weight': r[3]
+                }
+                for r in results
+            ]
+
+    except Exception as e:
+        logger.error(f"Error getting metadata schema: {e}")
+        return []
+
+
+def clear_metadata_schema() -> bool:
+    """
+    Clear all metadata schema entries.
+
+    Returns:
+        bool: True if successful
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM metadata_schema')
+            conn.commit()
+            logger.info("Cleared metadata schema")
+            return True
+
+    except Exception as e:
+        logger.error(f"Error clearing metadata schema: {e}")
+        return False
+
+
+def update_product_metadata(product_id: int, metadata: Dict[str, Any]) -> bool:
+    """
+    Update product's metadata JSON field.
+
+    Args:
+        product_id: Product ID to update
+        metadata: Dictionary of metadata key-value pairs
+
+    Returns:
+        bool: True if successful
+    """
+    import json
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            metadata_json = json.dumps(metadata) if metadata else None
+            cursor.execute('''
+                UPDATE products SET metadata = ? WHERE id = ?
+            ''', (metadata_json, product_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    except Exception as e:
+        logger.error(f"Error updating product metadata for {product_id}: {e}")
+        return False
+
+
+def get_product_metadata(product_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get product's metadata as dictionary.
+
+    Args:
+        product_id: Product ID
+
+    Returns:
+        Dictionary of metadata or None if not found/empty
+    """
+    import json
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT metadata FROM products WHERE id = ?', (product_id,))
+            row = cursor.fetchone()
+
+            if row and row[0]:
+                return json.loads(row[0])
+            return None
+
+    except Exception as e:
+        logger.error(f"Error getting product metadata for {product_id}: {e}")
+        return None
+
+
+def bulk_update_product_metadata(updates: List[Tuple[int, Dict[str, Any]]]) -> int:
+    """
+    Bulk update metadata for multiple products.
+
+    Args:
+        updates: List of (product_id, metadata_dict) tuples
+
+    Returns:
+        int: Number of products updated
+    """
+    import json
+
+    if not updates:
+        return 0
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            updated = 0
+            for product_id, metadata in updates:
+                metadata_json = json.dumps(metadata) if metadata else None
+                cursor.execute('''
+                    UPDATE products SET metadata = ? WHERE id = ?
+                ''', (metadata_json, product_id))
+                updated += cursor.rowcount
+
+            conn.commit()
+            logger.info(f"Bulk updated metadata for {updated} products")
+            return updated
+
+    except Exception as e:
+        logger.error(f"Error bulk updating product metadata: {e}")
+        return 0
+
+
+def get_all_products_with_metadata(is_historical: Optional[bool] = None) -> List[Dict[str, Any]]:
+    """
+    Get all products with their metadata parsed.
+
+    Args:
+        is_historical: Optional filter for historical/new products
+
+    Returns:
+        List of product dictionaries with parsed metadata
+    """
+    import json
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            if is_historical is not None:
+                cursor.execute('''
+                    SELECT id, image_path, category, product_name, sku, is_historical, metadata
+                    FROM products
+                    WHERE is_historical = ?
+                ''', (is_historical,))
+            else:
+                cursor.execute('''
+                    SELECT id, image_path, category, product_name, sku, is_historical, metadata
+                    FROM products
+                ''')
+
+            results = []
+            for row in cursor.fetchall():
+                product = {
+                    'id': row[0],
+                    'image_path': row[1],
+                    'category': row[2],
+                    'product_name': row[3],
+                    'sku': row[4],
+                    'is_historical': row[5],
+                    'metadata': {}
+                }
+
+                # Parse metadata JSON if present
+                if row[6]:
+                    try:
+                        product['metadata'] = json.loads(row[6])
+                    except json.JSONDecodeError:
+                        product['metadata'] = {}
+
+                results.append(product)
+
+            return results
+
+    except Exception as e:
+        logger.error(f"Error getting products with metadata: {e}")
         return []
