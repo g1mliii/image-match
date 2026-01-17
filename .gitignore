@@ -46,6 +46,9 @@ yarn-error.log*
 venv/
 env/
 
+# Debug configuration (local settings only)
+backend/debug.conf
+
 # Kiro AI files (internal use only)
 .kiro/
 

@@ -50,6 +50,7 @@ Visit our website: **https://g1mliii.github.io/image-match/**
 
 ### Windows
 - Windows 10 or later (64-bit)
+- **Python 3.12** (Required - Must be version < 3.13. Python 3.13+ is not compatible)
 - 4 GB RAM minimum (8 GB recommended)
 - 500 MB free disk space (1 GB with CLIP model)
 - Display resolution: 1280x720 or higher

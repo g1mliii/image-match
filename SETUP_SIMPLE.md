@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- **Python 3.8 - 3.12** (Python 3.13+ is NOT supported)
 - pip (Python package manager)
 
 ## Installation

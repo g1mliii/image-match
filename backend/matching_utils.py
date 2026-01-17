@@ -205,87 +205,10 @@ def create_match_result(
         'is_uncategorized': is_uncategorized,  # Flag for UI display
         'created_at': safe_get_metadata(candidate_product, 'created_at', ''),
         'has_missing_metadata': len(missing_fields) > 0 if missing_fields else False,
-        'missing_fields': missing_fields if missing_fields else None
+        'missing_fields': missing_fields if missing_fields else None,
+        # Include all metadata for dynamic sorting/filtering in frontend
+        'metadata_values': dict(candidate_product) if candidate_product else {}
     }
 
 
-def get_product_metadata(product_id: int, logger) -> tuple[Any, Any]:
-    """
-    Get price and performance metadata for a product.
-    
-    Args:
-        product_id: Product ID
-        logger: Logger instance
-    
-    Returns:
-        (price, performance_dict) tuple
-    """
-    from database import get_price_history, get_performance_history
-    
-    # Get price
-    price = None
-    try:
-        price_history = get_price_history(product_id, limit=1)
-        if price_history:
-            price = price_history[0]['price']
-    except Exception as e:
-        logger.warning(f"Could not get price for product {product_id}: {e}")
-    
-    # Get performance
-    performance = None
-    try:
-        perf_history = get_performance_history(product_id, limit=1)
-        if perf_history:
-            performance = {
-                'sales': perf_history[0]['sales'],
-                'views': perf_history[0]['views'],
-                'conversion_rate': perf_history[0]['conversion_rate'],
-                'revenue': perf_history[0]['revenue']
-            }
-    except Exception as e:
-        logger.warning(f"Could not get performance for product {product_id}: {e}")
-    
-    return price, performance
 
-
-def batch_fetch_metadata(logger) -> tuple[Dict, Dict]:
-    """
-    Batch fetch price and performance data for all products.
-    
-    Args:
-        logger: Logger instance
-    
-    Returns:
-        (price_lookup, performance_lookup) tuple of dicts
-    """
-    from database import get_products_with_price_history, get_products_with_performance_history
-    
-    logger.info("Batch fetching metadata...")
-    
-    price_lookup = {}
-    performance_lookup = {}
-    
-    try:
-        products_with_prices = get_products_with_price_history()
-        for p in products_with_prices:
-            if p['product_id'] not in price_lookup:
-                price_lookup[p['product_id']] = p['price']
-    except Exception as e:
-        logger.warning(f"Could not batch fetch prices: {e}")
-    
-    try:
-        products_with_perf = get_products_with_performance_history()
-        for p in products_with_perf:
-            if p['product_id'] not in performance_lookup:
-                performance_lookup[p['product_id']] = {
-                    'sales': p['sales'],
-                    'views': p['views'],
-                    'conversion_rate': p['conversion_rate'],
-                    'revenue': p['revenue']
-                }
-    except Exception as e:
-        logger.warning(f"Could not batch fetch performance: {e}")
-    
-    logger.info(f"Cached {len(price_lookup)} prices, {len(performance_lookup)} performance records")
-    
-    return price_lookup, performance_lookup

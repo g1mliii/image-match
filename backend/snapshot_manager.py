@@ -1421,7 +1421,187 @@ def get_combined_products_count() -> Dict[str, int]:
 
 # ============ Main Database Integration (Option C) ============
 
-def save_main_db_as_snapshot(name: str, description: str = None, 
+def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: int = 50) -> Optional[Tuple[str, int]]:
+    """Extract CSV content from database for historical or new products
+
+    Extracts CSV separately for historical vs new products to preserve schema integrity.
+    Historical and new products may have different metadata schemas, so they need separate CSVs.
+
+    Performance optimizations:
+    - Uses io.StringIO() + csv.writer() instead of string concatenation
+    - Streams products from cursor (doesn't load all into memory)
+    - Limits CSV size to prevent memory issues
+    - Only extracts if metadata_schema exists
+    - Explicitly closes all resources to prevent memory leaks
+
+    Args:
+        db_path: Path to database to extract from
+        is_historical: True for historical products (is_historical=1), False for new (is_historical=0)
+        max_size_mb: Maximum CSV size in MB (default 50MB)
+
+    Returns:
+        Tuple of (csv_content_string, row_count) or None if no products, metadata_schema, or too large
+    """
+    import io
+    import csv as csv_module
+
+    csv_buffer = None
+    try:
+        with get_snapshot_connection(db_path) as conn:
+            cursor = conn.cursor()
+
+            # Check if metadata_schema exists
+            cursor.execute('''
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='metadata_schema'
+            ''')
+
+            if not cursor.fetchone():
+                # No metadata_schema - return None
+                logger.debug(f"No metadata_schema in {db_path}, skipping CSV extraction")
+                return None
+
+            # Get column definitions from metadata_schema
+            cursor.execute('SELECT column_name FROM metadata_schema ORDER BY rowid')
+            dynamic_columns = [row[0] for row in cursor.fetchall()]
+
+            # Base columns for CSV (filename, category, sku, name)
+            base_columns = ['filename', 'category', 'sku', 'name']
+            all_columns = base_columns + dynamic_columns
+
+            # Get product count for this section (historical or new)
+            cursor.execute('SELECT COUNT(*) FROM products WHERE is_historical = ?', (1 if is_historical else 0,))
+            product_count = cursor.fetchone()[0]
+
+            if product_count == 0:
+                section_name = "historical" if is_historical else "new"
+                logger.debug(f"No {section_name} products to extract for CSV")
+                return None
+
+            # Build CSV using StringIO for better performance
+            csv_buffer = io.StringIO()
+            csv_writer = csv_module.writer(csv_buffer, quoting=csv_module.QUOTE_MINIMAL)
+
+            # Write header
+            csv_writer.writerow(all_columns)
+
+            # Stream products for this section (historical or new)
+            # Filter by is_historical to keep sections separate
+            cursor.execute(
+                'SELECT image_path, category, sku, product_name, metadata FROM products WHERE is_historical = ?',
+                (1 if is_historical else 0,)
+            )
+
+            row_count = 0
+            for product in cursor:
+                image_path, category, sku, name, metadata_json = product
+
+                # Parse metadata JSON
+                metadata = {}
+                if metadata_json:
+                    try:
+                        metadata = json.loads(metadata_json)
+                    except (json.JSONDecodeError, ValueError) as e:
+                        # Silently skip malformed JSON
+                        logger.debug(f"Skipping malformed metadata JSON: {e}")
+                        pass
+
+                # Build CSV row with proper escaping
+                row = [
+                    os.path.basename(image_path) if image_path else '',
+                    category or '',
+                    sku or '',
+                    name or ''
+                ]
+
+                # Add dynamic columns from metadata
+                for col in dynamic_columns:
+                    value = metadata.get(col, '')
+                    row.append(str(value) if value else '')
+
+                csv_writer.writerow(row)
+                row_count += 1
+
+                # Check size periodically to prevent memory issues
+                if row_count % 1000 == 0:
+                    current_size_mb = csv_buffer.tell() / (1024 * 1024)
+                    if current_size_mb > max_size_mb:
+                        section_name = "historical" if is_historical else "new"
+                        logger.error(f"CSV extraction for {section_name} exceeded {max_size_mb}MB limit, stopping at {row_count} rows")
+                        if csv_buffer:
+                            csv_buffer.close()
+                        return None
+
+            # Safely extract and close buffer
+            csv_content = csv_buffer.getvalue()
+            final_size_mb = len(csv_content.encode('utf-8')) / (1024 * 1024)
+            section_name = "historical" if is_historical else "new"
+            logger.info(f"Extracted {section_name} CSV: {row_count} rows, {final_size_mb:.2f}MB")
+
+            return csv_content, row_count
+
+    except Exception as e:
+        logger.error(f"Error extracting CSV from database: {e}", exc_info=True)
+        return None
+    finally:
+        # CRITICAL: Always close buffer to prevent memory leaks
+        if csv_buffer is not None:
+            try:
+                csv_buffer.close()
+            except Exception as e:
+                logger.debug(f"Error closing CSV buffer: {e}")
+
+
+def get_csv_from_snapshot(snapshot_path: str, is_historical: bool = True) -> Optional[Dict[str, Any]]:
+    """Get CSV content for a specific section from a snapshot
+
+    Args:
+        snapshot_path: Path to snapshot database file
+        is_historical: True to get historical CSV, False to get new CSV
+
+    Returns:
+        Dictionary with csv_content, filename, row_count, uploaded_at or None if no CSV
+    """
+    try:
+        with get_snapshot_connection(snapshot_path) as conn:
+            cursor = conn.cursor()
+
+            if is_historical:
+                # Get historical CSV
+                cursor.execute('''
+                    SELECT csv_historical_content, csv_historical_filename, csv_historical_row_count, csv_uploaded_at
+                    FROM snapshot_metadata
+                    WHERE id = 1
+                ''')
+            else:
+                # Get new CSV
+                cursor.execute('''
+                    SELECT csv_new_content, csv_new_filename, csv_new_row_count, csv_uploaded_at
+                    FROM snapshot_metadata
+                    WHERE id = 1
+                ''')
+
+            row = cursor.fetchone()
+
+            if row and row[0]:  # Check if csv_content exists and is not None
+                section = "historical" if is_historical else "new"
+                return {
+                    'csv_content': row[0],
+                    'filename': row[1] or f'{section}.csv',
+                    'row_count': row[2] or 0,
+                    'uploaded_at': row[3],
+                    'section': section
+                }
+
+        return None
+
+    except Exception as e:
+        section = "historical" if is_historical else "new"
+        logger.error(f"Error retrieving {section} CSV from snapshot: {e}")
+        return None
+
+
+def save_main_db_as_snapshot(name: str, description: str = None,
                              tags: List[str] = None) -> Dict[str, Any]:
     """Save the current main database as a new snapshot
     
@@ -1494,23 +1674,68 @@ def save_main_db_as_snapshot(name: str, description: str = None,
                     cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN created_by_operation TEXT')
                 if 'tags' not in existing_columns:
                     cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN tags TEXT')
+                # Add CSV columns for auto-load functionality (separate for historical and new)
+                if 'csv_historical_content' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_historical_content TEXT')
+                if 'csv_historical_filename' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_historical_filename TEXT')
+                if 'csv_historical_row_count' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_historical_row_count INTEGER')
+                if 'csv_new_content' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_new_content TEXT')
+                if 'csv_new_filename' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_new_filename TEXT')
+                if 'csv_new_row_count' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_new_row_count INTEGER')
+                if 'csv_uploaded_at' not in existing_columns:
+                    cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_uploaded_at TIMESTAMP')
 
             # Get product count
             cursor.execute('SELECT COUNT(*) FROM products')
             count = cursor.fetchone()[0]
-            
+
+            # Extract BOTH historical and new CSVs from main database for auto-load
+            # Keep them separate to preserve schema integrity for each section
+            csv_historical_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=True)
+            csv_new_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=False)
+
+            # Prepare historical CSV data
+            csv_historical_content = None
+            csv_historical_filename = None
+            csv_historical_row_count = None
+            if csv_historical_result:
+                csv_historical_content, csv_historical_row_count = csv_historical_result
+                csv_historical_filename = f"historical-{datetime.now().strftime('%Y%m%d')}.csv"
+
+            # Prepare new CSV data
+            csv_new_content = None
+            csv_new_filename = None
+            csv_new_row_count = None
+            if csv_new_result:
+                csv_new_content, csv_new_row_count = csv_new_result
+                csv_new_filename = f"new-{datetime.now().strftime('%Y%m%d')}.csv"
+
             # Clear existing metadata and insert new
             cursor.execute('DELETE FROM snapshot_metadata')
             cursor.execute('''
-                INSERT INTO snapshot_metadata 
-                (name, description, product_count, is_historical, tags)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO snapshot_metadata
+                (name, description, product_count, is_historical, tags,
+                 csv_historical_content, csv_historical_filename, csv_historical_row_count,
+                 csv_new_content, csv_new_filename, csv_new_row_count, csv_uploaded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 name,
                 description or f'Saved from main database on {datetime.now().strftime("%Y-%m-%d %H:%M")}',
                 count,
                 True,
-                json.dumps(tags or ['saved'])
+                json.dumps(tags or ['saved']),
+                csv_historical_content,
+                csv_historical_filename,
+                csv_historical_row_count,
+                csv_new_content,
+                csv_new_filename,
+                csv_new_row_count,
+                datetime.now().isoformat() if (csv_historical_content or csv_new_content) else None
             ))
         
         # Create uploads directory for this snapshot

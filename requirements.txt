@@ -1,10 +1,11 @@
 # Product Matching System - Complete Requirements
 #
-# PYTHON VERSION: 3.12 (Required for all platforms)
+# PYTHON VERSION: 3.8 - 3.12 (Python 3.13+ is NOT supported)
+# RECOMMENDED: Python 3.12 for best compatibility with AMD ROCm and all GPU types
 # This ensures compatibility with AMD ROCm and simplifies deployment
 #
 # QUICK START:
-# 1. Install Python 3.12 from https://www.python.org/downloads/
+# 1. Install Python 3.8-3.12 from https://www.python.org/downloads/ (NOT 3.13+)
 # 2. Install requirements: pip install -r requirements.txt
 # 3. For GPU acceleration: python gpu/setup_gpu.py (optional but recommended)
 #

@@ -223,6 +223,26 @@
                                 <span>Fuzzy name matching</span>
                                 <small>Match filename to product name</small>
                             </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="sku_equals_filename" onchange="previewLinking()">
+                                <span>SKU = Image Filename</span>
+                                <small>Metadata SKU matches image filename</small>
+                            </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="metadata_filename" onchange="previewLinking()">
+                                <span>Metadata Filename Column</span>
+                                <small>CSV has filename/image column</small>
+                            </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="name_equals_filename" onchange="previewLinking()">
+                                <span>Name = Image Filename</span>
+                                <small>Product name matches image filename</small>
+                            </label>
+                            <label>
+                                <input type="radio" name="linkStrategy" value="search_all_fields" onchange="previewLinking()">
+                                <span>Search All Fields</span>
+                                <small>Check any metadata column for match</small>
+                            </label>
                         </div>
 
                         <div id="patternConfig" style="display: none; margin-top: 15px;">

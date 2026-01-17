@@ -1,0 +1,14 @@
+# Debug Mode Configuration
+#
+# Debug mode enables verbose logging for troubleshooting issues.
+# When enabled, you'll see detailed per-product logs, weights, metadata, etc.
+#
+# USAGE:
+# 1. Copy this file to 'debug.conf' (without .example)
+# 2. Set to 'true' to enable debug logging
+# 3. Set to 'false' for production mode (clean, minimal logging)
+#
+# Note: debug.conf is gitignored and won't be committed
+#
+# VALID VALUES: true, false, 1, 0, yes, no, on, off
+false

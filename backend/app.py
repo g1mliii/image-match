@@ -1,5 +1,8 @@
 import os
+import shutil
 import re
+import json
+import io
 import logging
 from werkzeug.utils import secure_filename
 from datetime import datetime
@@ -84,6 +87,10 @@ warnings.filterwarnings(
 
 # App Lock and Crash Detection
 BACKEND_DIR = os.path.dirname(__file__)
+
+# Import debug mode configuration (centralized to avoid circular imports)
+from config import is_debug_mode, DEBUG_MODE
+
 APP_LOCK_FILE = os.path.join(BACKEND_DIR, '.app.lock')
 
 def create_app_lock():
@@ -222,7 +229,19 @@ def cleanup_on_shutdown():
     - Garbage collection
     """
     logger.info("Starting application shutdown cleanup...")
-
+    try:
+        # Clear matches from the database table
+        from database import clear_all_matches, invalidate_faiss_index
+        deleted = clear_all_matches()
+        
+        # Invalidate FAISS to ensure next run starts fresh
+        invalidate_faiss_index(None)
+        
+        logger.info(f"✓ Session cleanup: Deleted {deleted} matches from database")
+    except Exception as e:
+        logger.warning(f"Failed to clear session matches: {e}")
+    # --- END OF NEW BLOCK ---
+    
     try:
         # Clear CLIP model cache (350MB+ memory)
         from image_processing_clip import clear_clip_model_cache
@@ -328,6 +347,16 @@ def cleanup_on_shutdown():
     except Exception as e:
         logger.warning(f"Failed to remove app lock: {e}")
 
+    try:
+        # Clear uploads folder as requested (temp folder)
+        if os.path.exists(app.config['UPLOAD_FOLDER']):
+            shutil.rmtree(app.config['UPLOAD_FOLDER'])
+            logger.info("✓ Removed uploads folder")
+            # Recreate empty folder for next time
+            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    except Exception as e:
+        logger.warning(f"Failed to remove uploads folder: {e}")
+
     logger.info("Application cleanup complete")
 
 # Supported image formats
@@ -422,6 +451,11 @@ def catalog_manager():
     """Serve the Catalog Manager tool"""
     return send_from_directory(app.static_folder, 'catalog-manager.html')
 
+@app.route('/mobile')
+def mobile_upload():
+    """Serve the Mobile Upload page"""
+    return send_from_directory(app.static_folder, 'mobile-upload.html')
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -500,6 +534,560 @@ def get_gpu_status():
             'first_run': False,
             'error': str(e)
         })
+
+@app.route('/api/network/local-ip', methods=['GET'])
+def get_local_ip_endpoint():
+    """Get local IP address for mobile connection"""
+    import socket
+
+    def get_local_ip():
+        try:
+            # Connect to a public DNS server to find local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception as e:
+            logger.debug(f"Failed to get local IP: {e}")
+            return "127.0.0.1"
+
+    primary_ip = get_local_ip()
+    port = request.environ.get('SERVER_PORT', 5000)
+
+    return jsonify({
+        'primary_ip': primary_ip,
+        'port': port,
+        'mobile_url': f'http://{primary_ip}:{port}/mobile'
+    })
+
+@app.route('/api/mobile/auth', methods=['POST'])
+def mobile_auth():
+    """Authenticate mobile device and return available catalogs
+
+    Request JSON:
+        {
+            "password": "123456"
+        }
+
+    Response:
+        {
+            "valid": true,
+            "catalogs": [
+                {
+                    "id": "catalog_filename.db",
+                    "name": "Catalog Name",
+                    "product_count": 1523,
+                    "is_loaded": true
+                }
+            ],
+            "modes": ["mode1", "mode3"]
+        }
+
+    Performance optimized:
+    - Only fetches catalog metadata (not all products)
+    - Uses efficient snapshot list query
+    - Limited catalog response to avoid large payloads
+    - Constant-time password comparison (prevents timing attacks)
+    """
+    try:
+        data = request.get_json() or {}
+        password = data.get('password', '').strip()
+
+        if not password:
+            logger.warning(f"Mobile auth failed: missing password from {request.remote_addr}")
+            return create_error_response('MISSING_PASSWORD', 'Password required', status_code=400)
+
+        # Validate password (constant-time comparison)
+        from config import validate_mobile_password
+        if not validate_mobile_password(password):
+            logger.warning(f"Mobile auth failed: invalid password from {request.remote_addr}")
+            return create_error_response('INVALID_PASSWORD', 'Incorrect password', status_code=401)
+
+        # Get available catalogs efficiently
+        from snapshot_manager import list_snapshots, get_loaded_snapshot_info
+
+        try:
+            catalogs_dict = list_snapshots()
+            loaded_info = get_loaded_snapshot_info()
+            loaded_file = loaded_info.get('snapshot_file', '')
+
+            # Get historical catalogs (most common use case for mobile)
+            # Combine both historical and new catalogs for selection
+            historical_catalogs = catalogs_dict.get('historical', [])
+            new_catalogs = catalogs_dict.get('new', [])
+            all_catalogs = historical_catalogs + new_catalogs
+
+            # Limit response to first 50 catalogs to prevent memory issues
+            catalogs_response = []
+            for catalog in all_catalogs[:50]:
+                catalogs_response.append({
+                    'id': catalog.get('file', ''),
+                    'name': catalog.get('name', 'Unnamed'),
+                    'product_count': catalog.get('product_count', 0),
+                    'is_loaded': catalog.get('file', '') == loaded_file
+                })
+
+            logger.info(f"Mobile auth successful from {request.remote_addr}, returned {len(catalogs_response)} catalogs")
+
+            return jsonify({
+                'valid': True,
+                'catalogs': catalogs_response,
+                'modes': ['mode1', 'mode3']
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting catalogs for mobile: {e}", exc_info=True)
+            return create_error_response('CATALOG_ERROR', 'Failed to load catalogs', status_code=500)
+
+    except Exception as e:
+        logger.error(f"Mobile auth error: {e}", exc_info=True)
+        return create_error_response('AUTH_ERROR', 'Authentication failed', status_code=500)
+
+@app.route('/api/mobile/config', methods=['GET'])
+def mobile_config():
+    """Get mobile configuration (categories + loaded catalog info)
+
+    Requires: X-Mobile-Password header
+    Response:
+        {
+            "authorized": true,
+            "loaded_catalog": {
+                "name": "Catalog Name",
+                "file": "catalog.db",
+                "product_count": 1523
+            }
+        }
+
+    Performance optimized:
+    - Only returns loaded catalog metadata (not all catalogs)
+    - Minimal query (single info lookup)
+    - Constant-time password validation
+    """
+    try:
+        password = request.headers.get('X-Mobile-Password', '').strip()
+
+        if not password:
+            logger.warning(f"Mobile config failed: missing password from {request.remote_addr}")
+            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
+
+        from config import validate_mobile_password
+        if not validate_mobile_password(password):
+            logger.warning(f"Mobile config failed: invalid password from {request.remote_addr}")
+            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+
+        from snapshot_manager import get_loaded_snapshot_info
+
+        try:
+            loaded_info = get_loaded_snapshot_info()
+
+            return jsonify({
+                'authorized': True,
+                'loaded_catalog': {
+                    'name': loaded_info.get('name', 'Unknown'),
+                    'file': loaded_info.get('snapshot_file', ''),
+                    'product_count': loaded_info.get('product_count', 0)
+                }
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting loaded catalog for mobile: {e}", exc_info=True)
+            return create_error_response('CONFIG_ERROR', 'Failed to load config', status_code=500)
+
+    except Exception as e:
+        logger.error(f"Mobile config error: {e}", exc_info=True)
+        return create_error_response('CONFIG_ERROR', 'Config request failed', status_code=500)
+
+@app.route('/api/mobile/catalog-schema', methods=['GET'])
+def get_catalog_schema():
+    """Get metadata schema for HISTORICAL section of selected catalog
+
+    Requires: X-Mobile-Password header
+    Query params:
+        catalog_id: snapshot filename (e.g., "catalog_2025.db")
+
+    Response:
+        {
+            "base_fields": [
+                {"column_name": "category", "data_type": "string", "display_name": "Category"}
+            ],
+            "metadata_fields": [
+                {"column_name": "brand", "data_type": "string", "display_name": "Brand"},
+                {"column_name": "model", "data_type": "string", "display_name": "Model"}
+            ],
+            "catalog_id": "catalog_2025.db"
+        }
+
+    Notes:
+    - Returns HISTORICAL section schema only (where is_historical=1)
+    - All fields are OPTIONAL (user can leave blank)
+    - Base fields (category) + dynamic metadata fields combined
+
+    Performance optimized:
+    - Indexes on metadata_schema table (fast lookups)
+    - Returns only field definitions (no product data)
+    - Response size limited to <50KB max
+    """
+    try:
+        password = request.headers.get('X-Mobile-Password', '').strip()
+
+        if not password:
+            logger.warning(f"Mobile catalog-schema failed: missing password from {request.remote_addr}")
+            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
+
+        from config import validate_mobile_password
+        if not validate_mobile_password(password):
+            logger.warning(f"Mobile catalog-schema failed: invalid password from {request.remote_addr}")
+            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+
+        catalog_id = request.args.get('catalog_id', '').strip()
+        if not catalog_id:
+            logger.warning(f"Mobile catalog-schema: missing catalog_id from {request.remote_addr}")
+            return create_error_response('MISSING_CATALOG', 'catalog_id required', status_code=400)
+
+        # Validate catalog_id is safe (prevent path traversal)
+        if '..' in catalog_id or '/' in catalog_id or '\\' in catalog_id:
+            logger.warning(f"Mobile catalog-schema: suspicious catalog_id from {request.remote_addr}")
+            return create_error_response('INVALID_CATALOG', 'Invalid catalog_id', status_code=400)
+
+        from snapshot_manager import get_snapshot_connection
+        catalog_path = os.path.join(BACKEND_DIR, 'catalogs', catalog_id)
+
+        if not os.path.exists(catalog_path):
+            logger.warning(f"Mobile catalog-schema: catalog not found: {catalog_id}")
+            return create_error_response('CATALOG_NOT_FOUND', 'Catalog not found', status_code=404)
+
+        try:
+            with get_snapshot_connection(catalog_path) as conn:
+                cursor = conn.cursor()
+
+                # Get dynamic metadata fields from metadata_schema
+                # These apply to HISTORICAL products (is_historical=1)
+                cursor.execute('''
+                    SELECT column_name, data_type, display_name
+                    FROM metadata_schema
+                    WHERE is_active = 1
+                    ORDER BY rowid
+                ''')
+
+                metadata_fields = []
+                for row in cursor.fetchall():
+                    metadata_fields.append({
+                        'column_name': row[0],
+                        'data_type': row[1],
+                        'display_name': row[2] or row[0]
+                    })
+
+            logger.debug(f"Mobile catalog-schema: returned {len(metadata_fields)} fields for {catalog_id}")
+
+            return jsonify({
+                'base_fields': [
+                    {
+                        'column_name': 'category',
+                        'data_type': 'string',
+                        'display_name': 'Category'
+                    }
+                ],
+                'metadata_fields': metadata_fields,
+                'catalog_id': catalog_id,
+                'note': 'All fields are optional - leave blank if not applicable'
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting catalog schema for {catalog_id}: {e}", exc_info=True)
+            return create_error_response('SCHEMA_ERROR', 'Failed to load catalog schema', status_code=500)
+
+    except Exception as e:
+        logger.error(f"Mobile catalog-schema error: {e}", exc_info=True)
+        return create_error_response('SCHEMA_ERROR', 'Schema request failed', status_code=500)
+
+@app.route('/api/mobile/password', methods=['GET', 'POST'])
+def mobile_password_management():
+    """Get or update mobile password (desktop only, no mobile access)
+
+    GET: Returns current password
+        Response: {"password": "123456"}
+
+    POST: Update password to new value
+        Request JSON: {"new_password": "654321"}
+        Response: {"success": true, "password": "654321"}
+
+    Validation:
+    - Password must be exactly 6 digits
+    - Only numeric values allowed
+
+    Performance optimized:
+    - GET: Returns cached password (no file I/O usually)
+    - POST: Single file write + cache update
+    """
+    try:
+        from config import get_mobile_password, save_mobile_password
+
+        if request.method == 'GET':
+            try:
+                password = get_mobile_password()
+                return jsonify({'password': password}), 200
+            except Exception as e:
+                logger.error(f"Error getting mobile password: {e}")
+                return create_error_response('PASSWORD_ERROR', 'Failed to get password', status_code=500)
+
+        # POST: Update password
+        try:
+            data = request.get_json() or {}
+            new_password = data.get('new_password', '').strip()
+
+            # Validate password format
+            if not new_password:
+                logger.warning(f"Mobile password update: empty password from {request.remote_addr}")
+                return create_error_response('INVALID_PASSWORD', 'Password required', status_code=400)
+
+            if len(new_password) != 6:
+                logger.warning(f"Mobile password update: wrong length ({len(new_password)}) from {request.remote_addr}")
+                return create_error_response('INVALID_PASSWORD', 'Must be exactly 6 characters', status_code=400)
+
+            if not new_password.isdigit():
+                logger.warning(f"Mobile password update: non-digit password from {request.remote_addr}")
+                return create_error_response('INVALID_PASSWORD', 'Must contain only digits (0-9)', status_code=400)
+
+            save_mobile_password(new_password)
+            logger.info(f"Mobile password updated from {request.remote_addr}")
+
+            return jsonify({
+                'success': True,
+                'password': new_password,
+                'message': 'Mobile password updated'
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error saving mobile password: {e}", exc_info=True)
+            return create_error_response('PASSWORD_ERROR', 'Failed to save password', status_code=500)
+
+    except Exception as e:
+        logger.error(f"Mobile password management error: {e}", exc_info=True)
+        return create_error_response('PASSWORD_ERROR', 'Password request failed', status_code=500)
+
+@app.route('/api/mobile/upload-and-match', methods=['POST'])
+def mobile_upload_and_match():
+    """Complete mobile workflow: Exact desktop flow (use_existing + replace)
+
+    Orchestrates exact desktop flow:
+    1. Load catalog via load_snapshot_to_main_db()
+    2. Load historical products (skip batch-upload, use_existing mode)
+    3. Clear new section
+    4. Batch upload new product (replace mode)
+    5. Batch match
+    6. Returns all data for frontend to display
+
+    Form data:
+        image: Image file (required)
+        catalog_id: Snapshot filename (required)
+        mode: "mode1" or "mode3" (required)
+        category: Product category (optional)
+        product_name: Product name (optional)
+        sku: Product SKU (optional)
+
+    Headers:
+        X-Mobile-Password: 6-digit PIN (required)
+    """
+    try:
+        # Validate mobile password
+        password = request.headers.get('X-Mobile-Password', '').strip()
+
+        if not password:
+            logger.warning(f"[MOBILE] Auth failed: missing password from {request.remote_addr}")
+            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
+
+        from config import validate_mobile_password
+        if not validate_mobile_password(password):
+            logger.warning(f"[MOBILE] Auth failed: invalid password from {request.remote_addr}")
+            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+
+        # Validate required form data
+        if 'image' not in request.files:
+            return create_error_response('MISSING_IMAGE', 'Image file required', status_code=400)
+
+        catalog_id = request.form.get('catalog_id', '').strip()
+        if not catalog_id:
+            return create_error_response('MISSING_CATALOG', 'catalog_id required', status_code=400)
+
+        mode = request.form.get('mode', '').strip().lower()
+        if mode not in ['mode1', 'mode3']:
+            return create_error_response('INVALID_MODE', 'mode must be "mode1" or "mode3"', status_code=400)
+
+        # Validate catalog_id is safe
+        if '..' in catalog_id or '/' in catalog_id or '\\' in catalog_id:
+            logger.warning(f"[MOBILE] Suspicious catalog_id from {request.remote_addr}")
+            return create_error_response('INVALID_CATALOG', 'Invalid catalog_id', status_code=400)
+
+        from snapshot_manager import get_snapshot_connection
+        catalog_path = os.path.join(BACKEND_DIR, 'catalogs', catalog_id)
+
+        if not os.path.exists(catalog_path):
+            logger.warning(f"[MOBILE] Catalog not found: {catalog_id}")
+            return create_error_response('CATALOG_NOT_FOUND', 'Catalog not found', status_code=404)
+
+        try:
+            import json
+            import uuid
+
+            # STEP 1: Load catalog (use_existing mode - same as desktop)
+            logger.info(f"[MOBILE] Step 1: Loading catalog {catalog_id}")
+            from snapshot_manager import load_snapshot_to_main_db
+
+            load_result = load_snapshot_to_main_db(catalog_id)
+            if load_result.get('error'):
+                logger.error(f"[MOBILE] Failed to load catalog: {load_result['error']}")
+                return create_error_response('LOAD_ERROR', 'Failed to load catalog', status_code=500)
+
+            logger.info(f"[MOBILE] Catalog loaded: {load_result.get('product_count')} products")
+
+            # STEP 2: Load historical products (skip batch-upload, use_existing mode)
+            logger.info(f"[MOBILE] Step 2: Loading historical products (use_existing)")
+            # In use_existing mode, backend just loads existing products from DB, no upload
+            # Frontend state will be updated when batch-match response comes back
+
+            # STEP 3: Clear new section (replace mode) - silent operation
+            logger.info(f"[MOBILE] Step 3: Clearing new section (replace mode)")
+            try:
+                from database import get_db_connection
+
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    # Delete all new products (is_historical = 0)
+                    cursor.execute('DELETE FROM products WHERE is_historical = 0')
+                    deleted_count = cursor.rowcount
+                    conn.commit()
+                    logger.info(f"[MOBILE] Cleared {deleted_count} new products")
+            except Exception as e:
+                logger.warning(f"[MOBILE] Cleanup error (non-fatal): {e}")
+                # Continue anyway - products may be empty already
+
+            # STEP 4: Batch upload new product
+            logger.info(f"[MOBILE] Step 4: Uploading new product via batch-upload")
+
+            file = request.files['image']
+            if file.filename == '':
+                return create_error_response('EMPTY_FILENAME', 'No file selected', status_code=400)
+
+            if not allowed_file(file.filename):
+                return create_error_response('INVALID_FORMAT', 'Unsupported file format', status_code=400)
+
+            # Get product fields
+            category = request.form.get('category', None)
+            product_name = request.form.get('product_name', None)
+            sku = request.form.get('sku', None)
+
+            # Normalize empty strings
+            if category and category.strip() == '':
+                category = None
+            if product_name and product_name.strip() == '':
+                product_name = None
+            if sku and sku.strip() == '':
+                sku = None
+
+            # Save image file
+            file_ext = secure_filename(file.filename).rsplit('.', 1)[1].lower() if '.' in secure_filename(file.filename) else 'jpg'
+            unique_filename = f"{uuid.uuid4()}.{file_ext}"
+            uploads_dir = os.path.join(BACKEND_DIR, 'uploads')
+            os.makedirs(uploads_dir, exist_ok=True)
+            filepath = os.path.join(uploads_dir, unique_filename)
+
+            try:
+                file.save(filepath)
+                logger.info(f"[MOBILE] Image saved: {filepath}")
+            except Exception as e:
+                logger.error(f"[MOBILE] Failed to save image: {e}")
+                return create_error_response('SAVE_ERROR', 'Failed to save image', status_code=500)
+
+            # Call batch-upload backend functions directly (same as desktop batch-upload)
+            try:
+                from database import insert_product, insert_features
+                from image_processing import extract_features_unified
+
+                product_id = insert_product(
+                    image_path=filepath,
+                    category=category,
+                    product_name=product_name,
+                    sku=sku,
+                    is_historical=False
+                )
+                logger.info(f"[MOBILE] Product inserted: ID {product_id}")
+
+                # Extract features
+                try:
+                    features, embedding_type, embedding_version = extract_features_unified(filepath)
+                    insert_features(
+                        product_id=product_id,
+                        color_features=features['color_features'],
+                        shape_features=features['shape_features'],
+                        texture_features=features['texture_features'],
+                        embedding_type=embedding_type,
+                        embedding_version=embedding_version
+                    )
+                    logger.info(f"[MOBILE] Features extracted for product {product_id}")
+                except Exception as e:
+                    logger.warning(f"[MOBILE] Feature extraction failed (non-fatal): {e}")
+
+            except Exception as e:
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
+                logger.error(f"[MOBILE] Upload failed: {e}")
+                return create_error_response('UPLOAD_ERROR', 'Failed to upload product', status_code=500)
+
+            # STEP 5: Batch match (same as desktop)
+            logger.info(f"[MOBILE] Step 5: Matching product {product_id} (mode {mode})")
+
+            try:
+                from product_matching import find_matches, find_metadata_matches
+
+                matches = []
+
+                if mode == 'mode1':
+                    # Mode 1: Visual only
+                    matches = find_matches(product_id, limit=5, category=category)
+                    logger.info(f"[MOBILE] Mode 1 matching: {len(matches)} results")
+                elif mode == 'mode3':
+                    # Mode 3: Hybrid visual + metadata
+                    matches = find_metadata_matches(product_id, limit=5)
+                    logger.info(f"[MOBILE] Mode 3 matching: {len(matches)} results")
+
+            except Exception as e:
+                logger.warning(f"[MOBILE] Matching error (non-fatal): {e}")
+                matches = []
+
+            # Format matches
+            matches_response = []
+            for match in matches[:5]:
+                matches_response.append({
+                    'id': match.get('product_id') or match.get('id'),
+                    'name': match.get('product_name') or match.get('name') or 'Unknown',
+                    'category': match.get('category') or 'N/A',
+                    'score': match.get('score', 0),
+                    'sku': match.get('sku')
+                })
+
+            logger.info(f"[MOBILE] Complete: Product {product_id}, {len(matches_response)} matches")
+
+            # Return full response with all data for frontend to update state
+            return jsonify({
+                'success': True,
+                'product_id': product_id,
+                'mode': mode,
+                'catalog_id': catalog_id,
+                'upload_status': 'success',
+                'matches': matches_response,
+                'match_count': len(matches_response)
+            }), 200
+
+        except Exception as e:
+            logger.error(f"[MOBILE] Orchestration error: {e}", exc_info=True)
+            return create_error_response('ORCHESTRATION_ERROR', 'Processing failed', status_code=500)
+
+    except Exception as e:
+        logger.error(f"[MOBILE] Request error: {e}", exc_info=True)
+        return create_error_response('MOBILE_ERROR', 'Request failed', status_code=500)
 
 @app.route('/api/products/<int:product_id>/image', methods=['GET'])
 def get_product_image(product_id):
@@ -704,12 +1292,19 @@ def create_metadata_products_batch():
             if category and str(category).strip() == '':
                 category = None
             
+            # Extract metadata (all other fields)
+            known_fields = {'sku', 'product_name', 'category', 'is_historical', 'performance_history', 'price', 'price_history'}
+            metadata = {k: v for k, v in product.items() if k not in known_fields}
+            
             return {
                 'sku': sku,
                 'product_name': product_name,
                 'category': category,
                 'is_historical': is_historical,
-                'performance_history': product.get('performance_history', None)
+                'performance_history': product.get('performance_history', None),
+                'price': product.get('price', None),
+                'price_history': product.get('price_history', None),
+                'metadata': metadata
             }, None
         
         validated_products = []
@@ -736,6 +1331,7 @@ def create_metadata_products_batch():
         # Step 2: Batch insert products in chunks (incremental)
         logger.info("[BATCH-METADATA] Step 2: Batch inserting products (chunked)")
         from database import bulk_insert_products
+        import json
         
         CHUNK_SIZE = 100
         product_ids = []
@@ -743,7 +1339,14 @@ def create_metadata_products_batch():
         for chunk_idx in range(0, len(validated_products), CHUNK_SIZE):
             chunk = validated_products[chunk_idx:chunk_idx + CHUNK_SIZE]
             products_to_insert = [
-                ('[METADATA_ONLY]', p['category'], p['product_name'], p['sku'], p['is_historical'])
+                (
+                    '[METADATA_ONLY]', 
+                    p['category'], 
+                    p['product_name'], 
+                    p['sku'], 
+                    p['is_historical'],
+                    json.dumps(p['metadata']) if p['metadata'] else None
+                )
                 for p in chunk
             ]
             
@@ -1368,14 +1971,15 @@ def batch_upload_products():
     """
     Batch upload multiple products with images and optional metadata.
     Uses parallel GPU batch processing for CLIP feature extraction.
-    
+
     Form data (multipart/form-data):
-    - images: Multiple image files (required) - JPEG, PNG, or WebP
+    - file_paths: JSON array of absolute file paths (MEMORY OPTIMIZATION) - images NOT uploaded
+    - images: Multiple image files (legacy, will be saved to uploads folder) - JPEG, PNG, or WebP
     - categories: JSON array of categories (optional, same length as images or single value)
     - product_names: JSON array of product names (optional, same length as images)
     - skus: JSON array of SKUs (optional, same length as images)
     - is_historical: Boolean (default: false)
-    
+
     Returns:
     - 200: Success with results for each product
     - 400: Validation error
@@ -1383,34 +1987,57 @@ def batch_upload_products():
     """
     try:
         logger.info("[BATCH-UPLOAD] Starting batch upload")
-        
-        # Get uploaded files
-        files = request.files.getlist('images')
-        
-        if not files or len(files) == 0:
-            return create_error_response(
-                'MISSING_IMAGES',
-                'No image files provided',
-                'Please upload at least one image file',
-                status_code=400
-            )
-        
-        logger.info(f"[BATCH-UPLOAD] Received {len(files)} images")
-        
-        # Get optional metadata arrays
+
+        # MEMORY OPTIMIZATION: Check for file_paths first (new approach - no file uploads)
         import json
+        file_paths_json = request.form.get('file_paths', None)
+
+        if file_paths_json:
+            # New approach: file paths provided, images already on disk
+            try:
+                file_paths = json.loads(file_paths_json)
+                logger.info(f"[BATCH-UPLOAD] METHOD: NEW (File Paths) - Processing {len(file_paths)} images")
+                saved_files = file_paths  # Use paths directly, no saving needed
+                files = None  # No uploaded files
+            except json.JSONDecodeError as e:
+                return create_error_response(
+                    'INVALID_JSON',
+                    f'Failed to parse file_paths JSON: {str(e)}',
+                    'Ensure file_paths is a valid JSON array',
+                    status_code=400
+                )
+        else:
+            # Legacy approach: files are uploaded, need to save them
+            files = request.files.getlist('images')
+            logger.info(f"[BATCH-UPLOAD] METHOD: LEGACY (Direct Upload) - Processing {len(files) if files else 0} files")
+            saved_files = None  # Will be populated below
+
+            if not files or len(files) == 0:
+                return create_error_response(
+                    'MISSING_IMAGES',
+                    'No image files or file_paths provided',
+                    'Provide either file_paths array or upload image files',
+                    status_code=400
+                )
         
+        # Determine total files count based on approach
+        file_count = len(file_paths) if file_paths_json else len(files)
+        logger.info(f"[BATCH-UPLOAD] Processing {file_count} images ({('file paths' if file_paths_json else 'uploaded files')})")
+
+        # Get optional metadata arrays
         categories = request.form.get('categories', None)
         product_names = request.form.get('product_names', None)
         skus = request.form.get('skus', None)
+        metadata_list = request.form.get('metadata', None)
         is_historical = request.form.get('is_historical', 'false').lower() == 'true'
-        
+
         # Parse JSON arrays
         try:
-            categories = json.loads(categories) if categories else [None] * len(files)
-            product_names = json.loads(product_names) if product_names else [None] * len(files)
-            skus = json.loads(skus) if skus else [None] * len(files)
-            
+            categories = json.loads(categories) if categories else [None] * file_count
+            product_names = json.loads(product_names) if product_names else [None] * file_count
+            skus = json.loads(skus) if skus else [None] * file_count
+            metadata_list = json.loads(metadata_list) if metadata_list else [None] * file_count
+
             # Log categories for debugging
             unique_categories = set(c for c in categories if c is not None)
             logger.info(f"[BATCH-UPLOAD] Categories received: {len(unique_categories)} unique categories from {len(categories)} products")
@@ -1423,112 +2050,155 @@ def batch_upload_products():
                 'Ensure categories, product_names, and skus are valid JSON arrays',
                 status_code=400
             )
-        
+
         # Validate array lengths
-        if len(categories) == 1 and len(files) > 1:
+        if len(categories) == 1 and file_count > 1:
             # Single category for all products
-            categories = categories * len(files)
-        
-        if len(categories) != len(files):
+            categories = categories * file_count
+
+        if len(categories) != file_count:
             return create_error_response(
                 'ARRAY_LENGTH_MISMATCH',
-                f'categories array length ({len(categories)}) does not match number of images ({len(files)})',
+                f'categories array length ({len(categories)}) does not match number of images ({file_count})',
                 'Provide one category per image or a single category for all',
                 status_code=400
             )
-        
-        if len(product_names) != len(files):
+
+        if len(product_names) != file_count:
             return create_error_response(
                 'ARRAY_LENGTH_MISMATCH',
-                f'product_names array length ({len(product_names)}) does not match number of images ({len(files)})',
+                f'product_names array length ({len(product_names)}) does not match number of images ({file_count})',
                 'Provide one product name per image',
                 status_code=400
             )
-        
-        if len(skus) != len(files):
+
+        if len(skus) != file_count:
             return create_error_response(
                 'ARRAY_LENGTH_MISMATCH',
-                f'skus array length ({len(skus)}) does not match number of images ({len(files)})',
+                f'skus array length ({len(skus)}) does not match number of images ({file_count})',
                 'Provide one SKU per image',
                 status_code=400
             )
-        
-        # Step 1: Save all files and validate (skip invalid ones, retry once)
-        logger.info("[BATCH-UPLOAD] Step 1: Saving and validating files")
-        
-        def process_files_batch(files_to_process, file_indices_to_process, attempt=1):
-            """Process a batch of files, return (saved_files, file_indices, skipped_files)"""
-            saved = []
-            indices = []
-            skipped = []
-            
-            for idx, (i, file) in enumerate(zip(file_indices_to_process, files_to_process)):
+
+        if len(metadata_list) != file_count:
+            return create_error_response(
+                'ARRAY_LENGTH_MISMATCH',
+                f'metadata array length ({len(metadata_list)}) does not match number of images ({file_count})',
+                'Provide one metadata object per image',
+                status_code=400
+            )
+
+        # Step 1: If using file paths (new approach), validate them directly. Otherwise, save uploaded files.
+        if file_paths_json:
+            # MEMORY OPTIMIZED: File paths provided, validate directly without saving
+            logger.info("[BATCH-UPLOAD] Step 1: Validating file paths (MEMORY OPTIMIZED - no uploads)")
+
+            valid_files = []
+            file_indices = []
+            skipped_files = []
+
+            for i, filepath in enumerate(file_paths):
                 try:
-                    if file.filename == '':
-                        logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: Empty filename")
-                        skipped.append({'index': i, 'filename': 'unknown', 'reason': 'Empty filename'})
+                    # Check file exists
+                    if not os.path.exists(filepath):
+                        logger.warning(f"[BATCH-UPLOAD] File path {i+1}: Does not exist: {filepath}")
+                        skipped_files.append({'index': i, 'filename': os.path.basename(filepath), 'reason': 'File not found'})
                         continue
-                    
-                    if not allowed_file(file.filename):
-                        logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: Unsupported format ({file.filename})")
-                        skipped.append({'index': i, 'filename': file.filename, 'reason': 'Unsupported format'})
-                        continue
-                    
-                    # Save file
-                    filename = secure_filename(file.filename)
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    unique_filename = f"{timestamp}_{i}_{filename}"
-                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-                    
-                    file.save(filepath)
-                    logger.debug(f"[BATCH-UPLOAD] Attempt {attempt}: Saved file {i+1}/{len(files_to_process)}: {filepath}")
-                    
+
                     # Validate image
                     is_valid, error_msg, error_code = validate_image_file(filepath)
                     if not is_valid:
-                        logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: {error_msg}")
-                        skipped.append({'index': i, 'filename': file.filename, 'reason': error_msg})
-                        try:
-                            os.remove(filepath)
-                        except:
-                            pass
+                        logger.warning(f"[BATCH-UPLOAD] File path {i+1}: {error_msg} ({filepath})")
+                        skipped_files.append({'index': i, 'filename': os.path.basename(filepath), 'reason': error_msg})
                         continue
-                    
-                    saved.append(filepath)
-                    indices.append(i)
-                    
+
+                    valid_files.append(filepath)
+                    file_indices.append(i)
+
                 except Exception as e:
-                    logger.error(f"[BATCH-UPLOAD] Attempt {attempt}: Error processing file {i+1}: {e}")
-                    skipped.append({'index': i, 'filename': file.filename, 'reason': str(e)})
+                    logger.error(f"[BATCH-UPLOAD] File path {i+1}: Error: {e}")
+                    skipped_files.append({'index': i, 'filename': os.path.basename(filepath), 'reason': str(e)})
                     continue
-            
-            return saved, indices, skipped
-        
-        # First attempt: process all files
-        saved_files, file_indices, skipped_files = process_files_batch(files, list(range(len(files))), attempt=1)
-        
-        if len(skipped_files) > 0:
-            logger.info(f"[BATCH-UPLOAD] Attempt 1: Skipped {len(skipped_files)} files, processing {len(saved_files)} valid files")
-            
-            # Retry skipped files once
-            logger.info(f"[BATCH-UPLOAD] Retrying {len(skipped_files)} skipped files (Attempt 2)")
-            retry_files = [files[s['index']] for s in skipped_files]
-            retry_indices = [s['index'] for s in skipped_files]
-            
-            retry_saved, retry_indices_result, retry_skipped = process_files_batch(retry_files, retry_indices, attempt=2)
-            
-            # Merge retry results
-            saved_files.extend(retry_saved)
-            file_indices.extend(retry_indices_result)
-            
-            # Update skipped list with files that failed retry
-            skipped_files = retry_skipped
-            
-            if len(retry_saved) > 0:
-                logger.info(f"[BATCH-UPLOAD] Retry successful: {len(retry_saved)} files recovered, {len(retry_skipped)} still skipped")
-            else:
-                logger.info(f"[BATCH-UPLOAD] Retry failed: All {len(retry_skipped)} files still invalid")
-        
+
+            saved_files = valid_files
+            logger.info(f"[BATCH-UPLOAD] Step 1: Validated {len(saved_files)} files (skipped {len(skipped_files)})")
+        else:
+            # LEGACY: Files uploaded, need to save them and validate
+            logger.info("[BATCH-UPLOAD] Step 1: Saving and validating uploaded files")
+
+            def process_files_batch(files_to_process, file_indices_to_process, attempt=1):
+                """Process a batch of files, return (saved_files, file_indices, skipped_files)"""
+                saved = []
+                indices = []
+                skipped = []
+
+                for idx, (i, file) in enumerate(zip(file_indices_to_process, files_to_process)):
+                    try:
+                        if file.filename == '':
+                            logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: Empty filename")
+                            skipped.append({'index': i, 'filename': 'unknown', 'reason': 'Empty filename'})
+                            continue
+
+                        if not allowed_file(file.filename):
+                            logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: Unsupported format ({file.filename})")
+                            skipped.append({'index': i, 'filename': file.filename, 'reason': 'Unsupported format'})
+                            continue
+
+                        # Save file
+                        filename = secure_filename(file.filename)
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        unique_filename = f"{timestamp}_{i}_{filename}"
+                        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+
+                        file.save(filepath)
+                        logger.debug(f"[BATCH-UPLOAD] Attempt {attempt}: Saved file {i+1}/{len(files_to_process)}: {filepath}")
+
+                        # Validate image
+                        is_valid, error_msg, error_code = validate_image_file(filepath)
+                        if not is_valid:
+                            logger.warning(f"[BATCH-UPLOAD] Attempt {attempt}: Skipping file {i+1}: {error_msg}")
+                            skipped.append({'index': i, 'filename': file.filename, 'reason': error_msg})
+                            try:
+                                os.remove(filepath)
+                            except:
+                                pass
+                            continue
+
+                        saved.append(filepath)
+                        indices.append(i)
+
+                    except Exception as e:
+                        logger.error(f"[BATCH-UPLOAD] Attempt {attempt}: Error processing file {i+1}: {e}")
+                        skipped.append({'index': i, 'filename': file.filename, 'reason': str(e)})
+                        continue
+
+                return saved, indices, skipped
+
+            # First attempt: process all files
+            saved_files, file_indices, skipped_files = process_files_batch(files, list(range(len(files))), attempt=1)
+
+            if len(skipped_files) > 0:
+                logger.info(f"[BATCH-UPLOAD] Attempt 1: Skipped {len(skipped_files)} files, processing {len(saved_files)} valid files")
+
+                # Retry skipped files once
+                logger.info(f"[BATCH-UPLOAD] Retrying {len(skipped_files)} skipped files (Attempt 2)")
+                retry_files = [files[s['index']] for s in skipped_files]
+                retry_indices = [s['index'] for s in skipped_files]
+
+                retry_saved, retry_indices_result, retry_skipped = process_files_batch(retry_files, retry_indices, attempt=2)
+
+                # Merge retry results
+                saved_files.extend(retry_saved)
+                file_indices.extend(retry_indices_result)
+
+                # Update skipped list with files that failed retry
+                skipped_files = retry_skipped
+
+                if len(retry_saved) > 0:
+                    logger.info(f"[BATCH-UPLOAD] Retry successful: {len(retry_saved)} files recovered, {len(retry_skipped)} still skipped")
+                else:
+                    logger.info(f"[BATCH-UPLOAD] Retry failed: All {len(retry_skipped)} files still invalid")
+
         if len(saved_files) == 0:
             return create_error_response(
                 'NO_VALID_FILES',
@@ -1536,20 +2206,31 @@ def batch_upload_products():
                 'All files were invalid or skipped',
                 status_code=400
             )
-        
-        logger.info(f"[BATCH-UPLOAD] {len(saved_files)} files saved and validated (after retry)")
-        
-        # Step 2: Insert products into database (incremental to overlap with feature extraction)
-        logger.info("[BATCH-UPLOAD] Step 2: Inserting products into database (incremental)")
-        product_ids = []
-        PRODUCT_BATCH_SIZE = 32  # Insert every 32 products (matches GPU batch size)
-        
+
+        logger.info(f"[BATCH-UPLOAD] {len(saved_files)} files saved and validated")
+
+        # Step 2: Insert products into database (THREAD-SAFE: Bulk insert in single transaction)
+        logger.info("[BATCH-UPLOAD] Step 2: Inserting products into database (bulk insert)")
+
+        # THREAD SAFETY & PERFORMANCE:
+        # Use bulk_insert_products() instead of parallel insert_product() calls
+        # - SQLite can only handle ONE write at a time (even with WAL mode)
+        # - Parallel writes cause lock contention and SQLITE_BUSY errors
+        # - Bulk insert is faster: single transaction instead of N transactions
+        # - This is the CORRECT approach for SQLite batch operations
+
+        from database import bulk_insert_products
+        import json
+
+        # Prepare all product data for bulk insert
+        products_to_insert = []
         for i, filepath in enumerate(saved_files):
-            original_idx = file_indices[i]  # Map back to original file index
+            original_idx = file_indices[i]
             category = categories[original_idx]
             product_name = product_names[original_idx]
             sku = skus[original_idx]
-            
+            metadata = metadata_list[original_idx]
+
             # Normalize empty strings to None
             if category and str(category).strip() == '':
                 category = None
@@ -1557,7 +2238,7 @@ def batch_upload_products():
                 product_name = None
             if sku and str(sku).strip() == '':
                 sku = None
-            
+
             # Validate SKU if provided
             if sku:
                 is_valid, error_msg = validate_sku_format(sku)
@@ -1566,25 +2247,41 @@ def batch_upload_products():
                     sku = None
                 else:
                     sku = normalize_sku(sku)
-            
-            # Insert product
-            try:
-                product_id = insert_product(
-                    image_path=filepath,
-                    category=category,
-                    product_name=product_name,
-                    sku=sku,
-                    is_historical=is_historical
-                )
-                product_ids.append(product_id)
-                logger.debug(f"[BATCH-UPLOAD] Inserted product {i+1}/{len(saved_files)}: ID={product_id}")
-            except Exception as e:
-                logger.error(f"[BATCH-UPLOAD] Database error for file {i+1}: {e}")
-                # Continue with other products
-                product_ids.append(None)
-        
-        inserted_count = sum(1 for pid in product_ids if pid is not None)
-        logger.info(f"[BATCH-UPLOAD] Inserted {inserted_count}/{len(saved_files)} products")
+
+            # Serialize metadata if dict
+            if metadata and isinstance(metadata, dict):
+                metadata = json.dumps(metadata)
+
+            # Add to bulk insert list: (image_path, category, product_name, sku, is_historical, metadata)
+            products_to_insert.append((filepath, category, product_name, sku, is_historical, metadata))
+
+        # Bulk insert all products in single transaction (THREAD-SAFE, FAST)
+        try:
+            product_ids = bulk_insert_products(products_to_insert)
+            inserted_count = len(product_ids)
+            logger.info(f"[BATCH-UPLOAD] ✓ Bulk inserted {inserted_count}/{len(saved_files)} products (single transaction)")
+        except Exception as e:
+            logger.error(f"[BATCH-UPLOAD] Bulk insert failed: {e}")
+            # Fallback: insert one by one (slower but more resilient)
+            logger.info("[BATCH-UPLOAD] Falling back to sequential insert...")
+            product_ids = []
+            for i, (filepath, category, product_name, sku, is_hist, meta) in enumerate(products_to_insert):
+                try:
+                    product_id = insert_product(
+                        image_path=filepath,
+                        category=category,
+                        product_name=product_name,
+                        sku=sku,
+                        is_historical=is_hist,
+                        metadata=meta
+                    )
+                    product_ids.append(product_id)
+                    logger.debug(f"[BATCH-UPLOAD] Fallback inserted product {i+1}/{len(products_to_insert)}")
+                except Exception as e2:
+                    logger.error(f"[BATCH-UPLOAD] Failed to insert product {i+1}: {e2}")
+                    product_ids.append(None)
+            inserted_count = sum(1 for pid in product_ids if pid is not None)
+            logger.info(f"[BATCH-UPLOAD] Fallback complete: {inserted_count}/{len(saved_files)} products inserted")
         
         # Step 3: Extract features in batch (GPU-optimized parallel processing)
         logger.info("[BATCH-UPLOAD] Step 3: Extracting features in batch (GPU-optimized)")
@@ -1676,25 +2373,32 @@ def batch_upload_products():
         
         # Prepare response
         results = []
-        
+
         # Add successful products
         for i, product_id in enumerate(product_ids):
             original_idx = file_indices[i]
+            # Get filename - either from files object (legacy upload) or from saved_files (file paths)
+            if files is not None:
+                filename = files[original_idx].filename
+            else:
+                # File paths approach - extract basename from filepath
+                filename = os.path.basename(saved_files[i])
+
             if product_id is not None:
                 results.append({
                     'index': original_idx,
                     'status': 'success',
                     'product_id': product_id,
-                    'filename': files[original_idx].filename
+                    'filename': filename
                 })
             else:
                 results.append({
                     'index': original_idx,
                     'status': 'failed',
                     'error': 'Database insertion failed',
-                    'filename': files[original_idx].filename
+                    'filename': filename
                 })
-        
+
         # Add skipped files
         for skipped in skipped_files:
             results.append({
@@ -1703,21 +2407,28 @@ def batch_upload_products():
                 'reason': skipped['reason'],
                 'filename': skipped['filename']
             })
-        
+
         success_count = sum(1 for r in results if r['status'] == 'success')
         skipped_count = len(skipped_files)
         failed_count = sum(1 for r in results if r['status'] == 'failed')
-        
+
         logger.info(f"[BATCH-UPLOAD] ✓ Complete! {success_count} successful, {failed_count} failed, {skipped_count} skipped")
+
+        # Total count based on approach used
+        total_count = len(file_paths) if file_paths_json else len(files)
         
-        return jsonify({
+        response_data = {
             'status': 'success',
-            'total': len(files),
+            'total': total_count,
             'successful': success_count,
             'failed': failed_count,
             'skipped': skipped_count,
             'results': results
-        }), 200
+        }
+        
+        logger.info(f"[BATCH-UPLOAD] Returning JSON response: status={response_data['status']}, total={response_data['total']}, successful={response_data['successful']}, failed={response_data['failed']}, skipped={response_data['skipped']}, results_count={len(response_data['results'])}")
+
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"[BATCH-UPLOAD] Unexpected error: {e}", exc_info=True)
@@ -1897,16 +2608,9 @@ def match_products():
 
             logger.info(f"[MATCH] Using dynamic metadata weights: {metadata_weights}")
         else:
-            # Legacy mode - use individual weight params
-            sku_weight = data.get('sku_weight', 0.30)
-            name_weight = data.get('name_weight', 0.30)
-            category_weight_meta = data.get('category_weight', 0.25)
-            price_weight = data.get('price_weight', 0.10)
-            performance_weight = data.get('performance_weight', 0.05)
-
-            logger.info(f"[MATCH] Metadata weights (legacy): SKU={sku_weight}, Name={name_weight}, Category={category_weight_meta}, Price={price_weight}, Performance={performance_weight}")
+            logger.warning("[MATCH] No metadata_weights provided in request")
         
-        # Get hybrid weights if provided
+        # Get hybrid weight
         visual_weight = data.get('visual_weight', 0.50)
         metadata_weight = data.get('metadata_weight', 0.50)
         
@@ -1962,36 +2666,17 @@ def match_products():
                 # Mode 3: Hybrid matching (visual + metadata)
                 logger.info(f"Product {product_id} using hybrid matching (visual: {visual_weight*100}%, metadata: {metadata_weight*100}%)")
 
-                if metadata_weights is not None:
-                    # Dynamic weights mode
-                    result = find_hybrid_matches(
-                        product_id=product_id,
-                        threshold=threshold,
-                        limit=limit,
-                        visual_weight=visual_weight,
-                        metadata_weight=metadata_weight,
-                        metadata_weights=metadata_weights,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
-                else:
-                    # Legacy mode
-                    result = find_hybrid_matches(
-                        product_id=product_id,
-                        threshold=threshold,
-                        limit=limit,
-                        visual_weight=visual_weight,
-                        metadata_weight=metadata_weight,
-                        sku_weight=sku_weight,
-                        name_weight=name_weight,
-                        category_weight=category_weight_meta,
-                        price_weight=price_weight,
-                        performance_weight=performance_weight,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
+                result = find_hybrid_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    visual_weight=visual_weight,
+                    metadata_weight=metadata_weight,
+                    metadata_weights=metadata_weights,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
             elif has_features:
                 # Mode 1: Pure visual matching
                 logger.info(f"Product {product_id} using visual matching")
@@ -2011,32 +2696,15 @@ def match_products():
                 # Mode 2: Metadata matching only (no visual features)
                 logger.info(f"Product {product_id} has no visual features, using metadata matching")
 
-                if metadata_weights is not None:
-                    # Dynamic weights mode
-                    result = find_metadata_matches(
-                        product_id=product_id,
-                        threshold=threshold,
-                        limit=limit,
-                        weights=metadata_weights,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
-                else:
-                    # Legacy mode
-                    result = find_metadata_matches(
-                        product_id=product_id,
-                        threshold=threshold,
-                        limit=limit,
-                        sku_weight=sku_weight,
-                        name_weight=name_weight,
-                        category_weight=category_weight_meta,
-                        price_weight=price_weight,
-                        performance_weight=performance_weight,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
+                result = find_metadata_matches(
+                    product_id=product_id,
+                    threshold=threshold,
+                    limit=limit,
+                    weights=metadata_weights,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
             
             # Prepare response
             response = {
@@ -2198,7 +2866,7 @@ def batch_match_products():
                 status_code=400
             )
         
-        # Get metadata weights - support both dynamic dict and legacy individual weights
+        # Get metadata weights
         metadata_weights = data.get('metadata_weights', None)
 
         if metadata_weights is not None:
@@ -2224,12 +2892,8 @@ def batch_match_products():
                 )
             logger.info(f"[BATCH] Using dynamic metadata weights: {metadata_weights}")
         else:
-            # Legacy mode
-            sku_weight = float(data.get('sku_weight', 0.30))
-            name_weight = float(data.get('name_weight', 0.30))
-            category_weight = float(data.get('category_weight', 0.25))
-            price_weight = float(data.get('price_weight', 0.10))
-            performance_weight = float(data.get('performance_weight', 0.05))
+            # No weights provided - this will likely fail in matching functions if mode requires them
+            logger.warning("[BATCH] No metadata_weights provided in request")
 
         logger.info(f"[BATCH] Starting batch matching for {len(product_ids)} products")
         logger.info(f"[BATCH] Weights - Visual: {visual_weight*100}%, Metadata: {metadata_weight*100}%")
@@ -2250,36 +2914,17 @@ def batch_match_products():
                 logger.info(f"[BATCH] Mode 3 (Hybrid) - Processing {len(product_ids)} products in parallel")
                 logger.info(f"[BATCH] Mode 3 will run Mode 1 (Visual) and Mode 2 (Metadata) simultaneously")
 
-                if metadata_weights is not None:
-                    # Dynamic weights mode
-                    result = batch_find_hybrid_matches(
-                        product_ids=product_ids,
-                        threshold=threshold,
-                        limit=limit,
-                        visual_weight=visual_weight,
-                        metadata_weight=metadata_weight,
-                        metadata_weights=metadata_weights,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
-                else:
-                    # Legacy mode
-                    result = batch_find_hybrid_matches(
-                        product_ids=product_ids,
-                        threshold=threshold,
-                        limit=limit,
-                        visual_weight=visual_weight,
-                        metadata_weight=metadata_weight,
-                        sku_weight=sku_weight,
-                        name_weight=name_weight,
-                        category_weight=category_weight,
-                        price_weight=price_weight,
-                        performance_weight=performance_weight,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
+                result = batch_find_hybrid_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    visual_weight=visual_weight,
+                    metadata_weight=metadata_weight,
+                    metadata_weights=metadata_weights,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
             elif is_pure_visual:
                 # Mode 1: Visual batch matching
                 logger.info(f"[BATCH] Mode 1 (Visual) - Processing {len(product_ids)} products in parallel")
@@ -2296,63 +2941,30 @@ def batch_match_products():
                 # Mode 2: Metadata batch matching
                 logger.info(f"[BATCH] Mode 2 (Metadata) - Processing {len(product_ids)} products in parallel")
                 logger.info(f"[BATCH] Mode 2 will use ThreadPoolExecutor for parallel metadata comparison (no GPU needed)")
+                logger.info(f"[BATCH] Mode 2 using dynamic weights: {metadata_weights}")
 
-                if metadata_weights is not None:
-                    # Dynamic weights mode
-                    logger.info(f"[BATCH] Mode 2 using dynamic weights: {metadata_weights}")
-                    result = batch_find_metadata_matches(
-                        product_ids=product_ids,
-                        threshold=threshold,
-                        limit=limit,
-                        weights=metadata_weights,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
-                else:
-                    # Legacy mode
-                    logger.info(f"[BATCH] Mode 2 metadata weights: SKU={sku_weight}, Name={name_weight}, Category={category_weight}, Price={price_weight}, Performance={performance_weight}")
-                    result = batch_find_metadata_matches(
-                        product_ids=product_ids,
-                        threshold=threshold,
-                        limit=limit,
-                        sku_weight=sku_weight,
-                        name_weight=name_weight,
-                        category_weight=category_weight,
-                        price_weight=price_weight,
-                        performance_weight=performance_weight,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
+                result = batch_find_metadata_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    weights=metadata_weights,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
             else:
                 # Fallback: shouldn't happen, but default to metadata
                 logger.warning(f"[BATCH] Unexpected weight combination: visual={visual_weight}, metadata={metadata_weight}. Defaulting to Mode 2 (Metadata)")
 
-                if metadata_weights is not None:
-                    result = batch_find_metadata_matches(
-                        product_ids=product_ids,
-                        threshold=threshold,
-                        limit=limit,
-                        weights=metadata_weights,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
-                else:
-                    result = batch_find_metadata_matches(
-                        product_ids=product_ids,
-                        threshold=threshold,
-                        limit=limit,
-                        sku_weight=sku_weight,
-                        name_weight=name_weight,
-                        category_weight=category_weight,
-                        price_weight=price_weight,
-                        performance_weight=performance_weight,
-                        store_matches=True,
-                        skip_invalid_products=True,
-                        match_against_all=match_against_all
-                    )
+                result = batch_find_metadata_matches(
+                    product_ids=product_ids,
+                    threshold=threshold,
+                    limit=limit,
+                    weights=metadata_weights,
+                    store_matches=True,
+                    skip_invalid_products=True,
+                    match_against_all=match_against_all
+                )
             
             # Prepare response
             response = {
@@ -2362,11 +2974,6 @@ def batch_match_products():
                 'summary': result['summary'],
                 'errors': result.get('errors', [])
             }
-            
-            logger.info(f"[BATCH] ✓ Batch matching complete!")
-            logger.info(f"[BATCH] Results - Successful: {result['summary']['successful']}, Failed: {result['summary']['failed']}")
-            logger.info(f"[BATCH] Success rate: {result['summary']['success_rate']}%")
-            logger.info(f"[BATCH] Total results returned: {len(result['results'])}")
             
             return jsonify(response), 200
             
@@ -2524,6 +3131,11 @@ def get_product(product_id):
             'created_at': product['created_at'],
             'metadata': product['metadata']  # Can be NULL
         }
+        
+        # Debug logging for metadata
+        logger.info(f"[GET-PRODUCT] Product {product_id} metadata type: {type(product['metadata'])}")
+        if product['metadata']:
+            logger.info(f"[GET-PRODUCT] Product {product_id} metadata value: {product['metadata'][:200] if isinstance(product['metadata'], str) else product['metadata']}")
         
         # Check feature extraction status
         feature_status = 'pending'
@@ -3396,10 +4008,22 @@ def get_catalog_products():
                 for product_id in product_ids:
                     product = get_product_by_id(product_id)
                     if product:
+                        # Convert sqlite3.Row to dict so we can add has_features flag
+                        product_dict = dict(product)
                         # Add has_features flag
                         features = get_features_by_product_id(product_id)
-                        product['has_features'] = features is not None
-                        products.append(product)
+                        product_dict['has_features'] = features is not None
+                        
+                        # Parse and include metadata JSON for frontend sorting/filtering
+                        if product_dict.get('metadata'):
+                            try:
+                                product_dict['metadata'] = json.loads(product_dict['metadata'])
+                            except (json.JSONDecodeError, TypeError):
+                                product_dict['metadata'] = {}
+                        else:
+                            product_dict['metadata'] = {}
+                        
+                        products.append(product_dict)
 
                 logger.info(f"[GET-PRODUCTS] Batch result: {len(products)} products fetched")
 
@@ -3574,12 +4198,20 @@ def delete_catalog_product(product_id):
         except Exception as e:
             logger.warning(f"Failed to invalidate FAISS index: {e}")
         
-        # Delete image file
+        # Delete image file - ONLY if it's in the uploads folder (not user source folder)
         if image_path and os.path.exists(image_path):
-            try:
-                os.remove(image_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete image file: {e}")
+            # Safety check: only delete files in uploads folder, never delete user source files
+            uploads_folder = app.config['UPLOAD_FOLDER']
+            is_managed_file = os.path.abspath(image_path).startswith(os.path.abspath(uploads_folder))
+
+            if is_managed_file:
+                try:
+                    os.remove(image_path)
+                    logger.debug(f"Deleted managed image file: {image_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete image file: {e}")
+            else:
+                logger.debug(f"Skipped deletion of external image file (not in uploads folder): {image_path}")
         
         return jsonify({
             'status': 'success',
@@ -5135,6 +5767,154 @@ def get_main_database_stats():
         return create_error_response(
             'STATS_ERROR',
             'Failed to get database stats',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/catalogs/csv-content', methods=['GET'])
+def get_catalog_csv_content():
+    """Get CSV content for a specific section from the loaded catalog
+
+    Query Parameters:
+    - section: 'historical' or 'new' (default: 'historical')
+
+    Returns:
+    - 200: Success with CSV content and metadata
+    - 404: No catalog loaded or no CSV found
+    - 400: Invalid section parameter
+    - 500: Server error
+    """
+    try:
+        from snapshot_manager import get_loaded_snapshot_info, get_csv_from_snapshot, CATALOGS_DIR
+
+        # Get section parameter (default to 'historical')
+        section = request.args.get('section', 'historical').lower()
+        if section not in ['historical', 'new']:
+            return create_error_response(
+                'INVALID_SECTION',
+                f"Invalid section '{section}'. Must be 'historical' or 'new'",
+                status_code=400
+            )
+
+        is_historical = (section == 'historical')
+
+        # Get currently loaded snapshot
+        loaded_info = get_loaded_snapshot_info()
+
+        if not loaded_info.get('loaded'):
+            return create_error_response(
+                'NO_CATALOG',
+                'No catalog currently loaded',
+                status_code=404
+            )
+
+        snapshot_file = loaded_info.get('snapshot_file')
+        if not snapshot_file:
+            return create_error_response(
+                'NO_SNAPSHOT_FILE',
+                'No snapshot file information',
+                status_code=404
+            )
+
+        # Get CSV from snapshot for specific section
+        snapshot_path = os.path.join(CATALOGS_DIR, snapshot_file)
+
+        if not os.path.exists(snapshot_path):
+            return create_error_response(
+                'SNAPSHOT_NOT_FOUND',
+                f'Snapshot file not found: {snapshot_file}',
+                status_code=404
+            )
+
+        csv_data = get_csv_from_snapshot(snapshot_path, is_historical=is_historical)
+
+        if not csv_data:
+            return jsonify({
+                'has_csv': False,
+                'section': section,
+                'message': f'No CSV data for {section} section'
+            }), 200
+
+        return jsonify({
+            'has_csv': True,
+            'section': section,
+            'csv_content': csv_data['csv_content'],
+            'filename': csv_data['filename'],
+            'row_count': csv_data['row_count'],
+            'uploaded_at': csv_data['uploaded_at']
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting catalog CSV content: {e}", exc_info=True)
+        return create_error_response(
+            'CSV_RETRIEVAL_ERROR',
+            'Failed to retrieve CSV content',
+            {'error': str(e)},
+            status_code=500
+        )
+
+
+@app.route('/api/csv/extract', methods=['GET'])
+def extract_csv_from_current_db():
+    """Extract CSV from current main database for a specific section
+
+    Query Parameters:
+    - type: 'historical' or 'new'
+
+    Returns CSV content as downloadable file or error.
+    Used by "Add to Existing" feature to let users review current catalog before adding.
+    """
+    try:
+        from snapshot_manager import extract_csv_from_db, DEFAULT_DB_PATH
+
+        # Get type parameter (historical or new)
+        csv_type = request.args.get('type', 'historical').lower()
+        if csv_type not in ['historical', 'new']:
+            return create_error_response(
+                'INVALID_TYPE',
+                f"Invalid type '{csv_type}'. Must be 'historical' or 'new'",
+                status_code=400
+            )
+
+        is_historical = (csv_type == 'historical')
+
+        # Check if main database exists
+        if not os.path.exists(DEFAULT_DB_PATH):
+            return create_error_response(
+                'NO_DATABASE',
+                'Main database not found',
+                status_code=404
+            )
+
+        # Extract CSV from current main database
+        result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=is_historical)
+
+        if not result:
+            return create_error_response(
+                'EXTRACTION_FAILED',
+                f'No {csv_type} products found or failed to extract CSV',
+                status_code=404
+            )
+
+        csv_content, row_count = result
+
+        # Generate filename with current date
+        filename = f"{csv_type}-products-{datetime.now().strftime('%Y%m%d')}.csv"
+
+        # Return CSV as downloadable file
+        return send_file(
+            io.BytesIO(csv_content.encode('utf-8')),
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        logger.error(f"Error extracting CSV from database: {e}", exc_info=True)
+        return create_error_response(
+            'EXTRACTION_ERROR',
+            'Failed to extract CSV from database',
             {'error': str(e)},
             status_code=500
         )

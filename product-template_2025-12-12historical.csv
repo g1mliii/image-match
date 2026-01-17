@@ -1,76 +1,76 @@
-filename,category,sku,name,price,price_history,performance_history
-IMG_1140.jpg,,GEN-001,Generic Image Product,29.99,2024-01-15:29.99;2024-06-15:31.50;2024-11-15:28.75,[150,180,200,220,195,170]
-Screenshot 2025-09-29 175019.png,,SCR-001,Screenshot Product A,19.99,2024-02-01:19.99;2024-07-01:21.00;2024-12-01:19.50,[100,120,110,130,125,115]
-Screenshot 2025-10-03 115857.png,,SCR-002,Screenshot Product B,24.99,2024-03-01:24.99;2024-08-01:26.50;2025-01-01:23.99,[180,200,190,210,205,195]
-Screenshot 2025-11-12 163833.png,,SCR-003,Screenshot Product C,34.99,2024-04-01:34.99;2024-09-01:36.00;2025-02-01:32.99,[220,240,235,250,245,230]
-Screenshot 2025-11-23 232538.png,,SCR-004,Screenshot Product D,15.99,2024-05-01:15.99;2024-10-01:17.50;2025-03-01:14.99,[90,110,105,120,115,100]
-Screenshot 2025-11-26 234553.png,,SCR-005,Screenshot Product E,39.99,2024-06-01:39.99;2024-11-01:42.00;2025-04-01:38.99,[250,270,265,280,275,260]
-Screenshot 2025-11-28 112453.png,,SCR-006,Screenshot Product F,12.99,2024-07-01:12.99;2024-12-01:14.50;2025-05-01:11.99,[70,85,80,95,90,75]
-Screenshot 2025-12-01 022745.png,,SCR-007,Screenshot Product G,44.99,2024-08-01:44.99;2025-01-01:47.00;2025-06-01:43.99,[300,320,315,330,325,310]
-Screenshot 2025-12-02 180147.png,,SCR-008,Screenshot Product H,27.99,2024-09-01:27.99;2025-02-01:29.50;2025-07-01:26.99,[160,180,175,190,185,170]
-Screenshot 2025-12-02 182341.png,,SCR-009,Screenshot Product I,32.99,2024-10-01:32.99;2025-03-01:35.00;2025-08-01:31.99,[200,220,215,230,225,210]
-Screenshot 2025-12-10 221541.png,,SCR-010,Screenshot Product J,18.99,2024-11-01:18.99;2025-04-01:20.50;2025-09-01:17.99,[120,140,135,150,145,130]
-Screenshot 2025-12-12 124045.png,,SCR-011,Screenshot Product K,49.99,2024-12-01:49.99;2025-05-01:52.00;2025-10-01:48.99,[350,370,365,380,375,360]
-4.png,website,WEB-001,Website Design Template,99.99,2024-01-15:99.99;2024-06-15:105.00;2024-11-15:94.99,[400,450,440,480,470,460]
-Anchored A.I tools.png,website,WEB-002,AI Tools Landing Page,79.99,2024-02-01:79.99;2024-07-01:84.50;2024-12-01:77.99,[320,360,350,380,370,340]
-Gemini_Generated_Image_amwiymamwiymamwi (1).png,website,WEB-003,AI Generated Hero Image,59.99,2024-03-01:59.99;2024-08-01:63.00;2025-01-01:57.99,[280,310,300,330,320,290]
-Gemini_Generated_Image_cklaevcklaevckla (2).png,website,WEB-004,Creative Background Pack,69.99,2024-04-01:69.99;2024-09-01:73.50;2025-02-01:67.99,[300,330,320,350,340,310]
-Gemini_Generated_Image_cklaevcklaevckla (3).png,website,WEB-005,Abstract Design Bundle,74.99,2024-05-01:74.99;2024-10-01:78.50;2025-03-01:72.99,[310,340,330,360,350,320]
-Screenshot 2025-09-19 230622.png,website,WEB-006,Dashboard UI Kit,89.99,2024-06-01:89.99;2024-11-01:94.50;2025-04-01:87.99,[360,390,380,410,400,370]
-Screenshot 2025-09-19 233633.png,website,WEB-007,Mobile App Interface,84.99,2024-07-01:84.99;2024-12-01:89.50;2025-05-01:82.99,[340,370,360,390,380,350]
-Screenshot 2025-09-19 233643.png,website,WEB-008,E-commerce Template,94.99,2024-08-01:94.99;2025-01-01:99.50;2025-06-01:92.99,[380,410,400,430,420,390]
-Screenshot 2025-11-26 123138.png,website,WEB-009,Portfolio Website Theme,64.99,2024-09-01:64.99;2025-02-01:68.50;2025-07-01:62.99,[260,290,280,310,300,270]
-Screenshot 2025-11-28 124506.png,potplayer,MEDIA-001,Media Player Skin Classic,14.99,2024-01-15:14.99;2024-06-15:16.50;2024-11-15:13.99,[180,200,195,210,205,190]
-Screenshot 2025-11-28 124724.png,potplayer,MEDIA-002,Dark Theme Player UI,19.99,2024-02-01:19.99;2024-07-01:21.50;2024-12-01:18.99,[220,240,235,250,245,230]
-Screenshot 2025-11-28 130738.png,potplayer,MEDIA-003,Minimal Player Interface,12.99,2024-03-01:12.99;2024-08-01:14.50;2025-01-01:11.99,[160,180,175,190,185,170]
-Screenshot 2025-11-28 132941.png,potplayer,MEDIA-004,Pro Player Controls,24.99,2024-04-01:24.99;2024-09-01:26.50;2025-02-01:23.99,[280,300,295,310,305,290]
-Screenshot 2025-11-28 134808.png,potplayer,MEDIA-005,Custom Playback Skin,17.99,2024-05-01:17.99;2024-10-01:19.50;2025-03-01:16.99,[200,220,215,230,225,210]
-Screenshot 2025-11-28 135628.png,potplayer,MEDIA-006,Modern Player Theme,21.99,2024-06-01:21.99;2024-11-01:23.50;2025-04-01:20.99,[240,260,255,270,265,250]
-Screenshot 2025-11-28 135743.png,potplayer,MEDIA-007,Retro Player Design,15.99,2024-07-01:15.99;2024-12-01:17.50;2025-05-01:14.99,[190,210,205,220,215,200]
-Screenshot 2025-12-06 022838.png,potplayer,MEDIA-008,Animated UI Pack,29.99,2024-08-01:29.99;2025-01-01:31.50;2025-06-01:28.99,[320,340,335,350,345,330]
-Screenshot 2025-12-06 023121.png,potplayer,MEDIA-009,Glassmorphic Player,26.99,2024-09-01:26.99;2025-02-01:28.50;2025-07-01:25.99,[300,320,315,330,325,310]
-Screenshot 2025-12-06 023132.png,potplayer,MEDIA-010,Neon Glow Interface,22.99,2024-10-01:22.99;2025-03-01:24.50;2025-08-01:21.99,[260,280,275,290,285,270]
-Screenshot 2025-12-06 023143.png,potplayer,MEDIA-011,Flat Design Player,18.99,2024-11-01:18.99;2025-04-01:20.50;2025-09-01:17.99,[230,250,245,260,255,240]
-Screenshot 2025-12-06 023708.png,potplayer,MEDIA-012,Gradient Controls Theme,20.99,2024-12-01:20.99;2025-05-01:22.50;2025-10-01:19.99,[250,270,265,280,275,260]
-Screenshot 2025-12-06 023715.png,potplayer,MEDIA-013,Compact Player Skin,16.99,2024-01-15:16.99;2024-06-15:18.50;2024-11-15:15.99,[210,230,225,240,235,220]
-Screenshot 2025-12-06 023727.png,potplayer,MEDIA-014,Transparent Overlay UI,23.99,2024-02-01:23.99;2024-07-01:25.50;2024-12-01:22.99,[270,290,285,300,295,280]
-Screenshot 2025-12-06 024048.png,potplayer,MEDIA-015,Material Design Player,27.99,2024-03-01:27.99;2024-08-01:29.50;2025-01-01:26.99,[310,330,325,340,335,320]
-Screenshot 2025-12-06 024439.png,potplayer,MEDIA-016,Cinematic Mode Skin,31.99,2024-04-01:31.99;2024-09-01:33.50;2025-02-01:30.99,[340,360,355,370,365,350]
-Screenshot 2025-12-04 224221.png,list,LIST-001,Task Management UI,44.99,2024-01-15:44.99;2024-06-15:47.50;2024-11-15:43.99,[380,400,395,410,405,390]
-Screenshot 2025-12-04 224250.png,list,LIST-002,Project Board Template,49.99,2024-02-01:49.99;2024-07-01:52.50;2024-12-01:48.99,[400,420,415,430,425,410]
-Screenshot 2025-12-04 224301.png,list,LIST-003,Kanban View Design,39.99,2024-03-01:39.99;2024-08-01:42.50;2025-01-01:38.99,[350,370,365,380,375,360]
-Screenshot 2025-12-04 224319.png,list,LIST-004,Todo List Interface,34.99,2024-04-01:34.99;2024-09-01:37.50;2025-02-01:33.99,[320,340,335,350,345,330]
-Screenshot 2025-12-04 224333.png,list,LIST-005,Checklist Component,29.99,2024-05-01:29.99;2024-10-01:32.50;2025-03-01:28.99,[290,310,305,320,315,300]
-Screenshot 2025-10-28 193631.png,imagematch,IMG-001,Image Matcher Pro,129.99,2024-01-15:129.99;2024-06-15:135.00;2024-11-15:124.99,[500,550,540,570,560,530]
-Screenshot 2025-11-20 191255.png,imagematch,IMG-002,Visual Search Engine,119.99,2024-02-01:119.99;2024-07-01:125.00;2024-12-01:114.99,[480,520,510,540,530,500]
-Screenshot 2025-11-25 163246.png,imagematch,IMG-003,AI Image Comparison,139.99,2024-03-01:139.99;2024-08-01:145.00;2025-01-01:134.99,[520,560,550,580,570,540]
-Screenshot 2025-11-25 165537.png,imagematch,IMG-004,Product Match Tool,109.99,2024-04-01:109.99;2024-09-01:115.00;2025-02-01:104.99,[460,500,490,520,510,480]
-Screenshot 2025-11-25 165756.png,imagematch,IMG-005,Similarity Finder,99.99,2024-05-01:99.99;2024-10-01:105.00;2025-03-01:94.99,[440,480,470,500,490,460]
-Screenshot 2025-11-25 165934.png,imagematch,IMG-006,Duplicate Detector,89.99,2024-06-01:89.99;2024-11-01:95.00;2025-04-01:84.99,[420,460,450,480,470,440]
-Screenshot 2025-11-26 145612.png,imagematch,IMG-007,Visual Analytics Suite,149.99,2024-07-01:149.99;2024-12-01:155.00;2025-05-01:144.99,[540,580,570,600,590,560]
-Screenshot 2025-12-06 122012.png,imagematch,IMG-008,Image Recognition API,159.99,2024-08-01:159.99;2025-01-01:165.00;2025-06-01:154.99,[560,600,590,620,610,580]
-Screenshot 2025-12-06 122024.png,imagematch,IMG-009,CLIP Model Integration,169.99,2024-09-01:169.99;2025-02-01:175.00;2025-07-01:164.99,[580,620,610,640,630,600]
-Screenshot 2025-12-06 122217.png,imagematch,IMG-010,Catalog Manager Pro,179.99,2024-10-01:179.99;2025-03-01:185.00;2025-08-01:174.99,[600,640,630,660,650,620]
-Screenshot 2025-12-06 203213.png,imagematch,IMG-011,Batch Processing Tool,189.99,2024-11-01:189.99;2025-04-01:195.00;2025-09-01:184.99,[620,660,650,680,670,640]
-Screenshot 2025-09-16 165029.png,extension,EXT-001,Browser Extension Pack,24.99,2024-01-15:24.99;2024-06-15:26.50;2024-11-15:23.99,[280,300,295,310,305,290]
-Screenshot 2025-09-19 230727.png,extension,EXT-002,Chrome Plugin Suite,29.99,2024-02-01:29.99;2024-07-01:31.50;2024-12-01:28.99,[300,320,315,330,325,310]
-Screenshot 2025-09-20 142550.png,extension,EXT-003,Developer Tools Add-on,34.99,2024-03-01:34.99;2024-08-01:36.50;2025-01-01:33.99,[320,340,335,350,345,330]
-Screenshot 2025-09-26 123637.png,extension,EXT-004,Productivity Enhancer,19.99,2024-04-01:19.99;2024-09-01:21.50;2025-02-01:18.99,[240,260,255,270,265,250]
-Screenshot 2025-10-21 182854.png,extension,EXT-005,UI Customizer Plugin,27.99,2024-05-01:27.99;2024-10-01:29.50;2025-03-01:26.99,[290,310,305,320,315,300]
-Screenshot 2025-11-10 162813.png,extension,EXT-006,API Integration Tool,32.99,2024-06-01:32.99;2024-11-01:34.50;2025-04-01:31.99,[310,330,325,340,335,320]
-Screenshot 2025-11-10 164320.png,extension,EXT-007,Security Extension,39.99,2024-07-01:39.99;2024-12-01:41.50;2025-05-01:38.99,[340,360,355,370,365,350]
-Screenshot 2025-11-26 123123.png,extension,EXT-008,Performance Monitor,22.99,2024-08-01:22.99;2025-01-01:24.50;2025-06-01:21.99,[260,280,275,290,285,270]
-Screenshot 2025-12-01 023524.png,extension,EXT-009,Theme Manager Pro,26.99,2024-09-01:26.99;2025-02-01:28.50;2025-07-01:25.99,[280,300,295,310,305,290]
-Screenshot 2025-12-04 174958.png,coding,CODE-001,Code Editor Theme Dark,44.99,2024-01-15:44.99;2024-06-15:47.50;2024-11-15:43.99,[380,400,395,410,405,390]
-Screenshot 2025-12-04 182208.png,coding,CODE-002,Syntax Highlighter Pack,39.99,2024-02-01:39.99;2024-07-01:42.50;2024-12-01:38.99,[360,380,375,390,385,370]
-Screenshot 2025-12-04 182212.png,coding,CODE-003,IDE Color Scheme,34.99,2024-03-01:34.99;2024-08-01:37.50;2025-01-01:33.99,[340,360,355,370,365,350]
-Screenshot 2025-12-04 182255.png,coding,CODE-004,Developer Icon Set,29.99,2024-04-01:29.99;2024-09-01:32.50;2025-02-01:28.99,[320,340,335,350,345,330]
-Screenshot 2025-12-04 182302.png,coding,CODE-005,VS Code Extension,49.99,2024-05-01:49.99;2024-10-01:52.50;2025-03-01:48.99,[400,420,415,430,425,410]
-Screenshot 2025-12-04 190506.png,coding,CODE-006,Snippet Library Pro,54.99,2024-06-01:54.99;2024-11-01:57.50;2025-04-01:53.99,[420,440,435,450,445,430]
-Screenshot 2025-12-04 190611.png,coding,CODE-007,Auto-Complete Plugin,59.99,2024-07-01:59.99;2024-12-01:62.50;2025-05-01:58.99,[440,460,455,470,465,450]
-Screenshot 2025-11-24 234113.png,clothing,CLO-001,T-Shirt Design Blue,35.99,2024-01-15:35.99;2024-06-15:38.50;2024-11-15:34.99,[320,350,340,370,360,330]
-Screenshot 2025-11-24 234116.png,clothing,CLO-002,T-Shirt Design Red,35.99,2024-02-01:35.99;2024-07-01:38.50;2024-12-01:34.99,[330,360,350,380,370,340]
-Screenshot 2025-11-25 225921.png,clothing,CLO-003,Hoodie Mockup Black,65.99,2024-03-01:65.99;2024-08-01:68.50;2025-01-01:64.99,[480,510,500,530,520,490]
-Screenshot 2025-11-25 225924.png,clothing,CLO-004,Hoodie Mockup Gray,65.99,2024-04-01:65.99;2024-09-01:68.50;2025-02-01:64.99,[490,520,510,540,530,500]
-Screenshot 2025-11-25 225927.png,clothing,CLO-005,Jacket Design Winter,89.99,2024-05-01:89.99;2024-10-01:92.50;2025-03-01:88.99,[560,590,580,610,600,570]
-Screenshot 2025-11-25 230318.png,clothing,CLO-006,Pants Template Modern,55.99,2024-06-01:55.99;2024-11-01:58.50;2025-04-01:54.99,[440,470,460,490,480,450]
+filename,category,sku,name,description,brand,type
+IMG_1140.jpg,,GEN-001,Generic Image Product,A versatile generic product image,Generic Brand,Standard
+Screenshot 2025-09-29 175019.png,,SCR-001,Screenshot Product A,User interface screenshot example,Tech Corp,UI Design
+Screenshot 2025-10-03 115857.png,,SCR-002,Screenshot Product B,Dashboard interface design,Dashboard Inc,Software
+Screenshot 2025-11-12 163833.png,,SCR-003,Screenshot Product C,Analytics panel screenshot,Data Systems,Analytics
+Screenshot 2025-11-23 232538.png,,SCR-004,Screenshot Product D,Mobile app interface,App Studio,Mobile
+Screenshot 2025-11-26 234553.png,,SCR-005,Screenshot Product E,Web design mockup,Web Masters,Web Design
+Screenshot 2025-11-28 112453.png,,SCR-006,Screenshot Product F,Database interface,Data Tech,Database
+Screenshot 2025-12-01 022745.png,,SCR-007,Screenshot Product G,Network dashboard,Network Pro,Networking
+Screenshot 2025-12-02 180147.png,,SCR-008,Screenshot Product H,Server management panel,Server Solutions,DevOps
+Screenshot 2025-12-02 182341.png,,SCR-009,Screenshot Product I,Cloud storage interface,Cloud Tech,Cloud
+Screenshot 2025-12-10 221541.png,,SCR-010,Screenshot Product J,AI dashboard,AI Systems,Artificial Intelligence
+Screenshot 2025-12-12 124045.png,,SCR-011,Screenshot Product K,Machine learning interface,ML Corp,Machine Learning
+4.png,website,WEB-001,Website Design Template,Professional website layout,Web Agency,Web Templates
+Anchored A.I tools.png,website,WEB-002,AI Tools Landing Page,AI tools marketing page,AI Company,Landing Pages
+Gemini_Generated_Image_amwiymamwiymamwi (1).png,website,WEB-003,AI Generated Hero Image,Creative AI-generated imagery,Creative Studio,Hero Images
+Gemini_Generated_Image_cklaevcklaevckla (2).png,website,WEB-004,Creative Background Pack,Abstract design backgrounds,Design Pack Co,Backgrounds
+Gemini_Generated_Image_cklaevcklaevckla (3).png,website,WEB-005,Abstract Design Bundle,Modern abstract designs,Abstract Designs,Design Assets
+Screenshot 2025-09-19 230622.png,website,WEB-006,Dashboard UI Kit,Complete dashboard components,UI Systems,Components
+Screenshot 2025-09-19 233633.png,website,WEB-007,Mobile App Interface,Responsive mobile design,Mobile First,Mobile Design
+Screenshot 2025-09-19 233643.png,website,WEB-008,E-commerce Template,Online store layout,E-Shop,Templates
+Screenshot 2025-11-26 123138.png,website,WEB-009,Portfolio Website Theme,Professional portfolio design,Portfolio Pro,Portfolio
+Screenshot 2025-11-28 124506.png,potplayer,MEDIA-001,Media Player Skin Classic,Classic player design,Media Player Inc,Player Skins
+Screenshot 2025-11-28 124724.png,potplayer,MEDIA-002,Dark Theme Player UI,Dark mode player interface,Theme Studio,UI Themes
+Screenshot 2025-11-28 130738.png,potplayer,MEDIA-003,Minimal Player Interface,Minimalist player design,Minimal Tech,Minimal Design
+Screenshot 2025-11-28 132941.png,potplayer,MEDIA-004,Pro Player Controls,Advanced player controls,Pro Media,Professional
+Screenshot 2025-11-28 134808.png,potplayer,MEDIA-005,Custom Playback Skin,Customizable player skin,Custom Tech,Customization
+Screenshot 2025-11-28 135628.png,potplayer,MEDIA-006,Modern Player Theme,Contemporary player design,Modern Studio,Modern Design
+Screenshot 2025-11-28 135743.png,potplayer,MEDIA-007,Retro Player Design,Vintage player interface,Retro Design,Retro Style
+Screenshot 2025-12-06 022838.png,potplayer,MEDIA-008,Animated UI Pack,Animation-rich interface,Animation Lab,Animations
+Screenshot 2025-12-06 023121.png,potplayer,MEDIA-009,Glassmorphic Player,Glass effect design,Glass Design,Effects
+Screenshot 2025-12-06 023132.png,potplayer,MEDIA-010,Neon Glow Interface,Neon styling design,Neon Studio,Neon Effects
+Screenshot 2025-12-06 023143.png,potplayer,MEDIA-011,Flat Design Player,Flat design interface,Flat Design Inc,Flat Design
+Screenshot 2025-12-06 023708.png,potplayer,MEDIA-012,Gradient Controls Theme,Gradient styling design,Gradient Tech,Gradient Effects
+Screenshot 2025-12-06 023715.png,potplayer,MEDIA-013,Compact Player Skin,Compact player layout,Compact Media,Compact Design
+Screenshot 2025-12-06 023727.png,potplayer,MEDIA-014,Transparent Overlay UI,Transparent elements design,Transparency Lab,Transparency
+Screenshot 2025-12-06 024048.png,potplayer,MEDIA-015,Material Design Player,Material design interface,Material Studio,Material Design
+Screenshot 2025-12-06 024439.png,potplayer,MEDIA-016,Cinematic Mode Skin,Cinematic design interface,Cinema Tech,Cinematic
+Screenshot 2025-12-04 224221.png,list,LIST-001,Task Management UI,Task management interface,Task Systems,Management Tools
+Screenshot 2025-12-04 224250.png,list,LIST-002,Project Board Template,Project board layout,Project Pro,Project Management
+Screenshot 2025-12-04 224301.png,list,LIST-003,Kanban View Design,Kanban board interface,Agile Tech,Agile Tools
+Screenshot 2025-12-04 224319.png,list,LIST-004,Todo List Interface,Todo management interface,Todo Apps,Productivity
+Screenshot 2025-12-04 224333.png,list,LIST-005,Checklist Component,Checklist interface,Checklist Tech,Components
+Screenshot 2025-10-28 193631.png,imagematch,IMG-001,Image Matcher Pro,Professional image matching,Image Tech,Image Processing
+Screenshot 2025-11-20 191255.png,imagematch,IMG-002,Visual Search Engine,Visual search solution,Search Corp,Search Tools
+Screenshot 2025-11-25 163246.png,imagematch,IMG-003,AI Image Comparison,AI-powered comparison,AI Vision,AI Tools
+Screenshot 2025-11-25 165537.png,imagematch,IMG-004,Product Match Tool,Product matching tool,Match Systems,Product Tools
+Screenshot 2025-11-25 165756.png,imagematch,IMG-005,Similarity Finder,Similarity detection tool,Similarity Tech,Detection Tools
+Screenshot 2025-11-25 165934.png,imagematch,IMG-006,Duplicate Detector,Duplicate detection system,Duplicate Tech,Duplicate Detection
+Screenshot 2025-11-26 145612.png,imagematch,IMG-007,Visual Analytics Suite,Analytics suite for visuals,Analytics Pro,Analytics
+Screenshot 2025-12-06 122012.png,imagematch,IMG-008,Image Recognition API,API for image recognition,API Systems,APIs
+Screenshot 2025-12-06 122024.png,imagematch,IMG-009,CLIP Model Integration,CLIP model integration,ML Systems,Machine Learning
+Screenshot 2025-12-06 122217.png,imagematch,IMG-010,Catalog Manager Pro,Professional catalog manager,Catalog Pro,Catalog Tools
+Screenshot 2025-12-06 203213.png,imagematch,IMG-011,Batch Processing Tool,Batch processing system,Batch Systems,Processing Tools
+Screenshot 2025-09-16 165029.png,extension,EXT-001,Browser Extension Pack,Browser extension collection,Browser Tech,Extensions
+Screenshot 2025-09-19 230727.png,extension,EXT-002,Chrome Plugin Suite,Chrome plugin collection,Chrome Systems,Plugins
+Screenshot 2025-09-20 142550.png,extension,EXT-003,Developer Tools Add-on,Developer tools addon,Dev Tools Inc,Development
+Screenshot 2025-09-26 123637.png,extension,EXT-004,Productivity Enhancer,Productivity enhancement tool,Productivity Labs,Productivity
+Screenshot 2025-10-21 182854.png,extension,EXT-005,UI Customizer Plugin,UI customization plugin,UI Custom,Customization
+Screenshot 2025-11-10 162813.png,extension,EXT-006,API Integration Tool,API integration solution,API Labs,Integration
+Screenshot 2025-11-10 164320.png,extension,EXT-007,Security Extension,Security enhancement tool,Security Pro,Security
+Screenshot 2025-11-26 123123.png,extension,EXT-008,Performance Monitor,Performance monitoring tool,Monitor Tech,Monitoring
+Screenshot 2025-12-01 023524.png,extension,EXT-009,Theme Manager Pro,Professional theme manager,Theme Master,Theme Management
+Screenshot 2025-12-04 174958.png,coding,CODE-001,Code Editor Theme Dark,Dark editor theme,Editor Themes,Themes
+Screenshot 2025-12-04 182208.png,coding,CODE-002,Syntax Highlighter Pack,Syntax highlighting tools,Code Studio,Code Tools
+Screenshot 2025-12-04 182212.png,coding,CODE-003,IDE Color Scheme,IDE color configuration,IDE Systems,Configuration
+Screenshot 2025-12-04 182255.png,coding,CODE-004,Developer Icon Set,Developer icon library,Icon Labs,Icons
+Screenshot 2025-12-04 182302.png,coding,CODE-005,VS Code Extension,VS Code extension,Code Systems,Extensions
+Screenshot 2025-12-04 190506.png,coding,CODE-006,Snippet Library Pro,Professional snippet library,Snippet Pro,Snippets
+Screenshot 2025-12-04 190611.png,coding,CODE-007,Auto-Complete Plugin,Auto-completion plugin,Auto Labs,Auto-Complete
+Screenshot 2025-11-24 234113.png,clothing,CLO-001,T-Shirt Design Blue,Blue t-shirt design,Fashion Co,Apparel
+Screenshot 2025-11-24 234116.png,clothing,CLO-002,T-Shirt Design Red,Red t-shirt design,Fashion Co,Apparel
+Screenshot 2025-11-25 225921.png,clothing,CLO-003,Hoodie Mockup Black,Black hoodie mockup,Fashion Co,Apparel
+Screenshot 2025-11-25 225924.png,clothing,CLO-004,Hoodie Mockup Gray,Gray hoodie mockup,Fashion Co,Apparel
+Screenshot 2025-11-25 225927.png,clothing,CLO-005,Jacket Design Winter,Winter jacket design,Fashion Co,Outerwear
+Screenshot 2025-11-25 230318.png,clothing,CLO-006,Pants Template Modern,Modern pants design,Fashion Co,Bottoms

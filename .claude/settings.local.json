@@ -9,7 +9,9 @@
       "Bash(timeout /t 5 /nobreak)",
       "Bash(dir /a nul)",
       "Bash(del \"\\?\\C:\\Users\\subai\\Desktop\\image match\\nul\")",
-      "Bash(cmd.exe /c \"del /F nul\")"
+      "Bash(cmd.exe /c \"del /F nul\")",
+      "Bash(sqlite3:*)",
+      "Bash(python:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

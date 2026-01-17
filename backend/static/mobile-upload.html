@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOBILE UPLOAD</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #fafaf8;
+            color: #000;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 20px;
+        }
+
+        header h1 {
+            font-size: 24px;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #000;
+            background-color: #fff;
+        }
+
+        .section h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 1px;
+        }
+
+        input[type="password"],
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            background-color: #fff;
+            color: #000;
+            border: 2px solid #000;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+
+        input[type="password"]:focus,
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        select:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .mode-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 15px;
+            background-color: #fff;
+            color: #000;
+            border: 2px solid #000;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .mode-btn:hover {
+            background-color: #000;
+            color: #fff;
+        }
+
+        .mode-btn.active {
+            background-color: #000;
+            color: #fff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .file-upload-area {
+            border: 2px dashed #000;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background-color: #f9f9f9;
+        }
+
+        .file-upload-area:hover {
+            background-color: #f0f0f0;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .file-upload-area.drag-over {
+            background-color: #000;
+            color: #fff;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-name {
+            margin-top: 10px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .metadata-fields {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #000;
+        }
+
+        .metadata-fields.visible {
+            display: block;
+        }
+
+        .metadata-field {
+            margin-bottom: 15px;
+        }
+
+        .metadata-field label {
+            margin-bottom: 5px;
+        }
+
+        .metadata-field input[type="text"],
+        .metadata-field input[type="number"] {
+            margin-bottom: 0;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 15px;
+            background-color: #000;
+            color: #fff;
+            border: 2px solid #000;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 15px;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .results {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            border: 2px solid #000;
+            background-color: #fff;
+        }
+
+        .results.visible {
+            display: block;
+        }
+
+        .result-item {
+            margin-bottom: 15px;
+            padding: 15px;
+            border: 2px solid #000;
+            background-color: #f9f9f9;
+        }
+
+        .result-item h3 {
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .result-score {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .loading.visible {
+            display: block;
+        }
+
+        .spinner {
+            border: 2px solid #000;
+            border-top: 2px solid #f0f0f0;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .message {
+            padding: 15px;
+            margin-bottom: 15px;
+            border: 2px solid #000;
+            text-align: center;
+            font-size: 13px;
+        }
+
+        .message.success {
+            background-color: #f0f0f0;
+        }
+
+        .message.error {
+            color: #000;
+            border-color: #000;
+            background-color: #fff;
+        }
+
+        .message.info {
+            background-color: #f9f9f9;
+            opacity: 0.9;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 15px;
+            }
+
+            header h1 {
+                font-size: 18px;
+            }
+
+            .section {
+                padding: 15px;
+            }
+
+            .mode-buttons {
+                flex-direction: column;
+            }
+
+            .mode-btn {
+                margin-bottom: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📱 MOBILE UPLOAD</h1>
+            <p>Upload products and get instant matches</p>
+        </header>
+
+        <!-- Auth Section -->
+        <div class="section">
+            <h2>Authentication</h2>
+            <label for="password">Password (6 digits)</label>
+            <input
+                type="password"
+                id="password"
+                placeholder="000000"
+                maxlength="6"
+                autocomplete="off"
+            >
+            <button class="btn-primary" onclick="authenticate()">AUTHENTICATE</button>
+            <div id="authMessage"></div>
+        </div>
+
+        <!-- Catalog & Mode Selection (hidden until authenticated) -->
+        <div id="uploadSection" style="display: none;">
+            <!-- Catalog Selection -->
+            <div class="section">
+                <h2>Catalog Selection</h2>
+                <label for="catalogSelect">Select Catalog</label>
+                <select id="catalogSelect" onchange="handleCatalogChange()">
+                    <option value="">Loading catalogs...</option>
+                </select>
+            </div>
+
+            <!-- Mode Selection -->
+            <div class="section">
+                <h2>Matching Mode</h2>
+                <div class="mode-buttons">
+                    <button class="mode-btn" onclick="selectMode('mode1')">
+                        MODE 1<br>
+                        <span style="font-size: 11px; opacity: 0.7;">Visual Only</span>
+                    </button>
+                    <button class="mode-btn" onclick="selectMode('mode3')">
+                        MODE 3<br>
+                        <span style="font-size: 11px; opacity: 0.7;">Visual + Metadata</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Photo Upload -->
+            <div class="section">
+                <h2>Photo Upload</h2>
+                <div class="file-upload-area" onclick="document.getElementById('photoInput').click()">
+                    <div>📷 TAP TO TAKE PHOTO OR SELECT FROM GALLERY</div>
+                    <div class="file-name" id="fileName"></div>
+                </div>
+                <input
+                    type="file"
+                    id="photoInput"
+                    class="file-input"
+                    accept="image/*"
+                    capture="camera"
+                    onchange="handleFileSelect(event)"
+                >
+            </div>
+
+            <!-- Product Info (Mode 3 Only) -->
+            <div class="section" id="productInfoSection" style="display: none;">
+                <h2>Product Information</h2>
+                <label for="category">Category (Optional)</label>
+                <input type="text" id="category" placeholder="e.g., Electronics">
+
+                <label for="productName">Product Name (Optional)</label>
+                <input type="text" id="productName" placeholder="e.g., Sony Camera">
+
+                <label for="sku">SKU (Optional)</label>
+                <input type="text" id="sku" placeholder="e.g., SKU-123">
+
+                <!-- Dynamic Metadata Fields (Mode 3 Only) -->
+                <div id="metadataContainer" class="metadata-fields">
+                    <h3 style="margin-bottom: 15px;">Additional Metadata</h3>
+                    <div id="metadataFields"></div>
+                </div>
+            </div>
+
+            <!-- Upload Button -->
+            <button class="btn-primary" onclick="uploadProduct()" id="uploadBtn" disabled>
+                UPLOAD & MATCH
+            </button>
+
+            <!-- Loading Indicator -->
+            <div class="loading" id="loadingIndicator">
+                <div class="spinner"></div>
+                <div>Processing...</div>
+            </div>
+
+            <!-- Messages -->
+            <div id="messageContainer"></div>
+
+            <!-- Results -->
+            <div id="resultsContainer" class="results">
+                <h2>Results</h2>
+                <div id="matchResults"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let authToken = null;
+        let selectedCatalog = null;
+        let selectedMode = null;
+        let selectedFile = null;
+        let currentCatalogSchema = null;
+
+        // Load password from localStorage
+        window.addEventListener('load', () => {
+            const savedPassword = localStorage.getItem('mobile_password');
+            if (savedPassword) {
+                document.getElementById('password').value = savedPassword;
+            }
+        });
+
+        async function authenticate() {
+            const password = document.getElementById('password').value.trim();
+            const messageEl = document.getElementById('authMessage');
+
+            if (!password) {
+                showMessage('messageContainer', 'Enter password', 'error');
+                return;
+            }
+
+            if (password.length !== 6 || !/^\d{6}$/.test(password)) {
+                showMessage('messageContainer', 'Password must be 6 digits', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/mobile/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showMessage('messageContainer', 'Invalid password', 'error');
+                    return;
+                }
+
+                authToken = password;
+                localStorage.setItem('mobile_password', password);
+
+                showMessage('messageContainer', 'Authenticated successfully', 'success');
+                document.getElementById('uploadSection').style.display = 'block';
+
+                // Load catalogs
+                await loadCatalogs(data.catalogs);
+            } catch (error) {
+                console.error('Auth error:', error);
+                showMessage('messageContainer', 'Authentication failed', 'error');
+            }
+        }
+
+        async function loadCatalogs(catalogs) {
+            const select = document.getElementById('catalogSelect');
+            select.innerHTML = '<option value="">Select a catalog...</option>';
+
+            catalogs.forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat.id;
+                option.textContent = `${cat.name} (${cat.product_count} products)`;
+                if (cat.is_loaded) option.textContent += ' ✓ LOADED';
+                select.appendChild(option);
+            });
+        }
+
+        async function handleCatalogChange() {
+            selectedCatalog = document.getElementById('catalogSelect').value;
+
+            if (!selectedCatalog) {
+                document.getElementById('metadataFields').innerHTML = '';
+                currentCatalogSchema = null;
+                // Hide metadata container when no catalog selected
+                document.getElementById('metadataContainer').classList.remove('visible');
+                updateUploadButton();
+                return;
+            }
+
+            // Load catalog schema for metadata fields
+            try {
+                const response = await fetch(
+                    `/api/mobile/catalog-schema?catalog_id=${selectedCatalog}`,
+                    {
+                        headers: { 'X-Mobile-Password': authToken }
+                    }
+                );
+
+                if (response.ok) {
+                    currentCatalogSchema = await response.json();
+                    updateMetadataFields();
+
+                    // Show metadata container if Mode 3 is selected
+                    if (selectedMode === 'mode3') {
+                        document.getElementById('metadataContainer').classList.add('visible');
+                    }
+                }
+            } catch (error) {
+                console.error('Schema load error:', error);
+            }
+
+            updateUploadButton();
+        }
+
+        function selectMode(mode) {
+            selectedMode = mode;
+
+            // Update button states
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.closest('.mode-btn').classList.add('active');
+
+            // Show/hide entire product info section based on mode
+            const productInfoSection = document.getElementById('productInfoSection');
+            const metadataContainer = document.getElementById('metadataContainer');
+
+            if (mode === 'mode1') {
+                // Mode 1: Visual only - no metadata fields at all
+                productInfoSection.style.display = 'none';
+                metadataContainer.classList.remove('visible');
+            } else if (mode === 'mode3') {
+                // Mode 3: Visual + Metadata - show product info section
+                productInfoSection.style.display = 'block';
+
+                // Show dynamic metadata fields only if catalog schema is loaded
+                if (currentCatalogSchema) {
+                    metadataContainer.classList.add('visible');
+                } else {
+                    metadataContainer.classList.remove('visible');
+                }
+            }
+
+            updateUploadButton();
+        }
+
+        function handleFileSelect(event) {
+            selectedFile = event.target.files[0];
+
+            if (selectedFile) {
+                document.getElementById('fileName').textContent = selectedFile.name;
+            }
+
+            updateUploadButton();
+        }
+
+        function updateMetadataFields() {
+            if (!currentCatalogSchema || !currentCatalogSchema.metadata_fields) {
+                return;
+            }
+
+            const container = document.getElementById('metadataFields');
+            container.innerHTML = '';
+
+            currentCatalogSchema.metadata_fields.forEach(field => {
+                const fieldDiv = document.createElement('div');
+                fieldDiv.className = 'metadata-field';
+
+                const label = document.createElement('label');
+                label.textContent = field.display_name || field.column_name;
+
+                const input = document.createElement('input');
+                input.type = field.data_type === 'numeric' ? 'number' : 'text';
+                input.id = `meta_${field.column_name}`;
+                input.placeholder = `Optional`;
+
+                fieldDiv.appendChild(label);
+                fieldDiv.appendChild(input);
+                container.appendChild(fieldDiv);
+            });
+        }
+
+        function updateUploadButton() {
+            const btn = document.getElementById('uploadBtn');
+            btn.disabled = !selectedFile || !selectedCatalog || !selectedMode;
+        }
+
+        async function uploadProduct() {
+            if (!selectedFile || !selectedCatalog || !selectedMode || !authToken) {
+                showMessage('messageContainer', 'Fill all required fields', 'error');
+                return;
+            }
+
+            document.getElementById('loadingIndicator').classList.add('visible');
+            document.getElementById('uploadBtn').disabled = true;
+
+            try {
+                const formData = new FormData();
+                formData.append('image', selectedFile);
+                formData.append('catalog_id', selectedCatalog);
+                formData.append('mode', selectedMode);
+
+                // Add product info fields only for mode3
+                if (selectedMode === 'mode3') {
+                    formData.append('category', document.getElementById('category').value);
+                    formData.append('product_name', document.getElementById('productName').value);
+                    formData.append('sku', document.getElementById('sku').value);
+
+                    // Add dynamic metadata fields
+                    if (currentCatalogSchema) {
+                        currentCatalogSchema.metadata_fields.forEach(field => {
+                            const value = document.getElementById(`meta_${field.column_name}`)?.value;
+                            if (value) {
+                                formData.append(`metadata_${field.column_name}`, value);
+                            }
+                        });
+                    }
+                }
+
+                const response = await fetch('/api/mobile/upload-and-match', {
+                    method: 'POST',
+                    headers: { 'X-Mobile-Password': authToken },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showMessage('messageContainer', data.error || 'Upload failed', 'error');
+                } else {
+                    showMessage('messageContainer',
+                        `Product uploaded! Found ${data.match_count} matches`,
+                        'success'
+                    );
+
+                    // Display results
+                    displayResults(data.matches);
+
+                    // Reset form
+                    selectedFile = null;
+                    document.getElementById('photoInput').value = '';
+                    document.getElementById('fileName').textContent = '';
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                showMessage('messageContainer', 'Upload failed', 'error');
+            } finally {
+                document.getElementById('loadingIndicator').classList.remove('visible');
+                document.getElementById('uploadBtn').disabled = false;
+            }
+        }
+
+        function displayResults(matches) {
+            const container = document.getElementById('resultsContainer');
+            const resultsDiv = document.getElementById('matchResults');
+
+            if (!matches || matches.length === 0) {
+                resultsDiv.innerHTML = '<p>No matches found</p>';
+            } else {
+                resultsDiv.innerHTML = matches.map((match, idx) => `
+                    <div class="result-item">
+                        <h3>#${idx + 1} ${match.name}</h3>
+                        <div class="result-score">Score: ${(match.score * 100).toFixed(1)}%</div>
+                        ${match.category ? `<div>Category: ${match.category}</div>` : ''}
+                        ${match.sku ? `<div>SKU: ${match.sku}</div>` : ''}
+                    </div>
+                `).join('');
+            }
+
+            container.classList.add('visible');
+        }
+
+        function showMessage(containerId, message, type) {
+            const container = document.getElementById(containerId);
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}`;
+            messageEl.textContent = message;
+            container.innerHTML = '';
+            container.appendChild(messageEl);
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    container.innerHTML = '';
+                }, 5000);
+            }
+        }
+    </script>
+</body>
+</html>

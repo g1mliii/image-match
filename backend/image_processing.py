@@ -155,26 +155,28 @@ def safe_imread(image_path: str, flags=cv2.IMREAD_COLOR) -> np.ndarray:
         if img is None:
             # OpenCV failed, try with PIL as fallback
             try:
-                pil_img = Image.open(image_path)
-                
-                # Convert to RGB if needed
-                if pil_img.mode == 'RGBA':
-                    # Create white background
-                    background = Image.new('RGB', pil_img.size, (255, 255, 255))
-                    background.paste(pil_img, mask=pil_img.split()[3])  # Use alpha channel as mask
-                    pil_img = background
-                elif pil_img.mode == 'P':
-                    pil_img = pil_img.convert('RGB')
-                elif pil_img.mode == 'L' and flags == cv2.IMREAD_COLOR:
-                    pil_img = pil_img.convert('RGB')
-                
-                # Convert PIL to OpenCV format
-                img = np.array(pil_img)
-                
+                # MEMORY LEAK FIX: Use context manager to ensure PIL image is closed
+                with Image.open(image_path) as pil_img:
+                    # Convert to RGB if needed
+                    if pil_img.mode == 'RGBA':
+                        # Create white background
+                        background = Image.new('RGB', pil_img.size, (255, 255, 255))
+                        background.paste(pil_img, mask=pil_img.split()[3])  # Use alpha channel as mask
+                        pil_img_converted = background
+                    elif pil_img.mode == 'P':
+                        pil_img_converted = pil_img.convert('RGB')
+                    elif pil_img.mode == 'L' and flags == cv2.IMREAD_COLOR:
+                        pil_img_converted = pil_img.convert('RGB')
+                    else:
+                        pil_img_converted = pil_img
+
+                    # Convert PIL to OpenCV format (copy data before PIL image is closed)
+                    img = np.array(pil_img_converted)
+
                 # Convert RGB to BGR for OpenCV
                 if len(img.shape) == 3 and img.shape[2] == 3:
                     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                
+
             except Exception as e:
                 raise CorruptedImageError(f"Failed to read image with both OpenCV and PIL: {str(e)}")
         

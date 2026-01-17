@@ -14,6 +14,11 @@ const state = {
     skuPattern: '[A-Z]+-\\d+'
 };
 
+// MEMORY OPTIMIZATION: Limits to prevent unbounded state growth (200-500MB possible)
+const MAX_PRODUCTS = 50000;  // Maximum products in state
+const MAX_UNDO_STACK = 10;   // Maximum undo history items
+const MAX_REDO_STACK = 10;   // Maximum redo history items
+
 // Expose state to window for loadToApp function (defined in html)
 window.state = state;
 
@@ -160,6 +165,12 @@ function displayPrePopulatedFiles(fileData, source) {
                 </button>
             </div>
         ` : ''}
+        <div style="margin-top: 15px; padding: 15px; background: #e7f5ff; border: 1px solid #74c0fc; border-radius: 4px;">
+            <p style="margin: 0 0 10px 0;"><strong>Next Step:</strong> Download CSV template below, fill in product details, then load it in Step 2 to link metadata with images.</p>
+            <button class="btn" style="background-color: #667eea; color: white;" onclick="downloadCsvTemplateFromBuilder(${fileData.length})" data-tooltip="Download CSV template with pre-filled filenames and categories">
+                DOWNLOAD CSV TEMPLATE
+            </button>
+        </div>
     `;
     info.classList.add('show');
 }
@@ -188,13 +199,23 @@ function cleanupResources() {
     // Clean up global window properties
     if (window.savedWorkData) {
         window.savedWorkData = null;
+        delete window.savedWorkData;
     }
 
-    // Remove any lingering modals
-    const modal = document.getElementById('loadSavedWorkModal');
-    if (modal) {
-        modal.remove();
-    }
+    // Remove all lingering modals to prevent DOM accumulation
+    ['loadSavedWorkModal', 'destinationModal', 'confirmSendModal'].forEach(modalId => {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.remove();
+        }
+    });
+
+    // Clear unmatched arrays to free memory
+    state.unmatchedImages = [];
+    state.unmatchedData = [];
+
+    // Clear fuzzy index
+    state.fuzzyIndex = {};
 }
 
 // Native folder selection helper for pywebview (same as app.js)
@@ -203,20 +224,19 @@ async function selectFolderNative(handleFilesCallback) {
         try {
             const filesInfo = await window.pywebview.api.select_folder();
             if (filesInfo && filesInfo.length > 0) {
-                // Convert to File-like objects for compatibility
-                const files = await Promise.all(filesInfo.map(async (info) => {
-                    // Fetch the base64 data as blob
-                    const response = await fetch(info.data);
-                    const blob = await response.blob();
-                    // Create a File-like object with webkitRelativePath
-                    const file = new File([blob], info.name, { type: blob.type });
+                // MEMORY OPTIMIZATION: Don't load images into memory
+                // Create file-like objects with paths for backend processing
+                const files = filesInfo.map((info) => {
+                    const file = {
+                        name: info.name,
+                        type: 'image/' + info.name.split('.').pop().toLowerCase(),
+                        path: info.path,  // Absolute file path
+                        size: info.size
+                    };
                     // Add webkitRelativePath for category detection
-                    Object.defineProperty(file, 'webkitRelativePath', {
-                        value: info.relativePath,
-                        writable: false
-                    });
+                    file.webkitRelativePath = info.relativePath;
                     return file;
-                }));
+                });
                 handleFilesCallback(files);
             }
         } catch (e) {
@@ -230,6 +250,14 @@ async function selectFolderNative(handleFilesCallback) {
 
 // ===== STEP 1: Upload Images =====
 function initializeStep1() {
+    // MEMORY OPTIMIZATION: Clear old event listeners to prevent accumulation on re-initialization
+    eventListeners.forEach(({ element, event, handler }) => {
+        if (element && element.removeEventListener) {
+            element.removeEventListener(event, handler);
+        }
+    });
+    eventListeners.length = 0;
+
     // Helper to track event listeners
     const addTrackedListener = (element, event, handler) => {
         if (element) {
@@ -354,34 +382,53 @@ function initializeStep1() {
  * Handle direct CSV upload from Step 1
  */
 function handleDirectCsvUpload(file) {
+    // Show immediate feedback that upload started
+    console.log('[CSV-BUILDER] Processing CSV file:', file.name);
+    showToast(`Processing ${file.name}...`, 'info');
+
     const reader = new FileReader();
     reader.onload = (e) => {
-        const content = e.target.result;
-        parseImportedData(content, 'direct upload');
+        try {
+            const content = e.target.result;
+            parseImportedData(content, 'direct upload');
 
-        // Copy imported data to products for export
-        if (state.importedData.length > 0) {
-            state.products = state.importedData.map(item => ({
-                filename: item.filename || '',
-                category: item.category || '',
-                sku: item.sku || '',
-                name: item.name || '',
-                price: item.price || '',
-                ...item // Include all other columns
-            }));
+            // Copy imported data to products for export
+            if (state.importedData.length > 0) {
+                state.products = state.importedData.map(item => ({
+                    filename: item.filename || '',
+                    category: item.category || '',
+                    sku: item.sku || '',
+                    name: item.name || '',
+                    price: item.price || '',
+                    ...item // Include all other columns
+                }));
 
-            // Update UI
-            const csvInfo = document.getElementById('csvInfo');
-            if (csvInfo) {
-                csvInfo.innerHTML = `<p style="color: #4CAF50; font-weight: bold;">${state.products.length} rows loaded from ${file.name}</p>`;
+                // Update UI
+                const csvInfo = document.getElementById('csvInfo');
+                if (csvInfo) {
+                    csvInfo.innerHTML = `<p style="color: #4CAF50; font-weight: bold;">✅ ${state.products.length} rows loaded from ${file.name}</p>`;
+                }
+
+                // Enable next button
+                const nextBtn = document.getElementById('nextToLink');
+                if (nextBtn) nextBtn.disabled = false;
+
+                // Show prominent success message
+                console.log('[CSV-BUILDER] Successfully loaded', state.products.length, 'rows');
+                showToast(`✅ Successfully loaded ${state.products.length} rows from CSV!`, 'success', 4000);
+            } else {
+                showToast('No valid data found in CSV', 'error');
             }
-
-            // Enable next button
-            const nextBtn = document.getElementById('nextToLink');
-            if (nextBtn) nextBtn.disabled = false;
-
-            showToast(`Loaded ${state.products.length} rows from CSV`, 'success');
+        } finally {
+            // Clean up reader reference
+            reader.onload = null;
+            reader.onerror = null;
         }
+    };
+    reader.onerror = () => {
+        showToast('Error reading CSV file', 'error');
+        reader.onload = null;
+        reader.onerror = null;
     };
     reader.readAsText(file);
 }
@@ -439,7 +486,7 @@ function handleImageFiles(files) {
         ${destinationSection}
         ${categorySummary}
         <div class="file-list" id="csvBuilderFileList">
-            ${state.products.slice(0, displayLimit).map(p => 
+            ${state.products.slice(0, displayLimit).map(p =>
                 `<div>${escapeHtml(p.filename)}${p.category ? ` <span style="color: #667eea;">[${p.category}]</span>` : ''}</div>`
             ).join('')}
         </div>
@@ -450,12 +497,18 @@ function handleImageFiles(files) {
                 </button>
             </div>
         ` : ''}
+        <div style="margin-top: 15px; padding: 15px; background: #e7f5ff; border: 1px solid #74c0fc; border-radius: 4px;">
+            <p style="margin: 0 0 10px 0;"><strong>Next Step:</strong> Download CSV template below, fill in product details, then load it in Step 2 to link metadata with images.</p>
+            <button class="btn" style="background-color: #667eea; color: white;" onclick="downloadCsvTemplateFromBuilder(${imageFiles.length})" data-tooltip="Download CSV template with pre-filled filenames and categories">
+                DOWNLOAD CSV TEMPLATE
+            </button>
+        </div>
     `;
     info.classList.add('show');
 
     document.getElementById('nextToLink').disabled = false;
     showToast(`${imageFiles.length} images loaded from ${Object.keys(categoryCount).length || 0} categories`, 'success');
-    
+
     saveState();
 }
 
@@ -641,7 +694,12 @@ function parseImportedData(content, source) {
         
         return obj;
     }).filter(obj => obj !== null);
-    
+
+    // Build fuzzy index for faster fuzzy matching (after CSV import)
+    if (state.importedData.length > 0) {
+        buildFuzzyIndex();
+    }
+
     // Build status message
     let statusMessage = `Imported ${state.importedData.length} products from ${source}`;
     const warnings = [];
@@ -649,12 +707,15 @@ function parseImportedData(content, source) {
 
     // Header-specific warnings
     if (hasHeaders) {
-        // Only warn about missing BASIC fields (not history fields)
+        // Only warn if MOST basic fields are missing (supports dynamic metadata CSVs)
         const basicFields = ['filename', 'sku', 'name', 'price', 'category'];
         const missingBasicFields = basicFields.filter(f => !foundFields[f]);
 
-        if (missingBasicFields.length > 0) {
-            warnings.push(`Missing basic headers: ${missingBasicFields.join(', ')} (will use positional mapping as fallback)`);
+        // Only warn if more than 3 out of 5 basic fields are missing
+        if (missingBasicFields.length > 3) {
+            warnings.push(`Missing most basic headers: ${missingBasicFields.join(', ')} (will use positional mapping as fallback)`);
+        } else if (missingBasicFields.length > 0) {
+            infoMessages.push(`ℹ️ Optional headers not found: ${missingBasicFields.join(', ')}`);
         }
 
         // Show info about history fields if found
@@ -665,14 +726,14 @@ function parseImportedData(content, source) {
             infoMessages.push(`performance_history column detected`);
         }
 
-        // Check for unmapped columns (exclude known columns)
+        // Check for dynamic metadata columns (columns beyond the basic ones)
         const knownFields = Object.keys(foundFields);
-        const unmappedColumns = headers.filter(h => {
+        const dynamicColumns = headers.filter(h => {
             const normalized = normalizeHeaderName(h);
             return !knownFields.includes(normalized) && h.trim().length > 0;
         });
-        if (unmappedColumns.length > 0) {
-            infoMessages.push(`ℹ️ Extra columns ignored: ${unmappedColumns.slice(0, 3).join(', ')}${unmappedColumns.length > 3 ? ` (+${unmappedColumns.length - 3} more)` : ''}`);
+        if (dynamicColumns.length > 0) {
+            infoMessages.push(`✅ Dynamic metadata columns found: ${dynamicColumns.slice(0, 3).join(', ')}${dynamicColumns.length > 3 ? ` (+${dynamicColumns.length - 3} more)` : ''}`);
         }
     } else {
         warnings.push(`ℹ️ No headers detected - using positional mapping (Col 1=filename, Col 2=category, Col 3=sku, Col 4=name, Col 5=price). Ensure your CSV matches this order!`);
@@ -1228,6 +1289,18 @@ function performLinking(strategy) {
             case 'fuzzy_name':
                 matchedData = linkByFuzzyName(product);
                 break;
+            case 'sku_equals_filename':
+                matchedData = linkBySKUEqualsFilename(product);
+                break;
+            case 'metadata_filename':
+                matchedData = linkByMetadataFilename(product);
+                break;
+            case 'name_equals_filename':
+                matchedData = linkByNameEqualsFilename(product);
+                break;
+            case 'search_all_fields':
+                matchedData = linkBySearchAllFields(product);
+                break;
         }
         
         if (matchedData) {
@@ -1244,33 +1317,40 @@ function performLinking(strategy) {
 
 function linkByFilenameEqualsSKU(product) {
     if (!product || !product.filename) return null;
-    
-    // Remove extension and clean filename
-    const filenameSKU = product.filename
-        .replace(/\.[^.]+$/, '') // Remove extension
-        .trim();
-    
-    if (!filenameSKU) return null;
-    
+
+    // Get both versions of filename
+    const filenameWithExt = product.filename.trim().toLowerCase();
+    const filenameNoExt = product.filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
+
+    if (!filenameNoExt) return null;
+
     return state.importedData.find(data => {
         if (!data || !data.sku) return false;
-        const dataSKU = String(data.sku).trim();
-        return dataSKU.toLowerCase() === filenameSKU.toLowerCase();
+        const dataSKU = String(data.sku).trim().toLowerCase();
+
+        // Try both with and without extension automatically
+        return dataSKU === filenameNoExt || dataSKU === filenameWithExt;
     });
 }
 
 function linkByFilenameContainsSKU(product) {
     if (!product || !product.filename) return null;
-    
+
     try {
         const pattern = new RegExp(state.skuPattern, 'i');
         const match = product.filename.match(pattern);
         if (match) {
-            const extractedSKU = match[0];
+            const extractedSKU = match[0].trim().toLowerCase();
             return state.importedData.find(data => {
                 if (!data || !data.sku) return false;
-                const dataSKU = String(data.sku).trim();
-                return dataSKU.toLowerCase() === extractedSKU.toLowerCase();
+
+                // Try matching SKU with and without extension
+                const dataSKU = String(data.sku).trim().toLowerCase();
+                const dataSKUNoExt = dataSKU.replace(/\.[^.]+$/, '').toLowerCase();
+
+                return dataSKU === extractedSKU ||
+                       dataSKUNoExt === extractedSKU ||
+                       dataSKU === extractedSKU.replace(/\.[^.]+$/, '');
             });
         }
     } catch (e) {
@@ -1282,58 +1362,224 @@ function linkByFilenameContainsSKU(product) {
 
 function linkByFolderEqualsSKU(product) {
     if (!product || !product.category) return null;
-    
-    const folderSKU = String(product.category).trim();
-    if (!folderSKU) return null;
-    
+
+    const folderName = String(product.category).trim().toLowerCase();
+    const folderNameNoExt = folderName.replace(/\.[^.]+$/, '').toLowerCase();
+
+    if (!folderName) return null;
+
     return state.importedData.find(data => {
         if (!data || !data.sku) return false;
-        const dataSKU = String(data.sku).trim();
-        return dataSKU.toLowerCase() === folderSKU.toLowerCase();
+        const dataSKU = String(data.sku).trim().toLowerCase();
+        const dataSKUNoExt = dataSKU.replace(/\.[^.]+$/, '').toLowerCase();
+
+        // Try all combinations automatically
+        return dataSKU === folderName ||
+               dataSKU === folderNameNoExt ||
+               dataSKUNoExt === folderName ||
+               dataSKUNoExt === folderNameNoExt;
     });
 }
 
 function linkByFuzzyName(product) {
     if (!product || !product.filename) return null;
-    
+
     // Clean and normalize filename
     const cleanFilename = normalizeForFuzzyMatch(
         product.filename.replace(/\.[^.]+$/, '') // Remove extension
     );
-    
+
     if (!cleanFilename || cleanFilename.length < 2) return null;
-    
+
+    // OPTIMIZATION: Use fuzzy index to get candidate products instead of scanning all
+    const candidates = getFuzzyIndexCandidates(cleanFilename);
+
     // Find best match with scoring
     let bestMatch = null;
     let bestScore = 0;
-    
-    for (const data of state.importedData) {
+
+    for (const data of candidates) {
         if (!data || !data.name) continue;
-        
+
         const cleanName = normalizeForFuzzyMatch(data.name);
         if (!cleanName) continue;
-        
+
         // Calculate similarity score
         const score = calculateFuzzyScore(cleanFilename, cleanName);
-        
+
         if (score > bestScore && score >= 0.5) { // Minimum 50% match
             bestScore = score;
             bestMatch = data;
         }
     }
-    
+
     return bestMatch;
 }
 
 function normalizeForFuzzyMatch(str) {
     if (!str || typeof str !== 'string') return '';
-    
+
     return str
         .toLowerCase()
         .replace(/[_\-\.]/g, ' ')  // Replace separators with spaces
         .replace(/[^a-z0-9\s]/g, '') // Remove special chars
         .replace(/\s+/g, ' ')  // Normalize whitespace
         .trim();
+}
+
+// NEW EDGE CASE STRATEGIES
+
+/**
+ * Reverse matching: Metadata SKU matches image filename
+ * Use case: User named images differently than SKU (e.g., IMG001.jpg but SKU is ABC-123)
+ * CSV has SKU column, we match SKU value to image filename
+ * Automatically handles with/without extensions
+ */
+function linkBySKUEqualsFilename(product) {
+    if (!product || !product.filename) return null;
+
+    // Get both versions of the filename
+    const filenameWithExt = product.filename.trim().toLowerCase();
+    const filenameNoExt = product.filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
+
+    if (!filenameNoExt) return null;
+
+    // Find metadata where SKU matches the image filename (try both versions)
+    return state.importedData.find(data => {
+        if (!data || !data.sku) return false;
+        const dataSKU = String(data.sku).trim().toLowerCase();
+        const dataSKUNoExt = dataSKU.replace(/\.[^.]+$/, '').toLowerCase();
+
+        // Try all combinations - be smart about extensions
+        return dataSKU === filenameNoExt ||
+               dataSKU === filenameWithExt ||
+               dataSKUNoExt === filenameNoExt ||
+               dataSKUNoExt === filenameWithExt;
+    });
+}
+
+/**
+ * Direct filename column matching
+ * Use case: CSV has a "filename" or "image" column with exact filenames
+ * Example: CSV row has filename="ABC-123.jpg", image is "ABC-123.jpg"
+ */
+function linkByMetadataFilename(product) {
+    if (!product || !product.filename) return null;
+
+    const imageFilename = product.filename.toLowerCase();
+
+    // Try common column names for filename
+    const filenameFields = ['filename', 'image', 'image_name', 'file', 'photo', 'picture'];
+
+    return state.importedData.find(data => {
+        if (!data) return false;
+
+        // Check all possible filename fields
+        for (const field of filenameFields) {
+            if (data[field]) {
+                let metadataFilename = String(data[field]).trim().toLowerCase();
+
+                // Try exact match
+                if (metadataFilename === imageFilename) {
+                    return true;
+                }
+
+                // Try without extension on metadata side
+                const metadataWithoutExt = metadataFilename.replace(/\.[^.]+$/, '');
+                const imageWithoutExt = imageFilename.replace(/\.[^.]+$/, '');
+                if (metadataWithoutExt === imageWithoutExt) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    });
+}
+
+/**
+ * Product name matches image filename (exact match, not fuzzy)
+ * Use case: User named images exactly like product names
+ * Example: "Blue Widget.jpg" matches product name "Blue Widget"
+ * Automatically handles with/without extensions
+ */
+function linkByNameEqualsFilename(product) {
+    if (!product || !product.filename) return null;
+
+    // Normalize filename both with and without extension
+    const normalizeString = (str) => str
+        .trim()
+        .toLowerCase()
+        .replace(/[_-]/g, ' ')
+        .replace(/\s+/g, ' ');
+
+    const filenameWithExt = normalizeString(product.filename);
+    const filenameNoExt = normalizeString(product.filename.replace(/\.[^.]+$/, ''));
+
+    if (!filenameNoExt) return null;
+
+    return state.importedData.find(data => {
+        if (!data || !data.name) return false;
+
+        const cleanName = normalizeString(String(data.name));
+        const cleanNameNoExt = normalizeString(String(data.name).replace(/\.[^.]+$/, ''));
+
+        // Try all combinations automatically
+        return cleanName === filenameNoExt ||
+               cleanName === filenameWithExt ||
+               cleanNameNoExt === filenameNoExt ||
+               cleanNameNoExt === filenameWithExt;
+    });
+}
+
+/**
+ * Search all metadata fields for match
+ * Use case: Flexible matching when you don't know which field has the identifier
+ * Checks all CSV columns for a match with image filename (without extension)
+ */
+function linkBySearchAllFields(product) {
+    if (!product || !product.filename) return null;
+
+    const cleanFilename = product.filename
+        .replace(/\.[^.]+$/, '')
+        .trim()
+        .toLowerCase();
+
+    if (!cleanFilename) return null;
+
+    // Find first metadata row where ANY field matches the filename
+    return state.importedData.find(data => {
+        if (!data) return false;
+
+        // Check all fields in this metadata row
+        for (const [key, value] of Object.entries(data)) {
+            if (!value) continue;
+
+            const fieldValue = String(value).trim().toLowerCase();
+
+            // Exact match
+            if (fieldValue === cleanFilename) {
+                return true;
+            }
+
+            // Without extension match
+            const fieldWithoutExt = fieldValue.replace(/\.[^.]+$/, '');
+            if (fieldWithoutExt === cleanFilename) {
+                return true;
+            }
+
+            // Contains match (for cases like "IMG_ABC-123_final.jpg" matching "ABC-123")
+            if (fieldValue.includes(cleanFilename) || cleanFilename.includes(fieldValue)) {
+                // Only match if substantial overlap (avoid false positives)
+                const minLength = Math.min(fieldValue.length, cleanFilename.length);
+                if (minLength >= 3) {  // Require at least 3 chars
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    });
 }
 
 function calculateFuzzyScore(str1, str2) {
@@ -1366,6 +1612,75 @@ function calculateFuzzyScore(str1, str2) {
     }
     
     return matchingWords / Math.max(words1.length, words2.length);
+}
+
+/**
+ * Build word index for faster fuzzy matching
+ * Pre-indexes all words in imported data to avoid scanning all products
+ * Reduces fuzzy matching from O(n²) to approximately O(n log n)
+ */
+function buildFuzzyIndex() {
+    state.fuzzyIndex = {};
+
+    state.importedData.forEach((data, index) => {
+        if (!data || !data.name) return;
+
+        const cleanName = normalizeForFuzzyMatch(data.name);
+        if (!cleanName) return;
+
+        const words = cleanName.split(' ').filter(w => w.length > 1);
+
+        words.forEach(word => {
+            if (!state.fuzzyIndex[word]) {
+                state.fuzzyIndex[word] = [];
+            }
+
+            if (!state.fuzzyIndex[word].includes(index)) {
+                state.fuzzyIndex[word].push(index);
+            }
+        });
+    });
+
+    console.log(`✓ Built fuzzy index with ${Object.keys(state.fuzzyIndex).length} unique words`);
+}
+
+/**
+ * Get candidate products from fuzzy index based on word overlap
+ * Scores products by number of matching words
+ * Returns top candidates to avoid scoring all products
+ */
+function getFuzzyIndexCandidates(cleanFilename, limit = 10) {
+    // Fallback if index not built
+    if (!state.fuzzyIndex || Object.keys(state.fuzzyIndex).length === 0) {
+        return state.importedData;
+    }
+
+    const fileWords = cleanFilename.split(' ').filter(w => w.length > 1);
+    if (fileWords.length === 0) return state.importedData;
+
+    const candidateScores = {};
+
+    // Score products by word overlap
+    fileWords.forEach(word => {
+        if (state.fuzzyIndex[word]) {
+            state.fuzzyIndex[word].forEach(index => {
+                candidateScores[index] = (candidateScores[index] || 0) + 1;
+            });
+        }
+    });
+
+    // If no word matches, return random sample
+    if (Object.keys(candidateScores).length === 0) {
+        return state.importedData.slice(0, limit);
+    }
+
+    // Get top candidates by word overlap score
+    const topIndices = Object.entries(candidateScores)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, Math.max(limit, Math.ceil(state.importedData.length * 0.1)))
+        .map(([index]) => parseInt(index));
+
+    return topIndices.map(i => state.importedData[i]);
 }
 
 function applyLinking() {
@@ -1414,6 +1729,18 @@ function applyLinkingChunked(strategy) {
                     break;
                 case 'fuzzy_name':
                     matchedData = linkByFuzzyName(product);
+                    break;
+                case 'sku_equals_filename':
+                    matchedData = linkBySKUEqualsFilename(product);
+                    break;
+                case 'metadata_filename':
+                    matchedData = linkByMetadataFilename(product);
+                    break;
+                case 'name_equals_filename':
+                    matchedData = linkByNameEqualsFilename(product);
+                    break;
+                case 'search_all_fields':
+                    matchedData = linkBySearchAllFields(product);
                     break;
             }
             
@@ -2355,22 +2682,36 @@ function goToStep(step) {
 function saveStateForUndo() {
     try {
         const stateString = JSON.stringify(state.products);
-        
+
         // Check size before adding to undo stack
         if (stateString.length > 1024 * 1024) { // 1MB limit per undo state
             console.warn('State too large for undo, skipping');
             return;
         }
-        
+
         state.undoStack.push(stateString);
         state.redoStack = []; // Clear redo stack on new action
-        
-        // Limit undo stack size to prevent memory bloat
-        if (state.undoStack.length > 20) {
+
+        // MEMORY OPTIMIZATION: Limit undo/redo stack to prevent state arrays growth (200-500MB possible)
+        if (state.undoStack.length > MAX_UNDO_STACK) {
             state.undoStack.shift();
         }
     } catch (e) {
         console.error('Failed to save undo state:', e);
+    }
+}
+
+// MEMORY OPTIMIZATION: Enforce state size limits to prevent unbounded growth
+function enforceStateLimits() {
+    // Limit products array size
+    if (state.products.length > MAX_PRODUCTS) {
+        console.warn(`Products exceed limit (${state.products.length} > ${MAX_PRODUCTS}), removing oldest items`);
+        state.products = state.products.slice(-MAX_PRODUCTS);
+    }
+
+    // Limit imported data
+    if (state.importedData.length > MAX_PRODUCTS) {
+        state.importedData = state.importedData.slice(-MAX_PRODUCTS);
     }
 }
 
@@ -2681,6 +3022,12 @@ function addSendToAppButton(source) {
 
 // Show destination selector modal
 function showDestinationSelector() {
+    // Remove any existing destination modal to prevent accumulation
+    const existingModal = document.getElementById('destinationModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
     const modal = document.createElement('div');
     modal.id = 'destinationModal';
     modal.style.cssText = `
@@ -2695,7 +3042,7 @@ function showDestinationSelector() {
         justify-content: center;
         z-index: 10000;
     `;
-    
+
     modal.innerHTML = `
         <div style="background: white; padding: 30px; border-radius: 8px; max-width: 400px; text-align: center;">
             <h3>Select Destination</h3>
@@ -2713,7 +3060,7 @@ function showDestinationSelector() {
             </button>
         </div>
     `;
-    
+
     document.body.appendChild(modal);
 }
 
@@ -2746,6 +3093,12 @@ function sendToMainApp() {
     }
 
     // Show confirmation modal
+    // Remove any existing confirm modal to prevent accumulation
+    const existingConfirmModal = document.getElementById('confirmSendModal');
+    if (existingConfirmModal) {
+        existingConfirmModal.remove();
+    }
+
     const modal = document.createElement('div');
     modal.id = 'confirmSendModal';
     modal.style.cssText = `
@@ -2760,9 +3113,9 @@ function sendToMainApp() {
         justify-content: center;
         z-index: 10000;
     `;
-    
+
     const destinationLabel = state.mainAppSource === 'historical' ? 'Historical Products' : 'New Products';
-    
+
     modal.innerHTML = `
         <div style="background: white; padding: 30px; border-radius: 8px; max-width: 400px; text-align: center;">
             <h3>Send CSV to Main App?</h3>
@@ -2781,7 +3134,7 @@ function sendToMainApp() {
             </div>
         </div>
     `;
-    
+
     document.body.appendChild(modal);
 }
 
@@ -2855,6 +3208,12 @@ function clearCsvBuilderUpload() {
 
 // Show custom modal for loading saved work
 function showLoadSavedWorkModal(hours, data) {
+    // Remove any existing saved work modal to prevent accumulation
+    const existingModal = document.getElementById('loadSavedWorkModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
     const modal = document.createElement('div');
     modal.className = 'modal show';
     modal.id = 'loadSavedWorkModal';
@@ -2870,7 +3229,7 @@ function showLoadSavedWorkModal(hours, data) {
         </div>
     `;
     document.body.appendChild(modal);
-    
+
     // Store data for loading
     window.savedWorkData = data;
 }
@@ -2942,4 +3301,75 @@ function showAllCsvBuilderFiles(totalCount) {
     }
     
     showToast(`Showing all ${totalCount} files`, 'success');
+}
+
+/**
+ * Download CSV template from CSV Builder Step 1
+ * Generates CSV with pre-filled filenames and categories for user to complete
+ * Uses filename-based linking by default
+ */
+function downloadCsvTemplateFromBuilder(totalCount) {
+    try {
+        // Generate CSV header
+        const headers = ['filename', 'category', 'sku', 'name', 'price', 'price_history', 'performance_history'];
+
+        // Generate CSV rows from state.products
+        const rows = state.products.map(product =>
+            [
+                `"${product.filename.replace(/"/g, '""')}"`,  // Filename (required for linking)
+                `"${product.category.replace(/"/g, '""')}"`,  // Category (pre-filled)
+                '',  // SKU (user fills)
+                '',  // Name (user fills)
+                '',  // Price (user fills)
+                '',  // Price history (user fills)
+                ''   // Performance history (user fills)
+            ].join(',')
+        );
+
+        const csv = [
+            headers.join(','),
+            ...rows
+        ].join('\n');
+
+        const filename = `csv-template-${new Date().toISOString().split('T')[0]}.csv`;
+
+        // Try pywebview first
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.save_file_auto) {
+            window.pywebview.api.save_file_auto(csv, filename)
+                .then(() => {
+                    showToast('CSV template downloaded! Fill in the empty columns (sku, name, price, etc.) and upload in Step 2.', 'success');
+                })
+                .catch(error => {
+                    console.error('Pywebview save failed:', error);
+                    downloadCsvBrowser(csv, filename);
+                });
+        } else {
+            // Browser download fallback
+            downloadCsvBrowser(csv, filename);
+        }
+    } catch (error) {
+        console.error('Error downloading CSV template:', error);
+        showToast('Error downloading CSV template', 'error');
+    }
+}
+
+/**
+ * Download CSV via browser (fallback)
+ */
+function downloadCsvBrowser(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    try {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        showToast('CSV template downloaded! Fill in the empty columns (sku, name, price, etc.) and upload in Step 2.', 'success');
+    } catch (error) {
+        console.error('Browser download failed:', error);
+        showToast('Download failed', 'error');
+    } finally {
+        URL.revokeObjectURL(url);
+    }
 }

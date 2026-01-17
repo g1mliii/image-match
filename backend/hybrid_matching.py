@@ -1,7 +1,7 @@
 """
 Hybrid Matching Module (Mode 3)
 
-This module implements hybrid matching by orchestrating Mode 1 (visual) and 
+This module implements hybrid matching by orchestrating Mode 1 (visual) and
 Mode 2 (metadata) matching, then combining results with weighted scoring.
 
 This is a lightweight wrapper that delegates to existing optimized functions
@@ -11,15 +11,74 @@ Performance:
 - Mode 1 and Mode 2 run with their own optimizations (FAISS, batch fetching, etc.)
 - Results are merged with simple arithmetic
 - Minimal code - just orchestration and merging
+
+Smart Linking:
+- Automatically links visual and metadata matches by filename ↔ SKU
+- Works even if user didn't use CSV Builder to pre-link data
+- Thread-safe and fast (simple string comparison)
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from database import insert_match
 
 logger = logging.getLogger(__name__)
+
+
+def matches_by_filename_sku(visual_match: Dict[str, Any], metadata_match: Dict[str, Any]) -> bool:
+    """
+    Check if visual and metadata matches represent the same product
+    by comparing image filename with SKU (with/without extensions).
+
+    This is the automatic backup linking strategy when products weren't
+    pre-linked through CSV Builder. Handles ~80% of real-world cases.
+
+    Thread-safe: Pure function, only reads data, no modifications.
+
+    Args:
+        visual_match: Visual match dict with 'image_path'
+        metadata_match: Metadata match dict with 'sku' or metadata_values
+
+    Returns:
+        True if filename matches SKU, False otherwise
+
+    Examples:
+        - Image: "ABC-123.jpg" → SKU: "ABC-123" = Match ✓
+        - Image: "ABC-123" → SKU: "ABC-123.jpg" = Match ✓
+        - Image: "product.png" → SKU: "product" = Match ✓
+        - Case-insensitive matching
+    """
+    if not visual_match or not metadata_match:
+        return False
+
+    # Extract filename from image path
+    image_path = visual_match.get('image_path', '')
+    if not image_path:
+        return False
+
+    filename = os.path.basename(image_path)
+    filename_no_ext = os.path.splitext(filename)[0].lower().strip()
+    filename_with_ext = filename.lower().strip()
+
+    if not filename_no_ext:
+        return False
+
+    # Get SKU from metadata match (try both top-level and metadata_values)
+    sku = metadata_match.get('sku') or metadata_match.get('metadata_values', {}).get('sku')
+    if not sku:
+        return False
+
+    sku_str = str(sku).lower().strip()
+    sku_no_ext = os.path.splitext(sku_str)[0]
+
+    # Try all combinations automatically (handles extensions smartly)
+    return (filename_no_ext == sku_str or
+            filename_no_ext == sku_no_ext or
+            filename_with_ext == sku_str or
+            filename_with_ext == sku_no_ext)
 
 
 def find_hybrid_matches(
@@ -29,11 +88,6 @@ def find_hybrid_matches(
     visual_weight: float = 0.50,
     metadata_weight: float = 0.50,
     metadata_weights: Optional[Dict[str, float]] = None,
-    sku_weight: float = 0.30,
-    name_weight: float = 0.30,
-    category_weight: float = 0.25,
-    price_weight: float = 0.10,
-    performance_weight: float = 0.05,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
     match_against_all: bool = False
@@ -53,14 +107,7 @@ def find_hybrid_matches(
         limit: Maximum number of matches
         visual_weight: Weight for visual similarity (default: 0.50)
         metadata_weight: Weight for metadata similarity (default: 0.50)
-        metadata_weights: (NEW) Dynamic weights dict for metadata columns.
-                         If provided, uses dynamic metadata matching.
-                         Example: {'sku': 0.3, 'name': 0.3, 'brand': 0.4}
-        sku_weight: (Legacy) Weight for SKU within metadata
-        name_weight: (Legacy) Weight for name within metadata
-        category_weight: (Legacy) Weight for category within metadata
-        price_weight: (Legacy) Weight for price within metadata
-        performance_weight: (Legacy) Weight for performance within metadata
+        metadata_weights: Dynamic weights dict for metadata columns
         store_matches: Whether to store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories
@@ -68,7 +115,7 @@ def find_hybrid_matches(
     Returns:
         Dictionary with matches and comprehensive scoring.
         When using dynamic metadata_weights, includes 'metadata_scores' dict per match.
-
+    
     Raises:
         ProductNotFoundError: If product doesn't exist
         MissingFeaturesError: If product doesn't have visual features
@@ -99,30 +146,18 @@ def find_hybrid_matches(
     # Step 2: Run Mode 2 (metadata matching) - already optimized with batch fetching
     try:
         # Use dynamic weights if provided, otherwise use legacy individual weights
-        if metadata_weights is not None:
-            metadata_result = find_metadata_matches(
-                product_id=product_id,
-                threshold=0.0,
-                limit=limit * 10 if limit > 0 else 1000,
-                weights=metadata_weights,  # Dynamic weights mode
-                store_matches=False,
-                skip_invalid_products=skip_invalid_products,
-                match_against_all=match_against_all
-            )
-        else:
-            metadata_result = find_metadata_matches(
-                product_id=product_id,
-                threshold=0.0,
-                limit=limit * 10 if limit > 0 else 1000,
-                sku_weight=sku_weight,
-                name_weight=name_weight,
-                category_weight=category_weight,
-                price_weight=price_weight,
-                performance_weight=performance_weight,
-                store_matches=False,
-                skip_invalid_products=skip_invalid_products,
-                match_against_all=match_against_all
-            )
+        if metadata_weights is None:
+             raise ValueError("Metadata weights required for Hybrid mode (Legacy removed)")
+
+        metadata_result = find_metadata_matches(
+            product_id=product_id,
+            threshold=0.0,
+            limit=limit * 10 if limit > 0 else 1000,
+            weights=metadata_weights,  # Dynamic weights mode
+            store_matches=False,
+            skip_invalid_products=skip_invalid_products,
+            match_against_all=match_against_all
+        )
     except Exception as e:
         logger.error(f"Mode 2 (metadata) failed: {e}")
         raise
@@ -137,16 +172,25 @@ def find_hybrid_matches(
     # Get all unique candidate IDs
     all_candidate_ids = set(visual_lookup.keys()) | set(metadata_lookup.keys())
     
-    # Compute hybrid scores
+    # Compute hybrid scores with smart linking
     hybrid_matches = []
     for candidate_id in all_candidate_ids:
         visual_match = visual_lookup.get(candidate_id)
         metadata_match = metadata_lookup.get(candidate_id)
-        
+
         # Get scores (default to 0 if match not found in one mode)
         visual_score = visual_match['similarity_score'] if visual_match else 0.0
         metadata_score = metadata_match['similarity_score'] if metadata_match else 0.0
-        
+
+        # SMART LINKING: If both found matches but to different products,
+        # check if they're actually the same product by filename ↔ SKU
+        if visual_match and metadata_match and visual_score > 0 and metadata_score > 0:
+            if visual_match.get('product_id') != metadata_match.get('product_id'):
+                # Different product_ids - verify they represent same item
+                if not matches_by_filename_sku(visual_match, metadata_match):
+                    # Not the same product - don't merge these scores
+                    continue
+
         # Compute hybrid score
         hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
         
@@ -164,18 +208,25 @@ def find_hybrid_matches(
         match_data['metadata_score'] = metadata_score
         match_data['is_potential_duplicate'] = hybrid_score > 90
         
-        # Add metadata sub-scores if available
+        # Add metadata sub-scores and values
         if metadata_match:
-            # Check for dynamic metadata_scores (new mode)
-            if 'metadata_scores' in metadata_match:
-                match_data['metadata_scores'] = metadata_match['metadata_scores']
-            else:
-                # Legacy mode - copy individual scores
-                match_data['sku_score'] = metadata_match.get('sku_score', 0.0)
-                match_data['name_score'] = metadata_match.get('name_score', 0.0)
-                match_data['category_score'] = metadata_match.get('category_score', 0.0)
-                match_data['price_score'] = metadata_match.get('price_score', 0.0)
-                match_data['performance_score'] = metadata_match.get('performance_score', 0.0)
+            # Pass through dynamic metadata structures
+            match_data['metadata_scores'] = metadata_match.get('metadata_scores', {})
+            # Ensure metadata values are passed
+            if 'metadata_values' in metadata_match:
+                match_data['metadata_values'] = metadata_match['metadata_values']
+            
+            # Map common fields to legacy top-level keys for compatibility
+            ms_scores = match_data.get('metadata_scores', {})
+            match_data['sku_score'] = ms_scores.get('sku', 0.0)
+            match_data['name_score'] = ms_scores.get('name', 0.0)
+            match_data['category_score'] = ms_scores.get('category', 0.0)
+            match_data['price_score'] = ms_scores.get('price', 0.0)
+            match_data['performance_score'] = ms_scores.get('performance', 0.0)
+
+        if not match_data.get('metadata_values') and visual_match and 'metadata_values' in visual_match:
+             # Fallback: if visual match somehow has it (unlikely but possible if enriched later)
+             match_data['metadata_values'] = visual_match['metadata_values']
 
         hybrid_matches.append(match_data)
     
@@ -223,8 +274,10 @@ def find_hybrid_matches(
             metadata_result.get('data_quality_issues', {}).get(key, 0)
         )
     
+    from product_matching import calculate_summary_stats
     result = {
         'matches': hybrid_matches,
+        'summary_stats': calculate_summary_stats(hybrid_matches), # ADDED: upfront stats for groups
         'total_candidates': max(visual_result.get('total_candidates', 0), metadata_result.get('total_candidates', 0)),
         'successful_matches': len(hybrid_matches),
         'failed_matches': visual_result.get('failed_matches', 0) + metadata_result.get('failed_matches', 0),
@@ -257,11 +310,6 @@ def batch_find_hybrid_matches(
     visual_weight: float = 0.50,
     metadata_weight: float = 0.50,
     metadata_weights: Optional[Dict[str, float]] = None,
-    sku_weight: float = 0.30,
-    name_weight: float = 0.30,
-    category_weight: float = 0.25,
-    price_weight: float = 0.10,
-    performance_weight: float = 0.05,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
     match_against_all: bool = False,
@@ -286,12 +334,7 @@ def batch_find_hybrid_matches(
         limit: Maximum matches per product
         visual_weight: Weight for visual similarity (default: 0.50)
         metadata_weight: Weight for metadata similarity (default: 0.50)
-        metadata_weights: (NEW) Dynamic weights dict for metadata columns
-        sku_weight: (Legacy) Weight for SKU within metadata
-        name_weight: (Legacy) Weight for name within metadata
-        category_weight: (Legacy) Weight for category within metadata
-        price_weight: (Legacy) Weight for price within metadata
-        performance_weight: (Legacy) Weight for performance within metadata
+        metadata_weights: Dynamic weights dict for metadata columns
         store_matches: Store results in database
         skip_invalid_products: Continue on errors
         match_against_all: Match against all categories
@@ -352,33 +395,17 @@ def batch_find_hybrid_matches(
         logger.info(f"[BATCH-HYBRID] [MODE 2] ▶ Starting parallel metadata matching for {len(product_ids)} products...")
         mode2_start = time.time()
 
-        # Use dynamic weights if provided, otherwise use legacy individual weights
-        if metadata_weights is not None:
-            metadata_results = batch_find_metadata_matches(
-                product_ids=product_ids,
-                threshold=0.0,
-                limit=limit * 10 if limit > 0 else 1000,
-                weights=metadata_weights,
-                store_matches=False,
-                skip_invalid_products=skip_invalid_products,
-                match_against_all=match_against_all,
-                max_workers=max_workers
-            )
-        else:
-            metadata_results = batch_find_metadata_matches(
-                product_ids=product_ids,
-                threshold=0.0,
-                limit=limit * 10 if limit > 0 else 1000,
-                sku_weight=sku_weight,
-                name_weight=name_weight,
-                category_weight=category_weight,
-                price_weight=price_weight,
-                performance_weight=performance_weight,
-                store_matches=False,
-                skip_invalid_products=skip_invalid_products,
-                match_against_all=match_against_all,
-                max_workers=max_workers
-            )
+        # Use dynamic weights
+        metadata_results = batch_find_metadata_matches(
+            product_ids=product_ids,
+            threshold=0.0,
+            limit=limit * 10 if limit > 0 else 1000,
+            weights=metadata_weights,
+            store_matches=False,
+            skip_invalid_products=skip_invalid_products,
+            match_against_all=match_against_all,
+            max_workers=max_workers
+        )
 
         mode2_time = time.time() - mode2_start
         logger.info(f"[BATCH-HYBRID] [MODE 2] ✓ Completed in {mode2_time:.2f}s - {metadata_results['summary']['successful']} successful, {metadata_results['summary']['failed']} failed")
@@ -434,19 +461,28 @@ def batch_find_hybrid_matches(
             # Get all unique candidate IDs
             all_candidate_ids = set(visual_matches_lookup.keys()) | set(metadata_matches_lookup.keys())
             
-            # Compute hybrid scores
+            # Compute hybrid scores with smart linking
             hybrid_matches = []
             for candidate_id in all_candidate_ids:
                 visual_match = visual_matches_lookup.get(candidate_id)
                 metadata_match = metadata_matches_lookup.get(candidate_id)
-                
+
                 # Get scores (default to 0 if match not found in one mode)
                 visual_score = visual_match['similarity_score'] if visual_match else 0.0
                 metadata_score = metadata_match['similarity_score'] if metadata_match else 0.0
-                
+
+                # SMART LINKING: If both found matches but to different products,
+                # check if they're actually the same product by filename ↔ SKU
+                if visual_match and metadata_match and visual_score > 0 and metadata_score > 0:
+                    if visual_match.get('product_id') != metadata_match.get('product_id'):
+                        # Different product_ids - verify they represent same item
+                        if not matches_by_filename_sku(visual_match, metadata_match):
+                            # Not the same product - don't merge these scores
+                            continue
+
                 # Compute hybrid score
                 hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
-                
+
                 # Use visual match data as base (has image_path, etc.)
                 if visual_match:
                     match_data = visual_match.copy()
@@ -461,13 +497,24 @@ def batch_find_hybrid_matches(
                 match_data['metadata_score'] = metadata_score
                 match_data['is_potential_duplicate'] = hybrid_score > 90
                 
-                # Add metadata sub-scores if available
+                # Add metadata sub-scores and values
                 if metadata_match:
-                    match_data['sku_score'] = metadata_match.get('sku_score', 0.0)
-                    match_data['name_score'] = metadata_match.get('name_score', 0.0)
-                    match_data['category_score'] = metadata_match.get('category_score', 0.0)
-                    match_data['price_score'] = metadata_match.get('price_score', 0.0)
-                    match_data['performance_score'] = metadata_match.get('performance_score', 0.0)
+                    # Pass through dynamic metadata structures
+                    match_data['metadata_scores'] = metadata_match.get('metadata_scores', {})
+                    match_data['metadata_values'] = metadata_match.get('metadata_values', {})
+                    
+                    # Map common fields to legacy top-level keys for compatibility
+                    # (These are used by frontend for specific score bars)
+                    ms_scores = match_data['metadata_scores']
+                    match_data['sku_score'] = ms_scores.get('sku', 0.0)
+                    match_data['name_score'] = ms_scores.get('name', 0.0)
+                    match_data['category_score'] = ms_scores.get('category', 0.0)
+                    match_data['price_score'] = ms_scores.get('price', 0.0)
+                    match_data['performance_score'] = ms_scores.get('performance', 0.0)
+                
+                if not match_data.get('metadata_values') and visual_match and 'metadata_values' in visual_match:
+                     # Fallback: if visual match somehow has it (unlikely but possible if enriched later)
+                     match_data['metadata_values'] = visual_match['metadata_values']
                 
                 hybrid_matches.append(match_data)
             
@@ -513,14 +560,16 @@ def batch_find_hybrid_matches(
                 'error_code': 'MERGE_ERROR'
             }
     
-    # Parallel merge - DON'T store matches yet, we'll batch insert them all at once
+    # Parallel merge - Insert matches incrementally while merging
     results = []
     successful = 0
     failed = 0
     all_matches_to_insert = []
-    
-    logger.info(f"[BATCH-HYBRID] [MERGE] Executing parallel merge with {max_workers} workers...")
-    logger.info(f"[BATCH-HYBRID] [MERGE] Matches will be batch inserted after all products are merged (1 DB call)")
+    total_matches_inserted = 0  # Track total for logging (includes incremental + batch)
+
+    # Fetch all query product data upfront for results display
+    from database import get_products_by_ids
+    query_products_data = get_products_by_ids(product_ids)
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {}
@@ -555,16 +604,25 @@ def batch_find_hybrid_matches(
                     # Get all unique candidate IDs
                     all_candidate_ids = set(visual_matches_lookup.keys()) | set(metadata_matches_lookup.keys())
                     
-                    # Compute hybrid scores
+                    # Compute hybrid scores with smart linking
                     hybrid_matches = []
                     for candidate_id in all_candidate_ids:
                         visual_match = visual_matches_lookup.get(candidate_id)
                         metadata_match = metadata_matches_lookup.get(candidate_id)
-                        
+
                         # Get scores (default to 0 if match not found in one mode)
                         visual_score = visual_match['similarity_score'] if visual_match else 0.0
                         metadata_score = metadata_match['similarity_score'] if metadata_match else 0.0
-                        
+
+                        # SMART LINKING: If both found matches but to different products,
+                        # check if they're actually the same product by filename ↔ SKU
+                        if visual_match and metadata_match and visual_score > 0 and metadata_score > 0:
+                            if visual_match.get('product_id') != metadata_match.get('product_id'):
+                                # Different product_ids - verify they represent same item
+                                if not matches_by_filename_sku(visual_match, metadata_match):
+                                    # Not the same product - don't merge these scores
+                                    continue
+
                         # Compute hybrid score
                         hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
                         
@@ -582,13 +640,26 @@ def batch_find_hybrid_matches(
                         match_data['metadata_score'] = metadata_score
                         match_data['is_potential_duplicate'] = hybrid_score > 90
                         
-                        # Add metadata sub-scores if available
+                        # Add metadata sub-scores and values
                         if metadata_match:
-                            match_data['sku_score'] = metadata_match.get('sku_score', 0.0)
-                            match_data['name_score'] = metadata_match.get('name_score', 0.0)
-                            match_data['category_score'] = metadata_match.get('category_score', 0.0)
-                            match_data['price_score'] = metadata_match.get('price_score', 0.0)
-                            match_data['performance_score'] = metadata_match.get('performance_score', 0.0)
+                            # Pass through dynamic metadata structures
+                            match_data['metadata_scores'] = metadata_match.get('metadata_scores', {})
+                            
+                            # Ensure metadata values are passed
+                            if 'metadata_values' in metadata_match:
+                                match_data['metadata_values'] = metadata_match['metadata_values']
+                            
+                            # Map common fields to legacy top-level keys for compatibility
+                            ms_scores = match_data.get('metadata_scores', {})
+                            match_data['sku_score'] = ms_scores.get('sku', 0.0)
+                            match_data['name_score'] = ms_scores.get('name', 0.0)
+                            match_data['category_score'] = ms_scores.get('category', 0.0)
+                            match_data['price_score'] = ms_scores.get('price', 0.0)
+                            match_data['performance_score'] = ms_scores.get('performance', 0.0)
+
+                        if not match_data.get('metadata_values') and visual_match and 'metadata_values' in visual_match:
+                             # Fallback: if visual match somehow has it (unlikely but possible if enriched later)
+                             match_data['metadata_values'] = visual_match['metadata_values']
                         
                         hybrid_matches.append(match_data)
                     
@@ -604,11 +675,14 @@ def batch_find_hybrid_matches(
                     if limit > 0:
                         hybrid_matches = hybrid_matches[:limit]
                     
+                    from product_matching import calculate_summary_stats
                     return {
                         'product_id': product_id,
+                        'product_data': query_products_data.get(product_id, {}), # ADDED
                         'status': 'success',
                         'match_count': len(hybrid_matches),
                         'matches': hybrid_matches,
+                        'summary_stats': calculate_summary_stats(hybrid_matches), # ADDED
                         'filtered_by_threshold': filtered_count
                     }
                     
@@ -627,11 +701,14 @@ def batch_find_hybrid_matches(
         for i, future in enumerate(as_completed(futures), 1):
             result = future.result()
             results.append(result)
-            
-            # Collect matches for batch insertion
+
+            # MEMORY OPTIMIZATION: Incremental insertion to prevent 50-100MB accumulation in Mode 3
+            # Insert matches immediately instead of accumulating all in memory
             if result['status'] == 'success' and result['matches']:
+                # Collect matches for this product
+                product_matches = []
                 for match in result['matches']:
-                    all_matches_to_insert.append((
+                    product_matches.append((
                         result['product_id'],
                         match['product_id'],
                         match['similarity_score'],
@@ -639,68 +716,91 @@ def batch_find_hybrid_matches(
                         match.get('shape_score', match.get('visual_score', 0.0)),
                         match.get('texture_score', match.get('visual_score', 0.0))
                     ))
-            
+
+                # OPTIMIZATION: Insert incrementally while other workers are still merging
+                # This starts inserting while other workers are still running, freeing memory as we go
+                if store_matches and product_matches:
+                    try:
+                        from database import bulk_insert_matches
+                        inserted = bulk_insert_matches(product_matches)
+                        total_matches_inserted += inserted
+                        logger.debug(f"[BATCH-HYBRID] [INSERT] ▶ Incremental insert: {inserted} matches for product {result['product_id']}")
+                    except Exception as e:
+                        logger.warning(f"[BATCH-HYBRID] [INSERT] Incremental insert failed for {result['product_id']}: {e}, will retry at end")
+                        all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
+                else:
+                    # If not storing immediately, collect for batch insert at end
+                    all_matches_to_insert.extend(product_matches)
+
             if result['status'] == 'success':
                 successful += 1
                 logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: {result['match_count']} matches")
             else:
                 failed += 1
                 logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: FAILED - {result.get('error', 'Unknown error')}")
-            
+
             # Log progress every 10 products
             if i % 10 == 0:
                 logger.info(f"[BATCH-HYBRID] [MERGE] Progress: {i}/{len(product_ids)} merged ({successful} successful, {failed} failed)")
     
-    # PERFORMANCE OPTIMIZATION: Batch insert all matches in chunks
-    # Smaller chunks = faster insertion while merging still happening
-    logger.info(f"[BATCH-HYBRID] [INSERT] ▶ Batch inserting {len(all_matches_to_insert)} matches collected from {successful} products")
+    # PERFORMANCE OPTIMIZATION: Insert any remaining matches in chunks
+    # (Most matches were already inserted incrementally, this handles any failed insertions)
+    # Smaller chunks = less memory overhead + faster insertion
+    remaining_matches_count = len(all_matches_to_insert)
+    if remaining_matches_count > 0:
+        logger.info(f"[BATCH-HYBRID] [INSERT] Step 2: Batch insert {remaining_matches_count} remaining matches (from failed incremental inserts)")
+
     if store_matches and all_matches_to_insert:
         try:
             from database import bulk_insert_matches
-            
+
             # Chunk size: 100 matches per transaction (smaller = faster + less memory)
             # This allows DB insertion to start while other workers still merging
             CHUNK_SIZE = 100
-            
-            total_inserted = 0
+
             num_chunks = (len(all_matches_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE
-            
+
             if num_chunks == 1:
                 # Small batch - insert all at once
-                logger.info(f"[BATCH-HYBRID] [INSERT] ▶ Batch inserting {len(all_matches_to_insert)} matches in one transaction...")
+                logger.info(f"[BATCH-HYBRID] [INSERT] ▶ Batch inserting {len(all_matches_to_insert)} remaining matches in one transaction...")
                 inserted_count = bulk_insert_matches(all_matches_to_insert)
-                logger.info(f"[BATCH-HYBRID] [INSERT] ✓ Batch inserted {inserted_count} matches (1 DB call for {len(product_ids)} products)")
-                total_inserted = inserted_count
+                total_matches_inserted += inserted_count
+                logger.info(f"[BATCH-HYBRID] [INSERT] ✓ Batch inserted {inserted_count} remaining matches")
             else:
                 # Large batch - chunk into multiple transactions (smaller chunks = faster)
-                logger.info(f"[BATCH-HYBRID] [INSERT] ▶ Batch inserting {len(all_matches_to_insert)} matches in {num_chunks} chunks ({CHUNK_SIZE} per chunk)...")
-                
+                logger.info(f"[BATCH-HYBRID] [INSERT] ▶ Batch inserting {len(all_matches_to_insert)} remaining matches in {num_chunks} chunks ({CHUNK_SIZE} per chunk)...")
+
                 for chunk_idx in range(num_chunks):
                     start_idx = chunk_idx * CHUNK_SIZE
                     end_idx = min((chunk_idx + 1) * CHUNK_SIZE, len(all_matches_to_insert))
+                    # MEMORY OPTIMIZATION: Create slice and immediately delete to avoid 2x memory during processing
                     chunk = all_matches_to_insert[start_idx:end_idx]
-                    
+
                     inserted_count = bulk_insert_matches(chunk)
-                    total_inserted += inserted_count
-                    
-                    logger.debug(f"[BATCH-HYBRID] [INSERT] Chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
-                
-                logger.info(f"[BATCH-HYBRID] [INSERT] ✓ Batch inserted {total_inserted} matches in {num_chunks} transactions for {len(product_ids)} products")
+                    total_matches_inserted += inserted_count
+
+                    # Clear chunk reference immediately to free memory
+                    chunk = None
+
+                    logger.debug(f"[BATCH-HYBRID] [INSERT] Chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} remaining matches")
+
+                logger.info(f"[BATCH-HYBRID] [INSERT] ✓ Batch inserted {remaining_matches_count} remaining matches in {num_chunks} transactions")
         except Exception as e:
             logger.error(f"Failed to batch insert hybrid matches: {e}")
     
     merge_time = time.time() - merge_start
     logger.info(f"[BATCH-HYBRID] [MERGE] ✓ Completed in {merge_time:.2f}s - {successful} successful, {failed} failed")
-    
+
     summary = {
         'total_products': len(product_ids),
         'successful': successful,
         'failed': failed,
         'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0,
         'visual_weight': visual_weight,
-        'metadata_weight': metadata_weight
+        'metadata_weight': metadata_weight,
+        'total_matches': total_matches_inserted  # Total matches stored in database (incremental + batch)
     }
-    
+
     total_time = time.time() - start_time
     logger.info(f"[BATCH-HYBRID] ✓ COMPLETE! Total time: {total_time:.2f}s")
     logger.info(f"[BATCH-HYBRID] Timing breakdown:")
@@ -708,6 +808,7 @@ def batch_find_hybrid_matches(
     logger.info(f"[BATCH-HYBRID]   - Mode 2 (Metadata): {mode2_time:.2f}s")
     logger.info(f"[BATCH-HYBRID]   - Merge:             {merge_time:.2f}s")
     logger.info(f"[BATCH-HYBRID] Results: {successful}/{len(product_ids)} successful ({summary['success_rate']}%)")
+    logger.info(f"[BATCH-HYBRID] Total matches stored: {total_matches_inserted} (inserted incrementally while merging + batch insert for remaining)")
     
     return {
         'results': results,

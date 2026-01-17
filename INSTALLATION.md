@@ -2,13 +2,14 @@
 
 ### Step 1: Install Python
 
-**AMD GPU Users (Windows):**
-- **MUST use Python 3.12** (ROCm requirement)
-- Download from: https://www.python.org/downloads/release/python-3120/
+**IMPORTANT: Python 3.12 Required for ALL Users**
+- **Python version must be < 3.13** (Python 3.13+ is NOT compatible)
+- Download Python 3.12: https://www.python.org/downloads/release/python-3120/
 
-**NVIDIA GPU / Apple Silicon / CPU Users:**
-- Python 3.8 or later works
-- Download from: https://www.python.org/downloads/
+**Why Python 3.12?**
+- AMD ROCm requires Python 3.12 on Windows
+- Core dependencies are tested and compatible with Python 3.12
+- Python 3.13+ has breaking changes that cause compatibility issues with our dependencies
 
 ### Step 2: Install Base Requirements
 
