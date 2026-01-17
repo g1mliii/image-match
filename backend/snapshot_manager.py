@@ -645,7 +645,14 @@ def save_snapshot_with_dialog_choice(
                         expires_at TIMESTAMP,
                         created_by_operation TEXT,
                         tags TEXT,
-                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        csv_historical_content TEXT,
+                        csv_historical_filename TEXT,
+                        csv_historical_row_count INTEGER,
+                        csv_new_content TEXT,
+                        csv_new_filename TEXT,
+                        csv_new_row_count INTEGER,
+                        csv_uploaded_at TIMESTAMP
                     )
                 ''')
             else:
@@ -1355,17 +1362,28 @@ def migrate_legacy_database() -> Dict[str, Any]:
                         description TEXT,
                         product_count INTEGER DEFAULT 0,
                         is_historical BOOLEAN DEFAULT 1,
+                        is_workspace BOOLEAN DEFAULT 0,
+                        session_only BOOLEAN DEFAULT 0,
+                        expires_at TIMESTAMP,
+                        created_by_operation TEXT,
                         tags TEXT,
-                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        csv_historical_content TEXT,
+                        csv_historical_filename TEXT,
+                        csv_historical_row_count INTEGER,
+                        csv_new_content TEXT,
+                        csv_new_filename TEXT,
+                        csv_new_row_count INTEGER,
+                        csv_uploaded_at TIMESTAMP
                     )
                 ''')
-                
+
                 # Get product count
                 cursor.execute('SELECT COUNT(*) FROM products')
                 count = cursor.fetchone()[0]
-                
+
                 cursor.execute('''
-                    INSERT INTO snapshot_metadata 
+                    INSERT INTO snapshot_metadata
                     (name, description, product_count, is_historical, tags)
                     VALUES (?, ?, ?, ?, ?)
                 ''', (
@@ -1446,6 +1464,7 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
     import csv as csv_module
 
     csv_buffer = None
+    section_name = "historical" if is_historical else "new"
     try:
         with get_snapshot_connection(db_path) as conn:
             cursor = conn.cursor()
@@ -1458,7 +1477,7 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
 
             if not cursor.fetchone():
                 # No metadata_schema - return None
-                logger.debug(f"No metadata_schema in {db_path}, skipping CSV extraction")
+                logger.info(f"[CSV-EXTRACT] No metadata_schema in database, skipping {section_name} CSV extraction")
                 return None
 
             # Get column definitions from metadata_schema
@@ -1474,9 +1493,10 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
             product_count = cursor.fetchone()[0]
 
             if product_count == 0:
-                section_name = "historical" if is_historical else "new"
-                logger.debug(f"No {section_name} products to extract for CSV")
+                logger.info(f"[CSV-EXTRACT] No {section_name} products found in database, skipping CSV")
                 return None
+
+            logger.info(f"[CSV-EXTRACT] Starting {section_name} CSV extraction from {product_count} products...")
 
             # Build CSV using StringIO for better performance
             csv_buffer = io.StringIO()
@@ -1535,13 +1555,12 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
             # Safely extract and close buffer
             csv_content = csv_buffer.getvalue()
             final_size_mb = len(csv_content.encode('utf-8')) / (1024 * 1024)
-            section_name = "historical" if is_historical else "new"
-            logger.info(f"Extracted {section_name} CSV: {row_count} rows, {final_size_mb:.2f}MB")
+            logger.info(f"[CSV-EXTRACT] ✓ Extracted {section_name} CSV: {row_count} rows, {final_size_mb:.2f}MB")
 
             return csv_content, row_count
 
     except Exception as e:
-        logger.error(f"Error extracting CSV from database: {e}", exc_info=True)
+        logger.error(f"[CSV-EXTRACT] Error extracting {section_name} CSV from database: {e}", exc_info=True)
         return None
     finally:
         # CRITICAL: Always close buffer to prevent memory leaks
@@ -1562,7 +1581,10 @@ def get_csv_from_snapshot(snapshot_path: str, is_historical: bool = True) -> Opt
     Returns:
         Dictionary with csv_content, filename, row_count, uploaded_at or None if no CSV
     """
+    section = "historical" if is_historical else "new"
     try:
+        logger.info(f"[CSV-RETRIEVE] Getting {section} CSV from snapshot: {os.path.basename(snapshot_path)}")
+
         with get_snapshot_connection(snapshot_path) as conn:
             cursor = conn.cursor()
 
@@ -1584,7 +1606,7 @@ def get_csv_from_snapshot(snapshot_path: str, is_historical: bool = True) -> Opt
             row = cursor.fetchone()
 
             if row and row[0]:  # Check if csv_content exists and is not None
-                section = "historical" if is_historical else "new"
+                logger.info(f"[CSV-RETRIEVE] ✓ Retrieved {section} CSV: {row[1]} ({row[2]} rows)")
                 return {
                     'csv_content': row[0],
                     'filename': row[1] or f'{section}.csv',
@@ -1592,26 +1614,29 @@ def get_csv_from_snapshot(snapshot_path: str, is_historical: bool = True) -> Opt
                     'uploaded_at': row[3],
                     'section': section
                 }
+            else:
+                logger.info(f"[CSV-RETRIEVE] No {section} CSV stored in snapshot")
 
         return None
 
     except Exception as e:
-        section = "historical" if is_historical else "new"
-        logger.error(f"Error retrieving {section} CSV from snapshot: {e}")
+        logger.error(f"[CSV-RETRIEVE] Error retrieving {section} CSV from snapshot: {e}")
         return None
 
 
 def save_main_db_as_snapshot(name: str, description: str = None,
-                             tags: List[str] = None) -> Dict[str, Any]:
+                             tags: List[str] = None, session_only: bool = False) -> Dict[str, Any]:
     """Save the current main database as a new snapshot
-    
+
     This copies product_matching.db to a new snapshot file in catalogs/
-    
+    Saves BOTH historical and new CSVs together in a SINGLE snapshot file.
+
     Args:
         name: Display name for the snapshot
         description: Optional description
         tags: Optional list of tags
-        
+        session_only: If True, snapshot auto-deletes after 1 hour (for temporary saves)
+
     Returns:
         Dictionary with result
     """
@@ -1636,10 +1661,10 @@ def save_main_db_as_snapshot(name: str, description: str = None,
             
             # Check if metadata table exists
             cursor.execute('''
-                SELECT name FROM sqlite_master 
+                SELECT name FROM sqlite_master
                 WHERE type='table' AND name='snapshot_metadata'
             ''')
-            
+
             if not cursor.fetchone():
                 cursor.execute('''
                     CREATE TABLE snapshot_metadata (
@@ -1655,7 +1680,14 @@ def save_main_db_as_snapshot(name: str, description: str = None,
                         expires_at TIMESTAMP,
                         created_by_operation TEXT,
                         tags TEXT,
-                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        csv_historical_content TEXT,
+                        csv_historical_filename TEXT,
+                        csv_historical_row_count INTEGER,
+                        csv_new_content TEXT,
+                        csv_new_filename TEXT,
+                        csv_new_row_count INTEGER,
+                        csv_uploaded_at TIMESTAMP
                     )
                 ''')
             else:
@@ -1696,6 +1728,7 @@ def save_main_db_as_snapshot(name: str, description: str = None,
 
             # Extract BOTH historical and new CSVs from main database for auto-load
             # Keep them separate to preserve schema integrity for each section
+            logger.info(f"[SNAPSHOT-SAVE] Extracting CSVs from main database for snapshot '{name}'...")
             csv_historical_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=True)
             csv_new_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=False)
 
@@ -1706,6 +1739,9 @@ def save_main_db_as_snapshot(name: str, description: str = None,
             if csv_historical_result:
                 csv_historical_content, csv_historical_row_count = csv_historical_result
                 csv_historical_filename = f"historical-{datetime.now().strftime('%Y%m%d')}.csv"
+                logger.info(f"[SNAPSHOT-SAVE] ✓ Historical CSV extracted: {csv_historical_filename} ({csv_historical_row_count} rows)")
+            else:
+                logger.info(f"[SNAPSHOT-SAVE] No historical CSV to extract (no products or no metadata schema)")
 
             # Prepare new CSV data
             csv_new_content = None
@@ -1714,15 +1750,26 @@ def save_main_db_as_snapshot(name: str, description: str = None,
             if csv_new_result:
                 csv_new_content, csv_new_row_count = csv_new_result
                 csv_new_filename = f"new-{datetime.now().strftime('%Y%m%d')}.csv"
+                logger.info(f"[SNAPSHOT-SAVE] ✓ New CSV extracted: {csv_new_filename} ({csv_new_row_count} rows)")
+            else:
+                logger.info(f"[SNAPSHOT-SAVE] No new CSV to extract (no products or no metadata schema)")
 
             # Clear existing metadata and insert new
             cursor.execute('DELETE FROM snapshot_metadata')
+
+            # Handle session expiration
+            expires_at = None
+            if session_only:
+                from datetime import timedelta
+                expires_at = (datetime.now() + timedelta(hours=1)).isoformat()
+
             cursor.execute('''
                 INSERT INTO snapshot_metadata
                 (name, description, product_count, is_historical, tags,
                  csv_historical_content, csv_historical_filename, csv_historical_row_count,
-                 csv_new_content, csv_new_filename, csv_new_row_count, csv_uploaded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 csv_new_content, csv_new_filename, csv_new_row_count, csv_uploaded_at,
+                 session_only, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 name,
                 description or f'Saved from main database on {datetime.now().strftime("%Y-%m-%d %H:%M")}',
@@ -1735,7 +1782,9 @@ def save_main_db_as_snapshot(name: str, description: str = None,
                 csv_new_content,
                 csv_new_filename,
                 csv_new_row_count,
-                datetime.now().isoformat() if (csv_historical_content or csv_new_content) else None
+                datetime.now().isoformat() if (csv_historical_content or csv_new_content) else None,
+                session_only,
+                expires_at
             ))
         
         # Create uploads directory for this snapshot
@@ -1755,13 +1804,22 @@ def save_main_db_as_snapshot(name: str, description: str = None,
         #         if os.path.isfile(src):
         #             shutil.copy2(src, dst)
         
-        logger.info(f"Saved main database as snapshot: {db_filename}")
-        
+        save_type = "Session" if session_only else "Persistent"
+        logger.info(f"[SNAPSHOT-SAVE] Saved snapshot metadata to database")
+        logger.info(f"[SNAPSHOT-SAVE] ✓ COMPLETE: ONE {save_type} Snapshot '{name}' with BOTH CSVs")
+        logger.info(f"[SNAPSHOT-SAVE]   - File: {db_filename}")
+        logger.info(f"[SNAPSHOT-SAVE]   - Total Products: {count}")
+        logger.info(f"[SNAPSHOT-SAVE]   - Historical CSV: {'✓ Yes' if csv_historical_content else '✗ No'} ({csv_historical_row_count or 0} rows)")
+        logger.info(f"[SNAPSHOT-SAVE]   - New CSV: {'✓ Yes' if csv_new_content else '✗ No'} ({csv_new_row_count or 0} rows)")
+        if session_only:
+            logger.info(f"[SNAPSHOT-SAVE]   - Expires: 1 hour from now (session snapshot)")
+
         return {
             'success': True,
             'snapshot_file': db_filename,
             'name': name,
-            'product_count': count
+            'product_count': count,
+            'session_only': session_only
         }
         
     except Exception as e:

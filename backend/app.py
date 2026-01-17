@@ -107,7 +107,9 @@ def remove_app_lock():
     try:
         if os.path.exists(APP_LOCK_FILE):
             os.remove(APP_LOCK_FILE)
-            logger.info("Removed app lock file (clean shutdown)")
+            logger.info("✓ App lock file removed (clean shutdown)")
+        else:
+            logger.debug("App lock file already removed or did not exist")
     except Exception as e:
         logger.warning(f"Failed to remove app lock file: {e}")
 
@@ -350,10 +352,25 @@ def cleanup_on_shutdown():
     try:
         # Clear uploads folder as requested (temp folder)
         if os.path.exists(app.config['UPLOAD_FOLDER']):
+            # Count files and calculate size before removal
+            files_count = 0
+            total_size = 0
+            try:
+                for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                    if os.path.isfile(filepath):
+                        files_count += 1
+                        total_size += os.path.getsize(filepath)
+            except Exception as e:
+                logger.warning(f"Error counting uploads folder contents: {e}")
+
             shutil.rmtree(app.config['UPLOAD_FOLDER'])
-            logger.info("✓ Removed uploads folder")
+            space_mb = round(total_size / (1024 * 1024), 2)
+            logger.info(f"✓ Removed uploads folder ({files_count} files, {space_mb}MB freed)")
             # Recreate empty folder for next time
             os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        else:
+            logger.debug("Uploads folder does not exist, skipping cleanup")
     except Exception as e:
         logger.warning(f"Failed to remove uploads folder: {e}")
 
@@ -984,6 +1001,11 @@ def mobile_upload_and_match():
                 product_name = None
             if sku and sku.strip() == '':
                 sku = None
+
+            # Normalize category (lowercase, trim whitespace, handle "unknown" variations)
+            if category is not None:
+                from product_matching import normalize_category
+                category = normalize_category(category)
 
             # Save image file
             file_ext = secure_filename(file.filename).rsplit('.', 1)[1].lower() if '.' in secure_filename(file.filename) else 'jpg'
@@ -2220,6 +2242,7 @@ def batch_upload_products():
         # - This is the CORRECT approach for SQLite batch operations
 
         from database import bulk_insert_products
+        from product_matching import normalize_category
         import json
 
         # Prepare all product data for bulk insert
@@ -2238,6 +2261,10 @@ def batch_upload_products():
                 product_name = None
             if sku and str(sku).strip() == '':
                 sku = None
+
+            # Normalize category (lowercase, trim whitespace, handle "unknown" variations)
+            if category is not None:
+                category = normalize_category(category)
 
             # Validate SKU if provided
             if sku:
@@ -5662,8 +5689,12 @@ def save_current_as_snapshot():
         
         description = data.get('description', '')
         tags = data.get('tags', [])
-        
-        result = save_main_db_as_snapshot(name, description, tags)
+
+        # Check if this is a session save (temporary, expires in 1 hour)
+        session_only = 'session' in [tag.lower() for tag in tags] if tags else False
+
+        logger.info(f"[SNAPSHOT-API] Saving snapshot '{name}' - Type: {'Session' if session_only else 'Persistent'}, Tags: {tags}")
+        result = save_main_db_as_snapshot(name, description, tags, session_only=session_only)
         
         if result.get('error'):
             return create_error_response(
@@ -5790,52 +5821,82 @@ def get_catalog_csv_content():
 
         # Get section parameter (default to 'historical')
         section = request.args.get('section', 'historical').lower()
+
         if section not in ['historical', 'new']:
+            logger.warning(f"[CSV-AUTO-LOAD] Invalid section: {section}")
             return create_error_response(
                 'INVALID_SECTION',
                 f"Invalid section '{section}'. Must be 'historical' or 'new'",
                 status_code=400
             )
 
+        logger.info(f"[CSV-AUTO-LOAD] ▶ Request for {section} CSV auto-load")
+
         is_historical = (section == 'historical')
 
         # Get currently loaded snapshot
         loaded_info = get_loaded_snapshot_info()
+        snapshot_file = None
 
-        if not loaded_info.get('loaded'):
-            return create_error_response(
-                'NO_CATALOG',
-                'No catalog currently loaded',
-                status_code=404
-            )
+        if loaded_info.get('loaded'):
+            # Snapshot is explicitly loaded
+            snapshot_file = loaded_info.get('snapshot_file')
+            logger.info(f"[CSV-AUTO-LOAD]   Loaded snapshot: {snapshot_file}")
+        else:
+            # No explicit snapshot loaded - try to use main database directly
+            # This handles the case where user selected "use_existing" without explicitly loading a snapshot
+            logger.info(f"[CSV-AUTO-LOAD] No explicit snapshot loaded - checking main database for CSV metadata...")
+            snapshot_file = None  # We'll extract CSV from main DB instead
 
-        snapshot_file = loaded_info.get('snapshot_file')
-        if not snapshot_file:
-            return create_error_response(
-                'NO_SNAPSHOT_FILE',
-                'No snapshot file information',
-                status_code=404
-            )
+        # Load CSV - either from snapshot or main database
+        csv_data = None
 
-        # Get CSV from snapshot for specific section
-        snapshot_path = os.path.join(CATALOGS_DIR, snapshot_file)
+        if snapshot_file:
+            # Get CSV from snapshot for specific section
+            snapshot_path = os.path.join(CATALOGS_DIR, snapshot_file)
 
-        if not os.path.exists(snapshot_path):
-            return create_error_response(
-                'SNAPSHOT_NOT_FOUND',
-                f'Snapshot file not found: {snapshot_file}',
-                status_code=404
-            )
+            if not os.path.exists(snapshot_path):
+                logger.error(f"[CSV-AUTO-LOAD] ✗ Snapshot file not found at: {snapshot_path}")
+                return create_error_response(
+                    'SNAPSHOT_NOT_FOUND',
+                    f'Snapshot file not found: {snapshot_file}',
+                    status_code=404
+                )
 
-        csv_data = get_csv_from_snapshot(snapshot_path, is_historical=is_historical)
+            logger.info(f"[CSV-AUTO-LOAD]   Retrieving {section} CSV from snapshot...")
+            csv_data = get_csv_from_snapshot(snapshot_path, is_historical=is_historical)
+        else:
+            # No snapshot loaded - try to extract CSV from main database
+            # This is used when user selected "use_existing" without formally loading a snapshot
+            from snapshot_manager import extract_csv_from_db, DEFAULT_DB_PATH
+
+            logger.info(f"[CSV-AUTO-LOAD]   Extracting {section} CSV from main database...")
+
+            try:
+                csv_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=is_historical)
+                if csv_result:
+                    csv_content, row_count = csv_result
+                    csv_data = {
+                        'csv_content': csv_content,
+                        'filename': f"{section}-{datetime.now().strftime('%Y%m%d')}.csv",
+                        'row_count': row_count,
+                        'uploaded_at': datetime.now().isoformat(),
+                        'section': section
+                    }
+                    logger.info(f"[CSV-AUTO-LOAD] ✓ Extracted from main DB: {csv_data['filename']} ({row_count} rows)")
+            except Exception as e:
+                logger.warning(f"[CSV-AUTO-LOAD] Could not extract CSV from main database: {e}")
+                csv_data = None
 
         if not csv_data:
+            logger.info(f"[CSV-AUTO-LOAD] ✗ No {section} CSV found in snapshot (normal if not used)")
             return jsonify({
                 'has_csv': False,
                 'section': section,
                 'message': f'No CSV data for {section} section'
             }), 200
 
+        logger.info(f"[CSV-AUTO-LOAD] ✓ LOADED: {section} CSV - {csv_data['filename']} ({csv_data['row_count']} rows)")
         return jsonify({
             'has_csv': True,
             'section': section,
@@ -5846,7 +5907,7 @@ def get_catalog_csv_content():
         }), 200
 
     except Exception as e:
-        logger.error(f"Error getting catalog CSV content: {e}", exc_info=True)
+        logger.error(f"[CSV-AUTO-LOAD] ✗ ERROR: {str(e)}", exc_info=True)
         return create_error_response(
             'CSV_RETRIEVAL_ERROR',
             'Failed to retrieve CSV content',

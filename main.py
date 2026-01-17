@@ -44,12 +44,29 @@ def clean_staging_dir():
     """Clean up old staging files (older than 1 hour)"""
     try:
         if not os.path.exists(STAGING_DIR):
+            print("Staging directory does not exist, skipping cleanup")
             return
+
         cutoff = time.time() - 3600  # 1 hour ago
+        files_deleted = 0
+        space_freed = 0
+
         for filename in os.listdir(STAGING_DIR):
             filepath = os.path.join(STAGING_DIR, filename)
             if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
-                os.remove(filepath)
+                try:
+                    file_size = os.path.getsize(filepath)
+                    os.remove(filepath)
+                    files_deleted += 1
+                    space_freed += file_size
+                except Exception as e:
+                    print(f"Warning: Failed to delete staging file {filename}: {e}")
+
+        if files_deleted > 0:
+            space_mb = round(space_freed / (1024 * 1024), 2)
+            print(f"✓ Staging cleanup: Deleted {files_deleted} files (older than 1 hour), {space_mb}MB freed")
+        else:
+            print("Staging cleanup: No old files to remove")
     except Exception as e:
         print(f"Warning: Failed to clean staging directory: {e}")
 

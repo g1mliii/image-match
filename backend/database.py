@@ -124,15 +124,18 @@ def close_all_db_connections():
     _init_pool()
 
     with _pool_lock:
+        num_connections = len(_connection_pool)
+        closed_count = 0
+
         for conn, _ in _connection_pool:
             try:
                 conn.close()
-                logger.info("Closed database connection")
+                closed_count += 1
             except Exception as e:
                 logger.warning(f"Error closing database connection: {e}")
 
         _connection_pool.clear()
-        logger.info(f"✓ All database connections closed ({len(_connection_pool)} remaining in pool)")
+        logger.info(f"✓ Database connections closed ({closed_count}/{num_connections} connections)")
 
 def migrate_features_table():
     """Migrate existing features table to support CLIP embeddings
