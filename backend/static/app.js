@@ -2264,8 +2264,10 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
         const storedMetric = productMetricSelections[productId];
         selectedMetric = storedMetric;
 
-        // CRITICAL DEBUG: Check what's stored and being used
-        showToast(`Render: ID=${productId}, stored=${storedMetric}, selected=${selectedMetric}`, 'warning');
+        // CRITICAL DEBUG: Only show for the product we just changed
+        if (storedMetric && storedMetric !== 'avg') {
+            showToast(`RENDER PRODUCT ${productId}: found stored="${storedMetric}"`, 'success');
+        }
     }
 
     const html = `
@@ -2332,6 +2334,11 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
                     </div>
                     <div class="metadata-scores-grid">
                         ${Object.entries(stats.metadataStats).map(([key, data], idx) => {
+                            // DEBUG: Show what value is being used for first field
+                            if (idx === 0 && selectedMetric !== 'avg') {
+                                const val = data[selectedMetric];
+                                showToast(`CALC: ${key}[${selectedMetric}]=${val} (avg=${data.avg})`, 'info');
+                            }
                             const selectedValue = data[selectedMetric] || data.avg;
                             const displayValue = typeof selectedValue === 'number' ? selectedValue.toFixed(1) : selectedValue;
                             // Calculate bar width based on metric type
@@ -2371,15 +2378,21 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
  * @param {string} metric - The selected metric ('avg', 'sum', 'min', 'max')
  */
 function updateProductMetric(productId, metric) {
-    console.log(`[METRIC] Changing product ${productId} metric to: ${metric}`);
-    console.log('[METRIC] Before:', productMetricSelections);
-
-    // CRITICAL DEBUG: Show the types
-    showToast(`UPDATE: ID="${productId}" (${typeof productId}) → metric="${metric}"`, 'error');
+    console.log(`[METRIC] Changing product ${productId} (type: ${typeof productId}) metric to: ${metric}`);
 
     productMetricSelections[productId] = metric;
-    console.log('[METRIC] After:', productMetricSelections);
+
+    // DEBUG: Verify it was saved
+    const check = productMetricSelections[productId];
+    console.log(`[METRIC] Verification: productMetricSelections[${productId}] = ${check}`);
+
     displayResults(false);  // Re-render without resetting pagination
+
+    // Show toast AFTER render (so it doesn't get cleared)
+    setTimeout(() => {
+        const allSelections = JSON.stringify(productMetricSelections);
+        showToast(`SAVED: ID=${productId} → "${check}" | ALL: ${allSelections}`, 'error');
+    }, 100);
 }
 
 /**

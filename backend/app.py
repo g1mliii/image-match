@@ -5850,6 +5850,7 @@ def get_catalog_csv_content():
 
         # Load CSV - either from snapshot or main database
         csv_data = None
+        from snapshot_manager import extract_csv_from_db, DEFAULT_DB_PATH
 
         if snapshot_file:
             # Get CSV from snapshot for specific section
@@ -5865,11 +5866,28 @@ def get_catalog_csv_content():
 
             logger.info(f"[CSV-AUTO-LOAD]   Retrieving {section} CSV from snapshot...")
             csv_data = get_csv_from_snapshot(snapshot_path, is_historical=is_historical)
+
+            # Fallback: if snapshot doesn't have CSV (e.g., created before CSV column fix), extract from main DB
+            if not csv_data:
+                logger.info(f"[CSV-AUTO-LOAD]   Snapshot has no CSV data (old snapshot?), falling back to main database...")
+                try:
+                    csv_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=is_historical)
+                    if csv_result:
+                        csv_content, row_count = csv_result
+                        csv_data = {
+                            'csv_content': csv_content,
+                            'filename': f"{section}-{datetime.now().strftime('%Y%m%d')}.csv",
+                            'row_count': row_count,
+                            'uploaded_at': datetime.now().isoformat(),
+                            'section': section
+                        }
+                        logger.info(f"[CSV-AUTO-LOAD] ✓ Fallback: Extracted from main DB: {csv_data['filename']} ({row_count} rows)")
+                except Exception as e:
+                    logger.warning(f"[CSV-AUTO-LOAD] Could not extract CSV from main database: {e}")
+                    csv_data = None
         else:
             # No snapshot loaded - try to extract CSV from main database
             # This is used when user selected "use_existing" without formally loading a snapshot
-            from snapshot_manager import extract_csv_from_db, DEFAULT_DB_PATH
-
             logger.info(f"[CSV-AUTO-LOAD]   Extracting {section} CSV from main database...")
 
             try:
