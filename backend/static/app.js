@@ -2261,13 +2261,7 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
         } else if (!productMetricSelections[productId]) {
             productMetricSelections[productId] = 'avg';
         }
-        const storedMetric = productMetricSelections[productId];
-        selectedMetric = storedMetric;
-
-        // CRITICAL DEBUG: Only show for the product we just changed
-        if (storedMetric && storedMetric !== 'avg') {
-            showToast(`RENDER PRODUCT ${productId}: found stored="${storedMetric}"`, 'success');
-        }
+        selectedMetric = productMetricSelections[productId];
     }
 
     const html = `
@@ -2324,21 +2318,16 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h5 style="margin: 0;">Similarity Breakdown</h5>
                         ${productId ? `
-                            <select class="metric-selector" onchange="console.log('Dropdown changed!'); updateProductMetric(${productId}, this.value)" style="padding: 5px 10px; border: 1px solid #cbd5e0; border-radius: 4px; background: white; font-size: 0.9em; cursor: pointer;">
-                                <option value="avg" ${selectedMetric === 'avg' ? 'selected' : ''}>Average ${selectedMetric === 'avg' ? '✓' : ''}</option>
-                                <option value="sum" ${selectedMetric === 'sum' ? 'selected' : ''}>Sum ${selectedMetric === 'sum' ? '✓' : ''}</option>
-                                <option value="min" ${selectedMetric === 'min' ? 'selected' : ''}>Minimum ${selectedMetric === 'min' ? '✓' : ''}</option>
-                                <option value="max" ${selectedMetric === 'max' ? 'selected' : ''}>Maximum ${selectedMetric === 'max' ? '✓' : ''}</option>
+                            <select class="metric-selector" onchange="updateProductMetric(${productId}, this.value)" style="padding: 5px 10px; border: 1px solid #cbd5e0; border-radius: 4px; background: white; font-size: 0.9em; cursor: pointer;">
+                                <option value="avg" ${selectedMetric === 'avg' ? 'selected' : ''}>Average</option>
+                                <option value="sum" ${selectedMetric === 'sum' ? 'selected' : ''}>Sum</option>
+                                <option value="min" ${selectedMetric === 'min' ? 'selected' : ''}>Minimum</option>
+                                <option value="max" ${selectedMetric === 'max' ? 'selected' : ''}>Maximum</option>
                             </select>
                         ` : ''}
                     </div>
                     <div class="metadata-scores-grid">
-                        ${Object.entries(stats.metadataStats).map(([key, data], idx) => {
-                            // DEBUG: Show what value is being used for first field
-                            if (idx === 0 && selectedMetric !== 'avg') {
-                                const val = data[selectedMetric];
-                                showToast(`CALC: ${key}[${selectedMetric}]=${val} (avg=${data.avg})`, 'info');
-                            }
+                        ${Object.entries(stats.metadataStats).map(([key, data]) => {
                             const selectedValue = data[selectedMetric] || data.avg;
                             const displayValue = typeof selectedValue === 'number' ? selectedValue.toFixed(1) : selectedValue;
                             // Calculate bar width based on metric type
@@ -2378,21 +2367,8 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
  * @param {string} metric - The selected metric ('avg', 'sum', 'min', 'max')
  */
 function updateProductMetric(productId, metric) {
-    console.log(`[METRIC] Changing product ${productId} (type: ${typeof productId}) metric to: ${metric}`);
-
     productMetricSelections[productId] = metric;
-
-    // DEBUG: Verify it was saved
-    const check = productMetricSelections[productId];
-    console.log(`[METRIC] Verification: productMetricSelections[${productId}] = ${check}`);
-
     displayResults(false);  // Re-render without resetting pagination
-
-    // Show toast AFTER render (so it doesn't get cleared)
-    setTimeout(() => {
-        const allSelections = JSON.stringify(productMetricSelections);
-        showToast(`SAVED: ID=${productId} → "${check}" | ALL: ${allSelections}`, 'error');
-    }, 100);
 }
 
 /**
@@ -2403,8 +2379,9 @@ function cleanupMetricSelections() {
     const currentProductIds = new Set();
 
     // Collect all currently displayed product IDs
+    // CRITICAL FIX: Convert to string to match object keys (which are always strings)
     matchResults.forEach(result => {
-        currentProductIds.add(result.p.id);
+        currentProductIds.add(String(result.p.id));
     });
 
     // Remove selections for products no longer in results
@@ -6754,7 +6731,62 @@ function loadMainAppState() {
 // Call on page load
 document.addEventListener('DOMContentLoaded', () => {
     loadMainAppState();
+    startMatchResultsPolling();
 });
+
+// ============ Auto-Display Mobile Match Results ============
+
+let matchResultsPollingInterval = null;
+let lastFetchedResultIds = new Set();
+
+function startMatchResultsPolling() {
+    /**
+     * Poll for stored match results every 3 seconds
+     * When mobile completes matching, results are stored in DB and automatically fetched
+     * Results are displayed in the Results section just like desktop batch-match
+     */
+    if (matchResultsPollingInterval) {
+        clearInterval(matchResultsPollingInterval);
+    }
+
+    matchResultsPollingInterval = setInterval(async () => {
+        try {
+            const response = await fetch('/api/products/match-results');
+            if (!response.ok) return;
+
+            const data = await response.json();
+            const results = data.results || [];
+
+            // Only add NEW results (ones we haven't seen before)
+            for (const result of results) {
+                const resultId = `result-${result.product_id}`;
+                if (!lastFetchedResultIds.has(resultId)) {
+                    lastFetchedResultIds.add(resultId);
+
+                    // Format result in same way as batch-match for consistency
+                    const compactProduct = createCompactProduct(result.product_data);
+                    const compactMatches = result.matches.map(m => createCompactMatch(m));
+
+                    matchResults.push({
+                        p: compactProduct,
+                        m: compactMatches
+                    });
+
+                    console.log(`[AUTO-DISPLAY] Added mobile result: ${result.product_data.product_name} with ${result.matches.length} matches`);
+                }
+            }
+
+            // If we found new results, refresh the display
+            if (results.length > 0 && lastFetchedResultIds.size > 0) {
+                displayResults(false);  // Don't reset pagination, just refresh
+            }
+        } catch (error) {
+            // Silently fail - network errors are normal, don't spam console
+        }
+    }, 3000); // Poll every 3 seconds
+
+    console.log('[AUTO-DISPLAY] Started match results polling (3 second interval)');
+}
 
 // Show all files in the list
 function showAllFiles(section, totalCount) {

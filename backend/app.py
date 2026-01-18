@@ -1026,12 +1026,29 @@ def mobile_upload_and_match():
                 from database import insert_product, insert_features
                 from image_processing import extract_features_unified
 
+                # Handle mode 3 metadata if provided
+                metadata = None
+                if mode == 'mode3':
+                    # Collect all metadata_<column_name> fields from request form
+                    metadata_dict = {}
+                    for key in request.form.keys():
+                        if key.startswith('metadata_'):
+                            column_name = key.replace('metadata_', '')
+                            value = request.form.get(key)
+                            if value and str(value).strip() != '':
+                                metadata_dict[column_name] = value
+
+                    if metadata_dict:
+                        metadata = json.dumps(metadata_dict)
+                        logger.info(f"[MOBILE] Mode 3 metadata collected: {list(metadata_dict.keys())}")
+
                 product_id = insert_product(
                     image_path=filepath,
                     category=category,
                     product_name=product_name,
                     sku=sku,
-                    is_historical=False
+                    is_historical=False,
+                    metadata=metadata
                 )
                 logger.info(f"[MOBILE] Product inserted: ID {product_id}")
 
@@ -1058,25 +1075,46 @@ def mobile_upload_and_match():
                 logger.error(f"[MOBILE] Upload failed: {e}")
                 return create_error_response('UPLOAD_ERROR', 'Failed to upload product', status_code=500)
 
-            # STEP 5: Batch match (same as desktop)
+            # STEP 5: Batch match (same as desktop REPLACE & PROCESS)
             logger.info(f"[MOBILE] Step 5: Matching product {product_id} (mode {mode})")
 
             try:
                 from product_matching import find_matches, find_metadata_matches
+                from database import get_metadata_schema
 
                 matches = []
 
                 if mode == 'mode1':
-                    # Mode 1: Visual only
+                    # Mode 1: Visual only (same as desktop)
                     matches = find_matches(product_id, limit=5, category=category)
-                    logger.info(f"[MOBILE] Mode 1 matching: {len(matches)} results")
+                    logger.info(f"[MOBILE] Mode 1 visual matching: {len(matches)} results")
                 elif mode == 'mode3':
-                    # Mode 3: Hybrid visual + metadata
-                    matches = find_metadata_matches(product_id, limit=5)
-                    logger.info(f"[MOBILE] Mode 3 matching: {len(matches)} results")
+                    # Mode 3: Metadata matching (same as desktop REPLACE & PROCESS)
+                    # Uses metadata schema created during CSV upload (part 1)
+                    schema = get_metadata_schema()
+
+                    if schema:
+                        # Build weights from schema (equal weight for all columns)
+                        weights = {col['column_name']: 1.0 for col in schema}
+                        total = sum(weights.values())
+                        weights = {k: v / total for k, v in weights.items()}
+
+                        # Call matching with weights from existing schema
+                        result = find_metadata_matches(
+                            product_id=product_id,
+                            limit=5,
+                            weights=weights,
+                            store_matches=True
+                        )
+                        matches = result.get('matches', [])
+                        logger.info(f"[MOBILE] Mode 3 metadata matching: {len(matches)} results")
+                    else:
+                        # No metadata schema - fall back to visual
+                        logger.info("[MOBILE] No metadata schema found - falling back to visual matching")
+                        matches = find_matches(product_id, limit=5, category=category)
 
             except Exception as e:
-                logger.warning(f"[MOBILE] Matching error (non-fatal): {e}")
+                logger.warning(f"[MOBILE] Matching error: {e}")
                 matches = []
 
             # Format matches
@@ -3058,6 +3096,103 @@ def cleanup_session():
         return create_error_response(
             'CLEANUP_ERROR',
             'Failed to clean up session',
+            str(e),
+            status_code=500
+        )
+
+@app.route('/api/products/match-results', methods=['GET'])
+def get_match_results():
+    """Get stored match results for NEW section products (uploaded via mobile or desktop)
+
+    Returns match results in the same format as batch-match for automatic desktop display.
+    Used for polling - returns all stored results from NEW section.
+
+    Returns:
+    - 200: List of match results with products and their matches
+    """
+    try:
+        from database import get_db_connection, get_product_by_id
+
+        logger.info("[MATCH-RESULTS] Fetching stored match results for NEW section")
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get all products in NEW section that have stored matches
+            cursor.execute('''
+                SELECT DISTINCT p.id, p.image_path, p.category, p.product_name, p.sku, p.metadata
+                FROM products p
+                WHERE p.is_historical = 0
+                AND EXISTS (
+                    SELECT 1 FROM product_matches
+                    WHERE product_id = p.id
+                )
+                ORDER BY p.id DESC
+            ''')
+
+            products = cursor.fetchall()
+            results = []
+
+            for product_row in products:
+                product_id = product_row['id']
+
+                # Get stored matches for this product
+                cursor.execute('''
+                    SELECT matched_product_id, similarity_score, match_type, metadata_scores
+                    FROM product_matches
+                    WHERE product_id = ?
+                    ORDER BY similarity_score DESC
+                    LIMIT 5
+                ''', (product_id,))
+
+                matches = cursor.fetchall()
+
+                if matches:
+                    # Build result in same format as batch-match
+                    product_data = {
+                        'id': product_id,
+                        'image_path': product_row['image_path'],
+                        'category': product_row['category'],
+                        'product_name': product_row['product_name'],
+                        'sku': product_row['sku'],
+                        'metadata': json.loads(product_row['metadata']) if product_row['metadata'] else {},
+                        'has_features': True
+                    }
+
+                    match_list = []
+                    for match in matches:
+                        matched_product = get_product_by_id(match['matched_product_id'])
+                        if matched_product:
+                            match_list.append({
+                                'product_id': match['matched_product_id'],
+                                'name': matched_product.get('product_name') or 'Unknown',
+                                'category': matched_product.get('category'),
+                                'sku': matched_product.get('sku'),
+                                'score': match['similarity_score'],
+                                'match_type': match['match_type']
+                            })
+
+                    if match_list:
+                        results.append({
+                            'product_id': product_id,
+                            'product_data': product_data,
+                            'matches': match_list,
+                            'status': 'success'
+                        })
+
+            logger.info(f"[MATCH-RESULTS] Found {len(results)} products with stored matches")
+
+            return jsonify({
+                'success': True,
+                'results': results,
+                'count': len(results)
+            }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching match results: {e}", exc_info=True)
+        return create_error_response(
+            'MATCH_RESULTS_ERROR',
+            'Failed to fetch match results',
             str(e),
             status_code=500
         )
