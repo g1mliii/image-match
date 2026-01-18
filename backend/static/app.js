@@ -6778,6 +6778,13 @@ function startMatchResultsPolling() {
 
             // If we found new results, refresh the display
             if (results.length > 0 && lastFetchedResultIds.size > 0) {
+                // Show ONLY the results section (skip all intermediate UI sections)
+                const resultsSection = document.getElementById('resultsSection');
+                if (resultsSection) {
+                    resultsSection.style.display = 'block';
+                    resultsSection.scrollIntoView({ behavior: 'smooth' });
+                }
+
                 displayResults(false);  // Don't reset pagination, just refresh
             }
         } catch (error) {
