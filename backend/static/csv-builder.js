@@ -2901,14 +2901,15 @@ const keyboardShortcutHandler = (e) => {
 document.addEventListener('keydown', keyboardShortcutHandler);
 eventListeners.push({ element: document, event: 'keydown', handler: keyboardShortcutHandler });
 
-// Handle page unload - save state and cleanup
-window.addEventListener('beforeunload', (e) => {
+// Handle page unload - save state (cleanup is handled by first beforeunload)
+// NOTE: Only one beforeunload listener is needed; the first one handles cleanup
+const beforeUnloadSaveHandler = (e) => {
     if (state.products.length > 0) {
         saveState();
     }
-    
-    // Note: cleanupResources() is already called by the other beforeunload listener above
-});
+};
+window.addEventListener('beforeunload', beforeUnloadSaveHandler);
+eventListeners.push({ element: window, event: 'beforeunload', handler: beforeUnloadSaveHandler });
 
 
 // Toggle help text in CSV builder

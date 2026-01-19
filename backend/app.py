@@ -57,12 +57,35 @@ from validation_utils import (
     validate_page_params, sanitize_search_query, validate_product_ids
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging with file rotation to prevent unbounded growth
+from logging.handlers import RotatingFileHandler
+import os
+
+LOGS_DIR = os.path.join(BACKEND_DIR, 'logs')
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+# Create logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create formatter
+log_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# File handler with rotation (max 10MB per file, keep 5 backups = 50MB total)
+log_file = os.path.join(LOGS_DIR, 'application.log')
+file_handler = RotatingFileHandler(
+    log_file,
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5  # Keep 5 rotated backups
+)
+file_handler.setFormatter(log_format)
+logger.addHandler(file_handler)
+
+# Console handler for stdout
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(log_format)
+logger.addHandler(console_handler)
 
 # Suppress werkzeug HTTP request logs (too verbose)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -1079,14 +1102,26 @@ def mobile_upload_and_match():
             logger.info(f"[MOBILE] Step 5: Matching product {product_id} (mode {mode})")
 
             try:
-                from product_matching import find_matches, find_metadata_matches
+                from product_matching import batch_find_matches, batch_find_metadata_matches
                 from database import get_metadata_schema
 
                 matches = []
 
                 if mode == 'mode1':
-                    # Mode 1: Visual only (same as desktop)
-                    matches = find_matches(product_id, limit=5, category=category)
+                    # Mode 1: Visual only - use batch version (single product wrapped in list)
+                    batch_result = batch_find_matches(
+                        product_ids=[product_id],
+                        threshold=0,
+                        limit=5,
+                        match_against_all=False,
+                        include_uncategorized=True,
+                        store_matches=True,
+                        skip_invalid_products=True,
+                        preload_catalog=False
+                    )
+                    # Extract matches from batch result format
+                    if batch_result['results'] and batch_result['results'][0]['status'] == 'success':
+                        matches = batch_result['results'][0]['matches']
                     logger.info(f"[MOBILE] Mode 1 visual matching: {len(matches)} results")
                 elif mode == 'mode3':
                     # Mode 3: Metadata matching (same as desktop REPLACE & PROCESS)
@@ -1099,19 +1134,36 @@ def mobile_upload_and_match():
                         total = sum(weights.values())
                         weights = {k: v / total for k, v in weights.items()}
 
-                        # Call matching with weights from existing schema
-                        result = find_metadata_matches(
-                            product_id=product_id,
+                        # Call batch matching with weights from existing schema
+                        batch_result = batch_find_metadata_matches(
+                            product_ids=[product_id],
+                            threshold=0,
                             limit=5,
                             weights=weights,
-                            store_matches=True
+                            store_matches=True,
+                            skip_invalid_products=True,
+                            match_against_all=False
                         )
-                        matches = result.get('matches', [])
+                        # Extract matches from batch result format
+                        if batch_result['results'] and batch_result['results'][0]['status'] == 'success':
+                            matches = batch_result['results'][0]['matches']
                         logger.info(f"[MOBILE] Mode 3 metadata matching: {len(matches)} results")
                     else:
-                        # No metadata schema - fall back to visual
+                        # No metadata schema - fall back to visual (batch version)
                         logger.info("[MOBILE] No metadata schema found - falling back to visual matching")
-                        matches = find_matches(product_id, limit=5, category=category)
+                        batch_result = batch_find_matches(
+                            product_ids=[product_id],
+                            threshold=0,
+                            limit=5,
+                            match_against_all=False,
+                            include_uncategorized=True,
+                            store_matches=True,
+                            skip_invalid_products=True,
+                            preload_catalog=False
+                        )
+                        # Extract matches from batch result format
+                        if batch_result['results'] and batch_result['results'][0]['status'] == 'success':
+                            matches = batch_result['results'][0]['matches']
 
             except Exception as e:
                 logger.warning(f"[MOBILE] Matching error: {e}")
@@ -1148,6 +1200,74 @@ def mobile_upload_and_match():
     except Exception as e:
         logger.error(f"[MOBILE] Request error: {e}", exc_info=True)
         return create_error_response('MOBILE_ERROR', 'Request failed', status_code=500)
+
+# Simple flag to notify main app that mobile results are ready
+_mobile_results_flag = {'ready': False, 'timestamp': None}
+
+@app.route('/api/mobile/results-ready', methods=['POST'])
+def mobile_results_ready():
+    """Mobile notifies main app that results are ready
+
+    Called by mobile-upload after successful match completion.
+    Sets a flag that main app polls to know when to fetch results.
+
+    No auth required (runs on same backend).
+    """
+    global _mobile_results_flag
+
+    try:
+        import time
+        _mobile_results_flag['ready'] = True
+        _mobile_results_flag['timestamp'] = time.time()
+
+        logger.info("[MOBILE] Results ready flag set - notifying main app")
+
+        return jsonify({
+            'success': True,
+            'message': 'Main app notified'
+        }), 200
+    except Exception as e:
+        logger.error(f"[MOBILE] Failed to set results flag: {e}")
+        return create_error_response('FLAG_ERROR', 'Failed to set results flag', status_code=500)
+
+@app.route('/api/mobile/check-flag', methods=['GET'])
+def check_mobile_results_flag():
+    """Main app checks if mobile has results ready
+
+    Returns the current flag state.
+    """
+    global _mobile_results_flag
+
+    try:
+        return jsonify({
+            'ready': _mobile_results_flag['ready'],
+            'timestamp': _mobile_results_flag['timestamp']
+        }), 200
+    except Exception as e:
+        logger.error(f"[MOBILE] Failed to check flag: {e}")
+        return create_error_response('CHECK_ERROR', 'Failed to check flag', status_code=500)
+
+@app.route('/api/mobile/clear-flag', methods=['POST'])
+def clear_mobile_results_flag():
+    """Main app clears the flag after displaying results
+
+    Resets flag so mobile can set it again for next upload.
+    """
+    global _mobile_results_flag
+
+    try:
+        _mobile_results_flag['ready'] = False
+        _mobile_results_flag['timestamp'] = None
+
+        logger.info("[MOBILE] Results flag cleared")
+
+        return jsonify({
+            'success': True,
+            'message': 'Flag cleared'
+        }), 200
+    except Exception as e:
+        logger.error(f"[MOBILE] Failed to clear flag: {e}")
+        return create_error_response('CLEAR_ERROR', 'Failed to clear flag', status_code=500)
 
 @app.route('/api/products/<int:product_id>/image', methods=['GET'])
 def get_product_image(product_id):
@@ -3000,7 +3120,8 @@ def batch_match_products():
                     match_against_all=match_against_all,
                     include_uncategorized=True,
                     store_matches=True,
-                    skip_invalid_products=True
+                    skip_invalid_products=True,
+                    preload_catalog=False
                 )
             elif is_pure_metadata:
                 # Mode 2: Metadata batch matching

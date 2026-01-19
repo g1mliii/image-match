@@ -569,6 +569,13 @@ function cleanupMemory() {
         console.log('✓ Cleared blob URL cleanup interval');
     }
 
+    // Stop mobile results polling and flag checking
+    stopMatchResultsPolling();
+    if (mobileFlagCheckInterval) {
+        clearInterval(mobileFlagCheckInterval);
+        mobileFlagCheckInterval = null;
+    }
+
     // Close BroadcastChannel (Fix #10)
     if (catalogChannel) {
         try {
@@ -6731,39 +6738,77 @@ function loadMainAppState() {
 // Call on page load
 document.addEventListener('DOMContentLoaded', () => {
     loadMainAppState();
-    startMatchResultsPolling();
+    setupMobileResultsListener();
 });
 
-// ============ Auto-Display Mobile Match Results ============
+// ============ Mobile Match Results (API-Based Notification) ============
 
 let matchResultsPollingInterval = null;
-let lastFetchedResultIds = new Set();
+let mobileFlagCheckInterval = null;  // Check flag every 2 seconds
+
+// Poll for mobile results flag via API
+function setupMobileResultsListener() {
+    try {
+        // Check mobile results flag every 2 seconds
+        mobileFlagCheckInterval = setInterval(async () => {
+            try {
+                const response = await fetch('/api/mobile/check-flag');
+                const data = await response.json();
+
+                if (data.ready) {
+                    console.log('📱 [MOBILE] Flag set - results are ready');
+
+                    // Stop flag checking
+                    if (mobileFlagCheckInterval) {
+                        clearInterval(mobileFlagCheckInterval);
+                        mobileFlagCheckInterval = null;
+                    }
+
+                    // Start fetching results
+                    startMatchResultsPolling();
+                }
+            } catch (error) {
+                console.debug('Error checking mobile flag:', error);
+            }
+        }, 2000);  // Check every 2 seconds
+
+        console.log('✓ Mobile results listener initialized (polling flag)');
+    } catch (error) {
+        console.warn('Failed to setup mobile listener:', error);
+    }
+}
 
 function startMatchResultsPolling() {
     /**
-     * Poll for stored match results every 3 seconds
-     * When mobile completes matching, results are stored in DB and automatically fetched
-     * Results are displayed in the Results section just like desktop batch-match
+     * Poll for stored mobile match results when triggered by mobile-upload window
+     * Only polls 3 times (9 seconds total) to avoid unnecessary network requests
+     * Results are displayed in the Results section
      */
     if (matchResultsPollingInterval) {
         clearInterval(matchResultsPollingInterval);
     }
 
+    let pollAttempts = 0;
+    const maxAttempts = 3;  // Try 3 times = 9 seconds max
+
     matchResultsPollingInterval = setInterval(async () => {
+        pollAttempts++;
+
         try {
             const response = await fetch('/api/products/match-results');
-            if (!response.ok) return;
+            if (!response.ok) {
+                if (pollAttempts >= maxAttempts) stopMatchResultsPolling();
+                return;
+            }
 
             const data = await response.json();
             const results = data.results || [];
 
-            // Only add NEW results (ones we haven't seen before)
-            for (const result of results) {
-                const resultId = `result-${result.product_id}`;
-                if (!lastFetchedResultIds.has(resultId)) {
-                    lastFetchedResultIds.add(resultId);
+            if (results.length > 0) {
+                console.log(`📱 [MOBILE] Received ${results.length} results`);
 
-                    // Format result in same way as batch-match for consistency
+                // Add all results to display
+                results.forEach(result => {
                     const compactProduct = createCompactProduct(result.product_data);
                     const compactMatches = result.matches.map(m => createCompactMatch(m));
 
@@ -6771,28 +6816,44 @@ function startMatchResultsPolling() {
                         p: compactProduct,
                         m: compactMatches
                     });
+                });
 
-                    console.log(`[AUTO-DISPLAY] Added mobile result: ${result.product_data.product_name} with ${result.matches.length} matches`);
-                }
-            }
-
-            // If we found new results, refresh the display
-            if (results.length > 0 && lastFetchedResultIds.size > 0) {
-                // Show ONLY the results section (skip all intermediate UI sections)
+                // Show results section
                 const resultsSection = document.getElementById('resultsSection');
                 if (resultsSection) {
                     resultsSection.style.display = 'block';
                     resultsSection.scrollIntoView({ behavior: 'smooth' });
                 }
 
-                displayResults(false);  // Don't reset pagination, just refresh
+                displayResults(false);
+                console.log('✓ Mobile results displayed');
+
+                // Stop polling - we got the results
+                stopMatchResultsPolling();
+            } else if (pollAttempts >= maxAttempts) {
+                // No results after 9 seconds, give up
+                console.warn('📱 [MOBILE] No results found after 3 attempts');
+                stopMatchResultsPolling();
             }
         } catch (error) {
-            // Silently fail - network errors are normal, don't spam console
+            console.warn('Error fetching mobile results:', error);
+            if (pollAttempts >= maxAttempts) stopMatchResultsPolling();
         }
-    }, 3000); // Poll every 3 seconds
+    }, 3000); // Try every 3 seconds
 
-    console.log('[AUTO-DISPLAY] Started match results polling (3 second interval)');
+    console.log('🔄 [MOBILE] Polling started (max 9 seconds)');
+}
+
+function stopMatchResultsPolling() {
+    if (matchResultsPollingInterval) {
+        clearInterval(matchResultsPollingInterval);
+        matchResultsPollingInterval = null;
+        console.log('✓ [MOBILE] Polling stopped');
+
+        // Clear the mobile flag so mobile can send new results
+        fetch('/api/mobile/clear-flag', { method: 'POST' })
+            .catch(error => console.debug('Could not clear mobile flag:', error));
+    }
 }
 
 // Show all files in the list

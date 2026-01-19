@@ -637,6 +637,23 @@
                     // Display results
                     displayResults(data.matches);
 
+                    // Notify main app that mobile results are ready via API
+                    try {
+                        fetch('/api/mobile/results-ready', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('📱 [MOBILE] Main app notified via API');
+                        })
+                        .catch(error => {
+                            console.warn('Could not notify main app:', error);
+                        });
+                    } catch (error) {
+                        console.warn('Could not notify main app:', error);
+                    }
+
                     // Reset form
                     selectedFile = null;
                     document.getElementById('photoInput').value = '';

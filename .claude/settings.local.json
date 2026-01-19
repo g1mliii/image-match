@@ -11,7 +11,8 @@
       "Bash(del \"\\?\\C:\\Users\\subai\\Desktop\\image match\\nul\")",
       "Bash(cmd.exe /c \"del /F nul\")",
       "Bash(sqlite3:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(wc:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
