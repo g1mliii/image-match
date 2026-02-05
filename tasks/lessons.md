@@ -34,3 +34,15 @@ See `.claude/projects/.../memory/ICON_SYSTEM_AUDIT.md` for full details.
 - The "Download CSV" buttons in upload section pull from MAIN database, not snapshots
 - Deleting a snapshot doesn't affect the main database
 - To clear CSV data, user must clear the working directory (deletes main DB products)
+
+### 2025-02-04 - CSV State Not Cleared on Catalog Clear (BUG FIX)
+**Failure mode:** After clearing working directory, CSV file labels and state persist in UI
+**Detection signal:** User clears working directory but still sees old CSV filenames in upload sections
+**Root cause:** `handleCatalogChanged` in index.html didn't clear frontend CSV state for 'catalog_cleared' action
+**Fix applied:** Added special handling in `handleCatalogChanged` (index.html ~line 147) to:
+- Clear `window.historicalCsv` and `window.newCsv`
+- Reset file input elements
+- Reset file labels to default text
+- Disable process buttons
+- Clear CSV warnings
+**Prevention rule:** When clearing backend data, always check if corresponding frontend state needs clearing too

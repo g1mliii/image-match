@@ -103,3 +103,7 @@ gpu/WORKFLOW_INTEGRATION.md
 
 # Sample data docs
 sample-data/MODE2_TEST_EXPECTED_RESULTS.md
+
+# Claude Code guidance files (local development only)
+CLAUDE.md
+tasks/

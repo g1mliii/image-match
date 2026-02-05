@@ -144,6 +144,41 @@
                 }
             }
 
+            // Clear CSV state when catalog is cleared
+            if (data.action === 'catalog_cleared') {
+                console.log('[CATALOG] Clearing CSV state after catalog clear');
+
+                // Clear in-memory CSV file references
+                window.historicalCsv = null;
+                window.newCsv = null;
+
+                // Reset file input elements
+                const historicalInput = document.getElementById('historicalCsvInput');
+                const newInput = document.getElementById('newCsvInput');
+                if (historicalInput) historicalInput.value = '';
+                if (newInput) newInput.value = '';
+
+                // Reset file labels to default
+                const historicalLabel = document.getElementById('historicalFileLabel');
+                const newLabel = document.getElementById('newFileLabel');
+                if (historicalLabel) historicalLabel.textContent = 'Choose a file or drag and drop';
+                if (newLabel) newLabel.textContent = 'Choose a file or drag and drop';
+
+                // Disable process buttons since no CSV is loaded
+                const processHistoricalBtn = document.getElementById('processHistoricalBtn');
+                const processNewBtn = document.getElementById('processNewBtn');
+                if (processHistoricalBtn) processHistoricalBtn.disabled = true;
+                if (processNewBtn) processNewBtn.disabled = true;
+
+                // Clear any CSV warnings
+                if (typeof updateCsvWarning === 'function') {
+                    updateCsvWarning(true, 'historicalCsvWarning');
+                    updateCsvWarning(true, 'newCsvWarning');
+                }
+
+                console.log('[CATALOG] CSV state cleared');
+            }
+
             // Show notification
             const messages = {
                 'catalog_loaded': `Catalog "${data.details?.name || 'snapshot'}" loaded`,
