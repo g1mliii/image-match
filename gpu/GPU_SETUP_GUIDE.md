@@ -4,16 +4,37 @@ Complete guide for setting up GPU acceleration for the Product Matching System.
 
 ## Quick Start
 
+### For AMD GPU Users (Recommended: AMD Adrenaline 26.1.1+)
+
+1. **Install AMD Adrenaline driver with bundled PyTorch:**
+   - Download from: https://www.amd.com/en/support/amd-radeon-software
+   - Run installer (driver 26.1.1 or later)
+   - PyTorch is automatically installed
+
+2. **Install Python 3.12:**
+   ```bash
+   py -3.12 --version  # Check if already installed
+   ```
+
+3. **Run setup script:**
+   ```bash
+   py -3.12 setup_gpu.py
+   ```
+
+### For All Other GPU Users (NVIDIA/Intel/Apple Silicon)
+
 ```bash
 python setup_gpu.py
 ```
 
-This script automatically:
-- Detects your GPU (AMD/NVIDIA/Apple Silicon)
+### What the Setup Script Does
+
+- Detects your GPU type (AMD/NVIDIA/Apple Silicon/CPU)
 - Checks Python version compatibility
-- Installs PyTorch with GPU support
-- Installs all dependencies
-- Verifies GPU is working
+- **For AMD with Adrenaline:** Verifies PyTorch is already installed and compatible
+- **For others:** Installs PyTorch with appropriate GPU support
+- Installs all project dependencies
+- Verifies GPU is working properly
 - Runs performance benchmark
 
 ---
@@ -24,11 +45,11 @@ This script automatically:
 
 **Requirements:**
 - **Python 3.12** (Required - ROCm wheels only available for 3.12)
-- **AMD Radeon RX 6000/7000/9000 series** (ROCm 6.4 compatible)
+- **AMD Radeon RX 6000/7000/9000 series** (ROCm compatible)
 - **Windows 10/11** or **Windows Server 2022**
-- **ROCm HIP SDK 6.4** (Manual installation required)
+- **AMD Adrenaline Driver 26.1.1+** (Bundles PyTorch + ROCm) OR **ROCm HIP SDK 6.4/7.x** (Manual)
 
-**Installation Steps:**
+**RECOMMENDED Installation Method - AMD Adrenaline (Easiest):**
 
 1. **Install Python 3.12** (if not already installed):
    ```bash
@@ -37,24 +58,53 @@ This script automatically:
    py -3.12 --version
    ```
 
-2. **Install ROCm HIP SDK 6.4**:
-   - Download from: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html
-   - Run installer as Administrator
-   - Select components:
-     - HIP Core (Required)
-     - Libraries (Required)
-     - Runtime Compiler (Required)
-     - Ray Tracing (Optional)
-     - VS plugin (Optional)
+2. **Install AMD Adrenaline Driver 26.1.1 or later**:
+   - Download from: https://www.amd.com/en/support/amd-radeon-software
+   - Run installer and follow setup steps
+   - **Important:** PyTorch will be automatically bundled and installed with ROCm
    - Restart computer after installation
 
 3. **Run setup script with Python 3.12**:
    ```bash
    py -3.12 setup_gpu.py
    ```
+   The script will detect PyTorch is already installed via Adrenaline and verify compatibility.
 
 **What Gets Installed:**
-- PyTorch 2.8.0 with ROCm 6.4 support (~780MB)
+- PyTorch 2.9.1 with ROCm bundled via AMD Adrenaline
+- sentence-transformers 2.7.0 (ROCm compatible version, auto-verified)
+- All project dependencies
+
+---
+
+**ALTERNATIVE Installation Method - Manual HIP SDK:**
+
+If you prefer not to use AMD Adrenaline, you can install ROCm HIP SDK manually:
+
+1. **Install Python 3.12** (if not already installed):
+   ```bash
+   py -3.12 --version
+   ```
+
+2. **Install ROCm HIP SDK**:
+   - Download from: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html
+   - OR: https://github.com/ROCm/rocm-install-on-windows/releases
+   - Choose ROCm 6.4.4 (stable, recommended) or ROCm 7.1.1 (latest)
+   - Run installer as Administrator
+   - Select components:
+     - HIP Core (Required)
+     - Libraries (Required)
+     - Runtime Compiler (Required)
+   - Restart computer after installation
+
+3. **Run setup script with Python 3.12**:
+   ```bash
+   py -3.12 setup_gpu.py
+   ```
+   The script will install PyTorch with manual ROCm wheels.
+
+**What Gets Installed (Manual Method):**
+- PyTorch 2.8.0 with ROCm 6.4.4 support (~780MB)
 - sentence-transformers 2.7.0 (ROCm compatible version)
 - All project dependencies
 
@@ -262,28 +312,45 @@ python -m pytest backend/tests/test_clip.py::TestGPUDetection::test_detect_devic
 
 ### AMD GPU Not Detected
 
-**Problem:** `CUDA available: False` even after installing ROCm
+**Problem:** `CUDA available: False` even after installing ROCm/Adrenaline
 
 **Solutions:**
-1. **Check Python version**:
+
+1. **Check Python version** (Required: 3.12.x):
    ```bash
    python --version  # Must be 3.12.x
    ```
    If not 3.12, run: `py -3.12 setup_gpu.py`
 
-2. **Check ROCm installation**:
+2. **Verify AMD Adrenaline/ROCm installation**:
    ```bash
    dir "C:\Program Files\AMD\ROCm"
    ```
-   Should show version 6.4
+   Should show ROCm version (6.4.x or 7.x)
 
-3. **Restart computer** after ROCm installation
+   OR check AMD Adrenaline:
+   - Open AMD Adrenaline app
+   - Check that driver version is 26.1.1 or later
+   - PyTorch should be listed as installed
 
-4. **Reinstall PyTorch**:
+3. **Restart computer** after installing AMD Adrenaline or ROCm HIP SDK
+   - System needs to reload GPU drivers and HIP runtime
+
+4. **Verify PyTorch installation**:
+   ```bash
+   py -3.12 -m pip show torch
+   ```
+   Should show `rocmsdk` or `rocm` in version string
+
+5. **Reinstall if needed**:
    ```bash
    py -3.12 -m pip uninstall torch torchvision torchaudio -y
    py -3.12 setup_gpu.py
    ```
+
+6. **For AMD Adrenaline users**: Ensure driver 26.1.1+ is installed
+   - Download from: https://www.amd.com/en/support/amd-radeon-software
+   - PyTorch is automatically bundled
 
 ---
 
@@ -356,24 +423,40 @@ This is automatically done by `setup_gpu.py` for AMD GPUs.
 
 ### AMD ROCm on Windows
 
+**Installation Methods:**
+
+**1. AMD Adrenaline (Recommended - New in 26.1.1+)**
+- Download from: https://www.amd.com/en/support/amd-radeon-software
+- PyTorch automatically bundled and installed with ROCm
+- Easier updates and simpler setup process
+- Automatic dependency management
+
+**2. Manual HIP SDK Installation**
+- Download from: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html
+- Requires separate PyTorch installation via setup script
+- More control over specific versions
+
 **Why Python 3.12?**
 - AMD only provides PyTorch wheels for Python 3.12 on Windows
-- Python 3.13+ not yet supported (as of ROCm 6.4)
+- Python 3.13+ not yet supported (as of ROCm 7.1)
+- Consistent across all platforms (NVIDIA, Apple Silicon, CPU)
 
 **Why sentence-transformers < 3.0.0?**
 - Newer versions require `torch.distributed.is_initialized()`
 - This function is missing in AMD's ROCm build for Windows
 - Version 2.7.0 works perfectly with ROCm
+- Setup script automatically verifies and installs compatible version
 
-**DLLs Installed:**
-- `amdhip64_6.dll` - HIP runtime
+**DLLs Installed (via ROCm):**
+- `amdhip64_6.dll` or `amdhip64_7.dll` - HIP runtime
 - `amd_comgr_2.dll` - Code object manager
 - `hiprt0200564.dll` - Ray tracing (optional)
 
 **Compatibility:**
-- ROCm 6.x is NOT backward-compatible with 5.x
-- Requires Windows 10 1903+ or Windows 11
+- ROCm 6.x is NOT backward-compatible with 7.x
 - Supported GPUs: RX 6000/7000/9000 series
+- Requires Windows 10 1903+ or Windows 11
+- AMD Adrenaline driver 26.1.1 or later for bundled PyTorch
 
 ---
 

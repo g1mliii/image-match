@@ -124,14 +124,33 @@ def install_pytorch(gpu_type):
     print("\n" + "="*80)
     print("Installing PyTorch")
     print("="*80)
-    
+
+    # Check if PyTorch is already installed (e.g., via AMD Adrenaline)
+    pytorch_check = run_cmd("pip show torch")
+    if pytorch_check[0]:
+        existing_version = pytorch_check[1]
+        if 'rocmsdk' in existing_version or 'rocm' in existing_version:
+            print("\n[OK] PyTorch with AMD ROCm already installed via AMD Adrenaline!")
+            print("[INFO] Skipping PyTorch installation")
+
+            # Verify sentence-transformers compatibility
+            print("\n[INFO] Verifying sentence-transformers compatibility...")
+            success_st, _, stderr_st = run_cmd('pip install "sentence-transformers>=2.7.0,<3.0.0"')
+
+            if success_st:
+                print("[OK] sentence-transformers < 3.0.0 installed")
+            else:
+                print(f"[WARNING] Failed to install sentence-transformers: {stderr_st}")
+
+            return True
+
     # Uninstall existing
     print("\n[1/3] Removing existing PyTorch...")
     run_cmd("pip uninstall torch torchvision torchaudio -y")
-    
+
     # Install based on GPU type
     print(f"\n[2/3] Installing PyTorch for {gpu_type.upper()}...")
-    
+
     if gpu_type == 'nvidia':
         cmd = "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
     elif gpu_type == 'amd':
@@ -142,29 +161,31 @@ def install_pytorch(gpu_type):
             # NOTE: This check is redundant (main() already checked) but kept as safety net
             if sys.version_info.minor == 12:
                 # Official AMD ROCm wheels for Windows (Python 3.12 only)
-                print("\n[INFO] Installing AMD ROCm PyTorch for Windows (Python 3.12)")
+                print("\n[INFO] PyTorch for AMD ROCm on Windows should be installed via AMD Adrenaline driver (26.1.1+)")
+                print("[INFO] This ensures optimal compatibility and automatic updates")
+                print("\n[ALTERNATIVE] Manual installation available:")
+                print("[INFO] Installing AMD ROCm PyTorch for Windows (Python 3.12)")
                 print("[INFO] This may take several minutes (~780MB download)...")
-                
-                # Install PyTorch with ROCm 7.1.1 (Updated November 26, 2024)
+
+                # Install PyTorch with ROCm 6.4.4 (stable) or 7.x (latest)
                 # Note: ROCm 6.4.4 is more stable and doesn't affect graphics drivers
-                # Change URLs to rocm-rel-6.4.4 if you prefer stability over latest features
-                success1, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-7.1.1/torch-2.8.0a0%2Bgitfc14c65-cp312-cp312-win_amd64.whl")
-                success2, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-7.1.1/torchvision-0.24.0a0%2Bc85f008-cp312-cp312-win_amd64.whl")
-                success3, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-7.1.1/torchaudio-2.6.0a0%2B1a8f621-cp312-cp312-win_amd64.whl")
-                
+                success1, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torch-2.8.0%2Brocm6.4.4-cp312-cp312-win_amd64.whl")
+                success2, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchvision-0.23.1%2Brocm6.4.4-cp312-cp312-win_amd64.whl")
+                success3, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchaudio-2.8.0%2Brocm6.4.4-cp312-cp312-win_amd64.whl")
+
                 if success1 and success2 and success3:
                     print("[OK] AMD ROCm PyTorch installed")
-                    
+
                     # CRITICAL: Install sentence-transformers < 3.0.0 for AMD ROCm compatibility
                     print("\n[INFO] Installing sentence-transformers < 3.0.0 (required for AMD ROCm)...")
                     success_st, _, stderr_st = run_cmd('pip install "sentence-transformers>=2.7.0,<3.0.0"')
-                    
+
                     if success_st:
                         print("[OK] sentence-transformers < 3.0.0 installed")
                     else:
                         print(f"[WARNING] Failed to install sentence-transformers: {stderr_st}")
                         print("[WARNING] AMD ROCm may not work correctly without sentence-transformers < 3.0.0")
-                    
+
                     return True
                 else:
                     print("[ERROR] Failed to install AMD ROCm PyTorch")
@@ -265,9 +286,9 @@ def download_rocm_installer():
 def install_rocm_windows():
     """Guide user through ROCm installation for Windows"""
     print("\n" + "="*80)
-    print("AMD ROCm HIP SDK Installation Required")
+    print("AMD GPU Support Setup - PyTorch + ROCm Installation")
     print("="*80)
-    
+
     # Check if already installed
     is_installed, install_path = check_rocm_installed()
     if is_installed:
@@ -276,20 +297,33 @@ def install_rocm_windows():
         if response.lower() != 'y':
             print("[INFO] Skipping ROCm installation")
             return
-    
-    print("\nYour AMD GPU needs the HIP SDK (ROCm) to work with PyTorch.")
+
+    print("\nYour AMD GPU needs ROCm + PyTorch to work with this application.")
+    print("\n" + "="*80)
+    print("RECOMMENDED: Install via AMD Adrenaline (Easiest)")
+    print("="*80)
+    print("\nAMD Adrenaline driver 26.1.1+ bundles PyTorch automatically:")
+    print("1. Download AMD Adrenaline driver (26.1.1 or later)")
+    print("   https://www.amd.com/en/support/amd-radeon-software")
+    print("2. Run the installer and follow setup")
+    print("3. PyTorch will be automatically installed with ROCm bundled")
+    print("4. Run this script again to verify and install dependencies")
+
+    print("\n" + "="*80)
+    print("ALTERNATIVE: Manual HIP SDK Installation")
+    print("="*80)
     print("\nOfficial AMD ROCm Documentation:")
     print("https://rocm.docs.amd.com/projects/install-on-windows/en/latest/")
-    
+
     print("\n" + "-"*80)
-    print("Installation Steps:")
+    print("Manual Installation Steps:")
     print("-"*80)
-    
+
     print("\n1. Download the HIP SDK installer:")
     print("   https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html")
     print("   OR")
     print("   https://github.com/ROCm/rocm-install-on-windows/releases")
-    print("   - Choose ROCm 7.1.1 (latest) or ROCm 6.x (stable)")
+    print("   - Choose ROCm 6.4.4 (stable, recommended) or ROCm 7.1.1 (latest)")
     print("   - Accept license agreement")
     
     print("\n2. Run the installer as Administrator")

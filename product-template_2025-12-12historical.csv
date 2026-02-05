@@ -1,76 +1,76 @@
-filename,category,sku,name,description,brand,type
-IMG_1140.jpg,,GEN-001,Generic Image Product,A versatile generic product image,Generic Brand,Standard
-Screenshot 2025-09-29 175019.png,,SCR-001,Screenshot Product A,User interface screenshot example,Tech Corp,UI Design
-Screenshot 2025-10-03 115857.png,,SCR-002,Screenshot Product B,Dashboard interface design,Dashboard Inc,Software
-Screenshot 2025-11-12 163833.png,,SCR-003,Screenshot Product C,Analytics panel screenshot,Data Systems,Analytics
-Screenshot 2025-11-23 232538.png,,SCR-004,Screenshot Product D,Mobile app interface,App Studio,Mobile
-Screenshot 2025-11-26 234553.png,,SCR-005,Screenshot Product E,Web design mockup,Web Masters,Web Design
-Screenshot 2025-11-28 112453.png,,SCR-006,Screenshot Product F,Database interface,Data Tech,Database
-Screenshot 2025-12-01 022745.png,,SCR-007,Screenshot Product G,Network dashboard,Network Pro,Networking
-Screenshot 2025-12-02 180147.png,,SCR-008,Screenshot Product H,Server management panel,Server Solutions,DevOps
-Screenshot 2025-12-02 182341.png,,SCR-009,Screenshot Product I,Cloud storage interface,Cloud Tech,Cloud
-Screenshot 2025-12-10 221541.png,,SCR-010,Screenshot Product J,AI dashboard,AI Systems,Artificial Intelligence
-Screenshot 2025-12-12 124045.png,,SCR-011,Screenshot Product K,Machine learning interface,ML Corp,Machine Learning
-4.png,website,WEB-001,Website Design Template,Professional website layout,Web Agency,Web Templates
-Anchored A.I tools.png,website,WEB-002,AI Tools Landing Page,AI tools marketing page,AI Company,Landing Pages
-Gemini_Generated_Image_amwiymamwiymamwi (1).png,website,WEB-003,AI Generated Hero Image,Creative AI-generated imagery,Creative Studio,Hero Images
-Gemini_Generated_Image_cklaevcklaevckla (2).png,website,WEB-004,Creative Background Pack,Abstract design backgrounds,Design Pack Co,Backgrounds
-Gemini_Generated_Image_cklaevcklaevckla (3).png,website,WEB-005,Abstract Design Bundle,Modern abstract designs,Abstract Designs,Design Assets
-Screenshot 2025-09-19 230622.png,website,WEB-006,Dashboard UI Kit,Complete dashboard components,UI Systems,Components
-Screenshot 2025-09-19 233633.png,website,WEB-007,Mobile App Interface,Responsive mobile design,Mobile First,Mobile Design
-Screenshot 2025-09-19 233643.png,website,WEB-008,E-commerce Template,Online store layout,E-Shop,Templates
-Screenshot 2025-11-26 123138.png,website,WEB-009,Portfolio Website Theme,Professional portfolio design,Portfolio Pro,Portfolio
-Screenshot 2025-11-28 124506.png,potplayer,MEDIA-001,Media Player Skin Classic,Classic player design,Media Player Inc,Player Skins
-Screenshot 2025-11-28 124724.png,potplayer,MEDIA-002,Dark Theme Player UI,Dark mode player interface,Theme Studio,UI Themes
-Screenshot 2025-11-28 130738.png,potplayer,MEDIA-003,Minimal Player Interface,Minimalist player design,Minimal Tech,Minimal Design
-Screenshot 2025-11-28 132941.png,potplayer,MEDIA-004,Pro Player Controls,Advanced player controls,Pro Media,Professional
-Screenshot 2025-11-28 134808.png,potplayer,MEDIA-005,Custom Playback Skin,Customizable player skin,Custom Tech,Customization
-Screenshot 2025-11-28 135628.png,potplayer,MEDIA-006,Modern Player Theme,Contemporary player design,Modern Studio,Modern Design
-Screenshot 2025-11-28 135743.png,potplayer,MEDIA-007,Retro Player Design,Vintage player interface,Retro Design,Retro Style
-Screenshot 2025-12-06 022838.png,potplayer,MEDIA-008,Animated UI Pack,Animation-rich interface,Animation Lab,Animations
-Screenshot 2025-12-06 023121.png,potplayer,MEDIA-009,Glassmorphic Player,Glass effect design,Glass Design,Effects
-Screenshot 2025-12-06 023132.png,potplayer,MEDIA-010,Neon Glow Interface,Neon styling design,Neon Studio,Neon Effects
-Screenshot 2025-12-06 023143.png,potplayer,MEDIA-011,Flat Design Player,Flat design interface,Flat Design Inc,Flat Design
-Screenshot 2025-12-06 023708.png,potplayer,MEDIA-012,Gradient Controls Theme,Gradient styling design,Gradient Tech,Gradient Effects
-Screenshot 2025-12-06 023715.png,potplayer,MEDIA-013,Compact Player Skin,Compact player layout,Compact Media,Compact Design
-Screenshot 2025-12-06 023727.png,potplayer,MEDIA-014,Transparent Overlay UI,Transparent elements design,Transparency Lab,Transparency
-Screenshot 2025-12-06 024048.png,potplayer,MEDIA-015,Material Design Player,Material design interface,Material Studio,Material Design
-Screenshot 2025-12-06 024439.png,potplayer,MEDIA-016,Cinematic Mode Skin,Cinematic design interface,Cinema Tech,Cinematic
-Screenshot 2025-12-04 224221.png,list,LIST-001,Task Management UI,Task management interface,Task Systems,Management Tools
-Screenshot 2025-12-04 224250.png,list,LIST-002,Project Board Template,Project board layout,Project Pro,Project Management
-Screenshot 2025-12-04 224301.png,list,LIST-003,Kanban View Design,Kanban board interface,Agile Tech,Agile Tools
-Screenshot 2025-12-04 224319.png,list,LIST-004,Todo List Interface,Todo management interface,Todo Apps,Productivity
-Screenshot 2025-12-04 224333.png,list,LIST-005,Checklist Component,Checklist interface,Checklist Tech,Components
-Screenshot 2025-10-28 193631.png,imagematch,IMG-001,Image Matcher Pro,Professional image matching,Image Tech,Image Processing
-Screenshot 2025-11-20 191255.png,imagematch,IMG-002,Visual Search Engine,Visual search solution,Search Corp,Search Tools
-Screenshot 2025-11-25 163246.png,imagematch,IMG-003,AI Image Comparison,AI-powered comparison,AI Vision,AI Tools
-Screenshot 2025-11-25 165537.png,imagematch,IMG-004,Product Match Tool,Product matching tool,Match Systems,Product Tools
-Screenshot 2025-11-25 165756.png,imagematch,IMG-005,Similarity Finder,Similarity detection tool,Similarity Tech,Detection Tools
-Screenshot 2025-11-25 165934.png,imagematch,IMG-006,Duplicate Detector,Duplicate detection system,Duplicate Tech,Duplicate Detection
-Screenshot 2025-11-26 145612.png,imagematch,IMG-007,Visual Analytics Suite,Analytics suite for visuals,Analytics Pro,Analytics
-Screenshot 2025-12-06 122012.png,imagematch,IMG-008,Image Recognition API,API for image recognition,API Systems,APIs
-Screenshot 2025-12-06 122024.png,imagematch,IMG-009,CLIP Model Integration,CLIP model integration,ML Systems,Machine Learning
-Screenshot 2025-12-06 122217.png,imagematch,IMG-010,Catalog Manager Pro,Professional catalog manager,Catalog Pro,Catalog Tools
-Screenshot 2025-12-06 203213.png,imagematch,IMG-011,Batch Processing Tool,Batch processing system,Batch Systems,Processing Tools
-Screenshot 2025-09-16 165029.png,extension,EXT-001,Browser Extension Pack,Browser extension collection,Browser Tech,Extensions
-Screenshot 2025-09-19 230727.png,extension,EXT-002,Chrome Plugin Suite,Chrome plugin collection,Chrome Systems,Plugins
-Screenshot 2025-09-20 142550.png,extension,EXT-003,Developer Tools Add-on,Developer tools addon,Dev Tools Inc,Development
-Screenshot 2025-09-26 123637.png,extension,EXT-004,Productivity Enhancer,Productivity enhancement tool,Productivity Labs,Productivity
-Screenshot 2025-10-21 182854.png,extension,EXT-005,UI Customizer Plugin,UI customization plugin,UI Custom,Customization
-Screenshot 2025-11-10 162813.png,extension,EXT-006,API Integration Tool,API integration solution,API Labs,Integration
-Screenshot 2025-11-10 164320.png,extension,EXT-007,Security Extension,Security enhancement tool,Security Pro,Security
-Screenshot 2025-11-26 123123.png,extension,EXT-008,Performance Monitor,Performance monitoring tool,Monitor Tech,Monitoring
-Screenshot 2025-12-01 023524.png,extension,EXT-009,Theme Manager Pro,Professional theme manager,Theme Master,Theme Management
-Screenshot 2025-12-04 174958.png,coding,CODE-001,Code Editor Theme Dark,Dark editor theme,Editor Themes,Themes
-Screenshot 2025-12-04 182208.png,coding,CODE-002,Syntax Highlighter Pack,Syntax highlighting tools,Code Studio,Code Tools
-Screenshot 2025-12-04 182212.png,coding,CODE-003,IDE Color Scheme,IDE color configuration,IDE Systems,Configuration
-Screenshot 2025-12-04 182255.png,coding,CODE-004,Developer Icon Set,Developer icon library,Icon Labs,Icons
-Screenshot 2025-12-04 182302.png,coding,CODE-005,VS Code Extension,VS Code extension,Code Systems,Extensions
-Screenshot 2025-12-04 190506.png,coding,CODE-006,Snippet Library Pro,Professional snippet library,Snippet Pro,Snippets
-Screenshot 2025-12-04 190611.png,coding,CODE-007,Auto-Complete Plugin,Auto-completion plugin,Auto Labs,Auto-Complete
-Screenshot 2025-11-24 234113.png,clothing,CLO-001,T-Shirt Design Blue,Blue t-shirt design,Fashion Co,Apparel
-Screenshot 2025-11-24 234116.png,clothing,CLO-002,T-Shirt Design Red,Red t-shirt design,Fashion Co,Apparel
-Screenshot 2025-11-25 225921.png,clothing,CLO-003,Hoodie Mockup Black,Black hoodie mockup,Fashion Co,Apparel
-Screenshot 2025-11-25 225924.png,clothing,CLO-004,Hoodie Mockup Gray,Gray hoodie mockup,Fashion Co,Apparel
-Screenshot 2025-11-25 225927.png,clothing,CLO-005,Jacket Design Winter,Winter jacket design,Fashion Co,Outerwear
-Screenshot 2025-11-25 230318.png,clothing,CLO-006,Pants Template Modern,Modern pants design,Fashion Co,Bottoms
+filename,category,sku,name,description,brand,type,price,revenue
+IMG_1140.jpg,,GEN-001,Generic Image Product,A versatile generic product image,Generic Brand,Standard,191.19,47140.19
+Screenshot 2025-09-29 175019.png,,SCR-001,Screenshot Product A,User interface screenshot example,Tech Corp,UI Design,83.37,48077.41
+Screenshot 2025-10-03 115857.png,,SCR-002,Screenshot Product B,Dashboard interface design,Dashboard Inc,Software,59.03,6010.19
+Screenshot 2025-11-12 163833.png,,SCR-003,Screenshot Product C,Analytics panel screenshot,Data Systems,Analytics,85.28,21641.02
+Screenshot 2025-11-23 232538.png,,SCR-004,Screenshot Product D,Mobile app interface,App Studio,Mobile,178.04,26581.51
+Screenshot 2025-11-26 234553.png,,SCR-005,Screenshot Product E,Web design mockup,Web Masters,Web Design,144.46,19775.56
+Screenshot 2025-11-28 112453.png,,SCR-006,Screenshot Product F,Database interface,Data Tech,Database,197.58,1818.9
+Screenshot 2025-12-01 022745.png,,SCR-007,Screenshot Product G,Network dashboard,Network Pro,Networking,25.1,27739.5
+Screenshot 2025-12-02 180147.png,,SCR-008,Screenshot Product H,Server management panel,Server Solutions,DevOps,180.45,38722.16
+Screenshot 2025-12-02 182341.png,,SCR-009,Screenshot Product I,Cloud storage interface,Cloud Tech,Cloud,105.07,40858.3
+Screenshot 2025-12-10 221541.png,,SCR-010,Screenshot Product J,AI dashboard,AI Systems,Artificial Intelligence,79.95,17352.1
+Screenshot 2025-12-12 124045.png,,SCR-011,Screenshot Product K,Machine learning interface,ML Corp,Machine Learning,256.42,26084.04
+4.png,website,WEB-001,Website Design Template,Professional website layout,Web Agency,Web Templates,118.76,44694.86
+Anchored A.I tools.png,website,WEB-002,AI Tools Landing Page,AI tools marketing page,AI Company,Landing Pages,266.16,32448.3
+Gemini_Generated_Image_amwiymamwiymamwi (1).png,website,WEB-003,AI Generated Hero Image,Creative AI-generated imagery,Creative Studio,Hero Images,97.06,25501.18
+Gemini_Generated_Image_cklaevcklaevckla (2).png,website,WEB-004,Creative Background Pack,Abstract design backgrounds,Design Pack Co,Backgrounds,209.54,8622.75
+Gemini_Generated_Image_cklaevcklaevckla (3).png,website,WEB-005,Abstract Design Bundle,Modern abstract designs,Abstract Designs,Design Assets,239.78,39544.98
+Screenshot 2025-09-19 230622.png,website,WEB-006,Dashboard UI Kit,Complete dashboard components,UI Systems,Components,240.93,23550.94
+Screenshot 2025-09-19 233633.png,website,WEB-007,Mobile App Interface,Responsive mobile design,Mobile First,Mobile Design,136.42,46142.71
+Screenshot 2025-09-19 233643.png,website,WEB-008,E-commerce Template,Online store layout,E-Shop,Templates,225.77,30176.17
+Screenshot 2025-11-26 123138.png,website,WEB-009,Portfolio Website Theme,Professional portfolio design,Portfolio Pro,Portfolio,193.58,26723.22
+Screenshot 2025-11-28 124506.png,potplayer,MEDIA-001,Media Player Skin Classic,Classic player design,Media Player Inc,Player Skins,133.32,16495.57
+Screenshot 2025-11-28 124724.png,potplayer,MEDIA-002,Dark Theme Player UI,Dark mode player interface,Theme Studio,UI Themes,164.69,28195.1
+Screenshot 2025-11-28 130738.png,potplayer,MEDIA-003,Minimal Player Interface,Minimalist player design,Minimal Tech,Minimal Design,24.39,22453.09
+Screenshot 2025-11-28 132941.png,potplayer,MEDIA-004,Pro Player Controls,Advanced player controls,Pro Media,Professional,131.03,43373.93
+Screenshot 2025-11-28 134808.png,potplayer,MEDIA-005,Custom Playback Skin,Customizable player skin,Custom Tech,Customization,33.47,7458.05
+Screenshot 2025-11-28 135628.png,potplayer,MEDIA-006,Modern Player Theme,Contemporary player design,Modern Studio,Modern Design,88.27,37979.02
+Screenshot 2025-11-28 135743.png,potplayer,MEDIA-007,Retro Player Design,Vintage player interface,Retro Design,Retro Style,178.91,6660.6
+Screenshot 2025-12-06 022838.png,potplayer,MEDIA-008,Animated UI Pack,Animation-rich interface,Animation Lab,Animations,269.13,10756.52
+Screenshot 2025-12-06 023121.png,potplayer,MEDIA-009,Glassmorphic Player,Glass effect design,Glass Design,Effects,181.89,44583.53
+Screenshot 2025-12-06 023132.png,potplayer,MEDIA-010,Neon Glow Interface,Neon styling design,Neon Studio,Neon Effects,281.18,15976.87
+Screenshot 2025-12-06 023143.png,potplayer,MEDIA-011,Flat Design Player,Flat design interface,Flat Design Inc,Flat Design,203.85,28470.74
+Screenshot 2025-12-06 023708.png,potplayer,MEDIA-012,Gradient Controls Theme,Gradient styling design,Gradient Tech,Gradient Effects,171.84,15829.03
+Screenshot 2025-12-06 023715.png,potplayer,MEDIA-013,Compact Player Skin,Compact player layout,Compact Media,Compact Design,166.97,3551.03
+Screenshot 2025-12-06 023727.png,potplayer,MEDIA-014,Transparent Overlay UI,Transparent elements design,Transparency Lab,Transparency,150.62,37660.0
+Screenshot 2025-12-06 024048.png,potplayer,MEDIA-015,Material Design Player,Material design interface,Material Studio,Material Design,161.42,23074.28
+Screenshot 2025-12-06 024439.png,potplayer,MEDIA-016,Cinematic Mode Skin,Cinematic design interface,Cinema Tech,Cinematic,128.65,49995.61
+Screenshot 2025-12-04 224221.png,list,LIST-001,Task Management UI,Task management interface,Task Systems,Management Tools,175.1,45717.19
+Screenshot 2025-12-04 224250.png,list,LIST-002,Project Board Template,Project board layout,Project Pro,Project Management,283.13,35015.02
+Screenshot 2025-12-04 224301.png,list,LIST-003,Kanban View Design,Kanban board interface,Agile Tech,Agile Tools,202.03,34991.79
+Screenshot 2025-12-04 224319.png,list,LIST-004,Todo List Interface,Todo management interface,Todo Apps,Productivity,271.25,26263.02
+Screenshot 2025-12-04 224333.png,list,LIST-005,Checklist Component,Checklist interface,Checklist Tech,Components,216.3,21235.93
+Screenshot 2025-10-28 193631.png,imagematch,IMG-001,Image Matcher Pro,Professional image matching,Image Tech,Image Processing,33.93,42523.01
+Screenshot 2025-11-20 191255.png,imagematch,IMG-002,Visual Search Engine,Visual search solution,Search Corp,Search Tools,219.5,41783.63
+Screenshot 2025-11-25 163246.png,imagematch,IMG-003,AI Image Comparison,AI-powered comparison,AI Vision,AI Tools,20.62,47920.79
+Screenshot 2025-11-25 165537.png,imagematch,IMG-004,Product Match Tool,Product matching tool,Match Systems,Product Tools,134.4,28297.48
+Screenshot 2025-11-25 165756.png,imagematch,IMG-005,Similarity Finder,Similarity detection tool,Similarity Tech,Detection Tools,113.83,42762.61
+Screenshot 2025-11-25 165934.png,imagematch,IMG-006,Duplicate Detector,Duplicate detection system,Duplicate Tech,Duplicate Detection,147.29,24825.54
+Screenshot 2025-11-26 145612.png,imagematch,IMG-007,Visual Analytics Suite,Analytics suite for visuals,Analytics Pro,Analytics,92.74,19655.65
+Screenshot 2025-12-06 122012.png,imagematch,IMG-008,Image Recognition API,API for image recognition,API Systems,APIs,88.62,7121.61
+Screenshot 2025-12-06 122024.png,imagematch,IMG-009,CLIP Model Integration,CLIP model integration,ML Systems,Machine Learning,207.02,15922.06
+Screenshot 2025-12-06 122217.png,imagematch,IMG-010,Catalog Manager Pro,Professional catalog manager,Catalog Pro,Catalog Tools,97.16,31990.82
+Screenshot 2025-12-06 203213.png,imagematch,IMG-011,Batch Processing Tool,Batch processing system,Batch Systems,Processing Tools,289.23,9130.03
+Screenshot 2025-09-16 165029.png,extension,EXT-001,Browser Extension Pack,Browser extension collection,Browser Tech,Extensions,91.47,12040.49
+Screenshot 2025-09-19 230727.png,extension,EXT-002,Chrome Plugin Suite,Chrome plugin collection,Chrome Systems,Plugins,33.32,36454.99
+Screenshot 2025-09-20 142550.png,extension,EXT-003,Developer Tools Add-on,Developer tools addon,Dev Tools Inc,Development,83.7,34846.52
+Screenshot 2025-09-26 123637.png,extension,EXT-004,Productivity Enhancer,Productivity enhancement tool,Productivity Labs,Productivity,277.63,11148.12
+Screenshot 2025-10-21 182854.png,extension,EXT-005,UI Customizer Plugin,UI customization plugin,UI Custom,Customization,240.77,19421.38
+Screenshot 2025-11-10 162813.png,extension,EXT-006,API Integration Tool,API integration solution,API Labs,Integration,149.25,47967.25
+Screenshot 2025-11-10 164320.png,extension,EXT-007,Security Extension,Security enhancement tool,Security Pro,Security,140.72,42682.93
+Screenshot 2025-11-26 123123.png,extension,EXT-008,Performance Monitor,Performance monitoring tool,Monitor Tech,Monitoring,55.59,42602.82
+Screenshot 2025-12-01 023524.png,extension,EXT-009,Theme Manager Pro,Professional theme manager,Theme Master,Theme Management,80.95,13201.89
+Screenshot 2025-12-04 174958.png,coding,CODE-001,Code Editor Theme Dark,Dark editor theme,Editor Themes,Themes,200.75,49471.32
+Screenshot 2025-12-04 182208.png,coding,CODE-002,Syntax Highlighter Pack,Syntax highlighting tools,Code Studio,Code Tools,208.08,7775.71
+Screenshot 2025-12-04 182212.png,coding,CODE-003,IDE Color Scheme,IDE color configuration,IDE Systems,Configuration,224.02,15826.95
+Screenshot 2025-12-04 182255.png,coding,CODE-004,Developer Icon Set,Developer icon library,Icon Labs,Icons,216.35,3012.18
+Screenshot 2025-12-04 182302.png,coding,CODE-005,VS Code Extension,VS Code extension,Code Systems,Extensions,295.18,42702.38
+Screenshot 2025-12-04 190506.png,coding,CODE-006,Snippet Library Pro,Professional snippet library,Snippet Pro,Snippets,74.72,44135.1
+Screenshot 2025-12-04 190611.png,coding,CODE-007,Auto-Complete Plugin,Auto-completion plugin,Auto Labs,Auto-Complete,297.98,2883.84
+Screenshot 2025-11-24 234113.png,clothing,CLO-001,T-Shirt Design Blue,Blue t-shirt design,Fashion Co,Apparel,286.96,48153.18
+Screenshot 2025-11-24 234116.png,clothing,CLO-002,T-Shirt Design Red,Red t-shirt design,Fashion Co,Apparel,47.91,36501.1
+Screenshot 2025-11-25 225921.png,clothing,CLO-003,Hoodie Mockup Black,Black hoodie mockup,Fashion Co,Apparel,66.17,9484.55
+Screenshot 2025-11-25 225924.png,clothing,CLO-004,Hoodie Mockup Gray,Gray hoodie mockup,Fashion Co,Apparel,268.36,36897.36
+Screenshot 2025-11-25 225927.png,clothing,CLO-005,Jacket Design Winter,Winter jacket design,Fashion Co,Outerwear,92.84,37039.08
+Screenshot 2025-11-25 230318.png,clothing,CLO-006,Pants Template Modern,Modern pants design,Fashion Co,Bottoms,289.35,44836.07

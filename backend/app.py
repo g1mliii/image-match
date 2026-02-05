@@ -1,15 +1,28 @@
 import os
+import sys
+
+if sys.platform == 'win32':
+    os.environ['PYTHONUTF8'] = '1'
+    # Reconfigure stdout/stderr to use UTF-8 with error replacement
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 import shutil
 import re
 import json
 import io
 import logging
+import time
+import threading
+from typing import Optional, List
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
 # Set PyTorch environment variables BEFORE importing torch/CLIP
 # This fixes GPU memory fragmentation issues with AMD ROCm
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
@@ -56,6 +69,10 @@ from validation_utils import (
     validate_cleanup_type, validate_days, validate_categories_list,
     validate_page_params, sanitize_search_query, validate_product_ids
 )
+from path_manager import get_uploads_dir, get_backend_dir
+
+# Get backend directory first (needed for logging setup)
+BACKEND_DIR = get_backend_dir()
 
 # Configure logging with file rotation to prevent unbounded growth
 from logging.handlers import RotatingFileHandler
@@ -64,9 +81,13 @@ import os
 LOGS_DIR = os.path.join(BACKEND_DIR, 'logs')
 os.makedirs(LOGS_DIR, exist_ok=True)
 
-# Create logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# Configure root logger so all child loggers inherit UTF-8 handlers
+# This ensures snapshot_manager, database, and all other modules work correctly
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Clear any existing handlers to avoid duplicates
+root_logger.handlers.clear()
 
 # Create formatter
 log_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -76,16 +97,23 @@ log_file = os.path.join(LOGS_DIR, 'application.log')
 file_handler = RotatingFileHandler(
     log_file,
     maxBytes=10 * 1024 * 1024,  # 10MB
-    backupCount=5  # Keep 5 rotated backups
+    backupCount=5,  # Keep 5 rotated backups
+    encoding='utf-8'  # Use UTF-8 for file as well
 )
 file_handler.setFormatter(log_format)
-logger.addHandler(file_handler)
+root_logger.addHandler(file_handler)
 
-# Console handler for stdout
-console_handler = logging.StreamHandler()
+# Console handler for stdout with UTF-8 encoding
+console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(log_format)
-logger.addHandler(console_handler)
+# Force UTF-8 encoding for console to handle Unicode characters (▶, ✓, etc.)
+if hasattr(console_handler.stream, 'reconfigure'):
+    console_handler.stream.reconfigure(encoding='utf-8', errors='replace')
+root_logger.addHandler(console_handler)
+
+# Create module logger (will inherit root logger's handlers)
+logger = logging.getLogger(__name__)
 
 # Suppress werkzeug HTTP request logs (too verbose)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -109,7 +137,7 @@ warnings.filterwarnings(
 )
 
 # App Lock and Crash Detection
-BACKEND_DIR = os.path.dirname(__file__)
+# (BACKEND_DIR already defined above for logging setup)
 
 # Import debug mode configuration (centralized to avoid circular imports)
 from config import is_debug_mode, DEBUG_MODE
@@ -148,11 +176,16 @@ CORS(app)
 app.config['ENV'] = 'production'
 app.debug = False
 
+# Ensure Flask's logger uses the root logger's UTF-8 handlers (no duplicates)
+app.logger.handlers.clear()
+app.logger.propagate = True  # Propagate to root logger
+app.logger.setLevel(logging.INFO)
+
 # Configuration
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
+app.config['UPLOAD_FOLDER'] = get_uploads_dir()
 # No max content length - handle large files gracefully with proper error handling
 
-# Ensure upload directory exists
+# Ensure upload directory exists (get_uploads_dir() already does this, but keeping for clarity)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize database
@@ -199,43 +232,71 @@ try:
 except Exception as e:
     logger.warning(f"Could not build FAISS indexes: {e}. Similarity search will use brute force.")
 
-# Memory leak fix: Add cleanup handlers for app shutdown
-# DISABLED: This was running after EVERY request, killing performance
-# The CLIP model should stay cached in memory for fast processing
-# @app.teardown_appcontext
-# def cleanup_resources(exception=None):
-#     """
-#     Clean up resources on app context teardown to prevent memory leaks.
-#     
-#     This handler is called when the Flask app context is torn down,
-#     which happens at the end of each request or when the app shuts down.
-#     """
-#     # Only do full cleanup on app shutdown (not on every request)
-#     # We detect shutdown by checking if we're in the main thread
-#     import threading
-#     if threading.current_thread() is threading.main_thread():
-#         return  # Skip cleanup during normal request handling
-#     
-#     try:
-#         # Clear CLIP model cache (350MB+ memory)
-#         from image_processing_clip import clear_clip_model_cache
-#         clear_clip_model_cache()
-#         logger.info("CLIP model cache cleared")
-#     except Exception as e:
-#         logger.warning(f"Failed to clear CLIP model cache: {e}")
-#     
-#     # Force garbage collection
-#     import gc
-#     gc.collect()
-#     
-#     # Clear CUDA/GPU cache if available
-#     try:
-#         import torch
-#         if torch.cuda.is_available():
-#             torch.cuda.empty_cache()
-#             logger.info("CUDA cache cleared")
-#     except:
-#         pass
+
+from collections import OrderedDict
+_csv_cache = OrderedDict()
+_csv_cache_max_size = 10  # Max 10 cached CSVs (~10-100MB depending on size)
+
+def cache_csv_data(cache_key, csv_data):
+    """Add CSV data to cache with LRU eviction"""
+    global _csv_cache
+    # Remove oldest entry if cache is full
+    if len(_csv_cache) >= _csv_cache_max_size:
+        oldest_key, oldest_data = _csv_cache.popitem(last=False)
+        logger.debug(f"CSV cache evicted oldest entry: {oldest_key}")
+    _csv_cache[cache_key] = csv_data
+    _csv_cache.move_to_end(cache_key)  # Mark as recently used
+
+def get_cached_csv(cache_key):
+    """Get CSV from cache and mark as recently used"""
+    global _csv_cache
+    if cache_key in _csv_cache:
+        _csv_cache.move_to_end(cache_key)  # Mark as recently used
+        return _csv_cache[cache_key]
+    return None
+
+def invalidate_csv_cache():
+    """Invalidate CSV cache (call when products are modified or snapshot changes)"""
+    global _csv_cache
+    _csv_cache.clear()
+    logger.debug("CSV cache invalidated")
+
+
+_catalog_categories_cache = {}
+_catalog_categories_cache_ttl = 300  # 5 minutes (longer than main DB since snapshots are static)
+_catalog_categories_cache_lock = threading.Lock()
+
+def get_cached_catalog_categories(catalog_id: str) -> Optional[List[str]]:
+    """Get cached categories for a catalog snapshot"""
+    with _catalog_categories_cache_lock:
+        if catalog_id in _catalog_categories_cache:
+            categories, timestamp = _catalog_categories_cache[catalog_id]
+            if time.time() - timestamp < _catalog_categories_cache_ttl:
+                logger.debug(f"[CATEGORY-CACHE] Hit for {catalog_id}: {len(categories)} categories")
+                return categories
+            else:
+                # Expired
+                del _catalog_categories_cache[catalog_id]
+                logger.debug(f"[CATEGORY-CACHE] Expired for {catalog_id}")
+        return None
+
+def cache_catalog_categories(catalog_id: str, categories: List[str]):
+    """Cache categories for a catalog snapshot"""
+    with _catalog_categories_cache_lock:
+        _catalog_categories_cache[catalog_id] = (categories, time.time())
+        logger.debug(f"[CATEGORY-CACHE] Cached {len(categories)} categories for {catalog_id} (TTL: {_catalog_categories_cache_ttl}s)")
+
+def invalidate_catalog_categories_cache(catalog_id: Optional[str] = None):
+    """Invalidate category cache (call when catalog is modified or on snapshot change)"""
+    global _catalog_categories_cache
+    with _catalog_categories_cache_lock:
+        if catalog_id:
+            _catalog_categories_cache.pop(catalog_id, None)
+            logger.debug(f"[CATEGORY-CACHE] Invalidated {catalog_id}")
+        else:
+            _catalog_categories_cache.clear()
+            logger.debug("[CATEGORY-CACHE] Invalidated all catalogs")
+
 
 
 def cleanup_on_shutdown():
@@ -492,8 +553,18 @@ def catalog_manager():
     return send_from_directory(app.static_folder, 'catalog-manager.html')
 
 @app.route('/mobile')
+@app.route('/m')
+@app.route('/phone')
+@app.route('/upload')
 def mobile_upload():
-    """Serve the Mobile Upload page"""
+    """Serve the Mobile Upload page
+
+    Accessible via multiple easy-to-type URLs:
+    - /mobile (original)
+    - /m (shortest)
+    - /phone (memorable)
+    - /upload (intuitive)
+    """
     return send_from_directory(app.static_folder, 'mobile-upload.html')
 
 @app.route('/api/health', methods=['GET'])
@@ -503,18 +574,7 @@ def health_check():
 
 @app.route('/api/gpu/status', methods=['GET'])
 def get_gpu_status():
-    """
-    Get GPU acceleration status and performance information.
     
-    Returns:
-        JSON with GPU status:
-        - available: bool - Whether GPU is available
-        - device: str - Device type (cuda, rocm, mps, cpu)
-        - gpu_name: str - GPU model name (if available)
-        - throughput: str - Estimated throughput (images/sec)
-        - first_run: bool - Whether CLIP model needs to be downloaded
-        - error: str - Error message if GPU initialization failed
-    """
     try:
         from image_processing_clip import (
             get_device_info,
@@ -603,33 +663,6 @@ def get_local_ip_endpoint():
 
 @app.route('/api/mobile/auth', methods=['POST'])
 def mobile_auth():
-    """Authenticate mobile device and return available catalogs
-
-    Request JSON:
-        {
-            "password": "123456"
-        }
-
-    Response:
-        {
-            "valid": true,
-            "catalogs": [
-                {
-                    "id": "catalog_filename.db",
-                    "name": "Catalog Name",
-                    "product_count": 1523,
-                    "is_loaded": true
-                }
-            ],
-            "modes": ["mode1", "mode3"]
-        }
-
-    Performance optimized:
-    - Only fetches catalog metadata (not all products)
-    - Uses efficient snapshot list query
-    - Limited catalog response to avoid large payloads
-    - Constant-time password comparison (prevents timing attacks)
-    """
     try:
         data = request.get_json() or {}
         password = data.get('password', '').strip()
@@ -660,15 +693,53 @@ def mobile_auth():
 
             # Limit response to first 50 catalogs to prevent memory issues
             catalogs_response = []
+            loaded_catalogs = []
+            from snapshot_manager import get_snapshot_connection
+
             for catalog in all_catalogs[:50]:
-                catalogs_response.append({
-                    'id': catalog.get('file', ''),
+                catalog_file = catalog.get('snapshot_file', '')
+                is_loaded = catalog_file == loaded_file
+
+                # Check catalog compatibility (has metadata_schema table)
+                is_compatible = True
+                try:
+                    catalog_path = os.path.join(BACKEND_DIR, 'catalogs', catalog_file)
+                    if os.path.exists(catalog_path):
+                        with get_snapshot_connection(catalog_path) as conn:
+                            cursor = conn.cursor()
+                            cursor.execute('''
+                                SELECT name FROM sqlite_master
+                                WHERE type='table' AND name='metadata_schema'
+                            ''')
+                            is_compatible = cursor.fetchone() is not None
+                except Exception as e:
+                    logger.debug(f"Could not check compatibility for {catalog_file}: {e}")
+                    is_compatible = False
+
+                catalog_info = {
+                    'id': catalog_file,
                     'name': catalog.get('name', 'Unnamed'),
                     'product_count': catalog.get('product_count', 0),
-                    'is_loaded': catalog.get('file', '') == loaded_file
-                })
+                    'is_loaded': is_loaded,
+                    'is_compatible': is_compatible
+                }
 
-            logger.info(f"Mobile auth successful from {request.remote_addr}, returned {len(catalogs_response)} catalogs")
+                # Add warning suffix for incompatible catalogs
+                if not is_compatible:
+                    catalog_info['name'] += ' ⚠️ (Incompatible - Old Version)'
+
+                catalogs_response.append(catalog_info)
+
+                if is_loaded:
+                    loaded_catalogs.append(catalog.get('name', 'Unnamed'))
+
+            logger.info(f"📱 Mobile auth successful from {request.remote_addr}")
+            logger.info(f"📱 Currently loaded file: '{loaded_file}'")
+            logger.info(f"📱 Returned {len(catalogs_response)} catalogs, {len(loaded_catalogs)} marked as loaded")
+            if loaded_catalogs:
+                logger.info(f"📱 Loaded catalogs: {loaded_catalogs}")
+                # Debug: Show catalog IDs
+                logger.info(f"📱 Catalog IDs: {[c['id'] for c in catalogs_response]}")
 
             return jsonify({
                 'valid': True,
@@ -686,24 +757,6 @@ def mobile_auth():
 
 @app.route('/api/mobile/config', methods=['GET'])
 def mobile_config():
-    """Get mobile configuration (categories + loaded catalog info)
-
-    Requires: X-Mobile-Password header
-    Response:
-        {
-            "authorized": true,
-            "loaded_catalog": {
-                "name": "Catalog Name",
-                "file": "catalog.db",
-                "product_count": 1523
-            }
-        }
-
-    Performance optimized:
-    - Only returns loaded catalog metadata (not all catalogs)
-    - Minimal query (single info lookup)
-    - Constant-time password validation
-    """
     try:
         password = request.headers.get('X-Mobile-Password', '').strip()
 
@@ -740,34 +793,7 @@ def mobile_config():
 
 @app.route('/api/mobile/catalog-schema', methods=['GET'])
 def get_catalog_schema():
-    """Get metadata schema for HISTORICAL section of selected catalog
-
-    Requires: X-Mobile-Password header
-    Query params:
-        catalog_id: snapshot filename (e.g., "catalog_2025.db")
-
-    Response:
-        {
-            "base_fields": [
-                {"column_name": "category", "data_type": "string", "display_name": "Category"}
-            ],
-            "metadata_fields": [
-                {"column_name": "brand", "data_type": "string", "display_name": "Brand"},
-                {"column_name": "model", "data_type": "string", "display_name": "Model"}
-            ],
-            "catalog_id": "catalog_2025.db"
-        }
-
-    Notes:
-    - Returns HISTORICAL section schema only (where is_historical=1)
-    - All fields are OPTIONAL (user can leave blank)
-    - Base fields (category) + dynamic metadata fields combined
-
-    Performance optimized:
-    - Indexes on metadata_schema table (fast lookups)
-    - Returns only field definitions (no product data)
-    - Response size limited to <50KB max
-    """
+    
     try:
         password = request.headers.get('X-Mobile-Password', '').strip()
 
@@ -801,24 +827,39 @@ def get_catalog_schema():
             with get_snapshot_connection(catalog_path) as conn:
                 cursor = conn.cursor()
 
-                # Get dynamic metadata fields from metadata_schema
-                # These apply to HISTORICAL products (is_historical=1)
+                # Check if metadata_schema table exists (old catalogs might not have it)
                 cursor.execute('''
-                    SELECT column_name, data_type, display_name
-                    FROM metadata_schema
-                    WHERE is_active = 1
-                    ORDER BY rowid
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name='metadata_schema'
                 ''')
+                has_metadata_schema = cursor.fetchone() is not None
 
                 metadata_fields = []
-                for row in cursor.fetchall():
-                    metadata_fields.append({
-                        'column_name': row[0],
-                        'data_type': row[1],
-                        'display_name': row[2] or row[0]
-                    })
 
-            logger.debug(f"Mobile catalog-schema: returned {len(metadata_fields)} fields for {catalog_id}")
+                if has_metadata_schema:
+                    # Get dynamic metadata fields from metadata_schema
+                    # These apply to HISTORICAL products (is_historical=1)
+                    cursor.execute('''
+                        SELECT column_name, data_type, display_name
+                        FROM metadata_schema
+                        WHERE is_active = 1
+                        ORDER BY rowid
+                    ''')
+
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        metadata_fields.append({
+                            'column_name': row[0],
+                            'data_type': row[1],
+                            'display_name': row[2] or row[0]
+                        })
+                else:
+                    logger.warning(f"Mobile catalog-schema: ⚠️ Catalog {catalog_id} is missing metadata_schema table (old/incompatible version)")
+
+            if len(metadata_fields) == 0:
+                logger.info(f"Mobile catalog-schema: ⚠️ No metadata fields found for {catalog_id}. Only base fields (category, product_name, sku) will be available.")
+            else:
+                logger.info(f"Mobile catalog-schema: ✓ Returned {len(metadata_fields)} metadata fields for {catalog_id}: {[f['column_name'] for f in metadata_fields]}")
 
             return jsonify({
                 'base_fields': [
@@ -841,25 +882,156 @@ def get_catalog_schema():
         logger.error(f"Mobile catalog-schema error: {e}", exc_info=True)
         return create_error_response('SCHEMA_ERROR', 'Schema request failed', status_code=500)
 
+@app.route('/api/mobile/catalog-categories/clear-cache', methods=['POST'])
+def clear_catalog_categories_cache():
+    
+    try:
+        password = request.headers.get('X-Mobile-Password', '').strip()
+
+        if not password:
+            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
+
+        from config import validate_mobile_password
+        if not validate_mobile_password(password):
+            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+
+        catalog_id = request.args.get('catalog_id', None)
+        invalidate_catalog_categories_cache(catalog_id)
+
+        message = f'Cleared category cache for {catalog_id}' if catalog_id else 'Cleared all category caches'
+        logger.info(f"[CACHE] {message}")
+
+        return jsonify({
+            'status': 'success',
+            'message': message
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error clearing category cache: {e}", exc_info=True)
+        return create_error_response('CACHE_ERROR', 'Failed to clear cache', status_code=500)
+
+
+@app.route('/api/mobile/catalog-categories', methods=['GET'])
+def get_catalog_categories():
+    
+    try:
+        password = request.headers.get('X-Mobile-Password', '').strip()
+
+        if not password:
+            logger.warning(f"Mobile catalog-categories failed: missing password from {request.remote_addr}")
+            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
+
+        from config import validate_mobile_password
+        if not validate_mobile_password(password):
+            logger.warning(f"Mobile catalog-categories failed: invalid password from {request.remote_addr}")
+            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+
+        catalog_id = request.args.get('catalog_id', '').strip()
+        if not catalog_id:
+            logger.warning(f"Mobile catalog-categories: missing catalog_id from {request.remote_addr}")
+            return create_error_response('MISSING_CATALOG', 'catalog_id required', status_code=400)
+
+        # Validate catalog_id is safe (prevent path traversal)
+        if '..' in catalog_id or '/' in catalog_id or '\\' in catalog_id:
+            logger.warning(f"Mobile catalog-categories: suspicious catalog_id from {request.remote_addr}")
+            return create_error_response('INVALID_CATALOG', 'Invalid catalog_id', status_code=400)
+
+        from snapshot_manager import get_snapshot_connection
+        catalog_path = os.path.join(BACKEND_DIR, 'catalogs', catalog_id)
+
+        if not os.path.exists(catalog_path):
+            logger.warning(f"Mobile catalog-categories: catalog not found: {catalog_id}")
+            return create_error_response('CATALOG_NOT_FOUND', 'Catalog not found', status_code=404)
+
+        # PERFORMANCE: Check cache first (avoids DISTINCT query on huge catalogs)
+        cached_categories = get_cached_catalog_categories(catalog_id)
+        if cached_categories is not None:
+            logger.debug(f"Mobile catalog-categories: cache hit for {catalog_id} ({len(cached_categories)} categories)")
+            return jsonify({
+                'categories': cached_categories,
+                'catalog_id': catalog_id,
+                'cached': True
+            }), 200
+
+        try:
+            with get_snapshot_connection(catalog_path) as conn:
+                cursor = conn.cursor()
+
+                # Ensure index exists for performance (idempotent - safe to run multiple times)
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_products_category
+                    ON products(category)
+                ''')
+
+                # Get unique categories from products
+                # OPTIMIZED: Index on category column makes DISTINCT fast even for huge catalogs
+                cursor.execute('''
+                    SELECT DISTINCT category
+                    FROM products
+                    WHERE category IS NOT NULL AND category != ''
+                    ORDER BY category
+                ''')
+
+                categories = [row[0] for row in cursor.fetchall()]
+
+            # Cache the result for future requests
+            cache_catalog_categories(catalog_id, categories)
+
+            logger.debug(f"Mobile catalog-categories: returned {len(categories)} categories for {catalog_id}")
+
+            return jsonify({
+                'categories': categories,
+                'catalog_id': catalog_id,
+                'cached': False
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting categories for {catalog_id}: {e}", exc_info=True)
+            return create_error_response('CATEGORIES_ERROR', 'Failed to load categories', status_code=500)
+
+    except Exception as e:
+        logger.error(f"Mobile catalog-categories error: {e}", exc_info=True)
+        return create_error_response('CATEGORIES_ERROR', 'Categories request failed', status_code=500)
+
+@app.route('/api/mobile/log', methods=['POST'])
+def mobile_log():
+    """Accept log messages from mobile frontend for server-side logging
+
+    Request JSON:
+        {
+            "level": "info" | "warning" | "error",
+            "message": "Log message",
+            "data": {} (optional)
+        }
+    """
+    try:
+        password = request.headers.get('X-Mobile-Password', '').strip()
+
+        # Allow logging without auth for debugging
+        data = request.get_json()
+        level = data.get('level', 'info').lower()
+        message = data.get('message', '')
+        extra_data = data.get('data', {})
+
+        log_message = f"📱 [MOBILE] {message}"
+        if extra_data:
+            log_message += f" | Data: {extra_data}"
+
+        if level == 'error':
+            logger.error(log_message)
+        elif level == 'warning':
+            logger.warning(log_message)
+        else:
+            logger.info(log_message)
+
+        return jsonify({'logged': True}), 200
+    except Exception as e:
+        logger.error(f"Mobile log error: {e}")
+        return jsonify({'logged': False}), 500
+
 @app.route('/api/mobile/password', methods=['GET', 'POST'])
 def mobile_password_management():
-    """Get or update mobile password (desktop only, no mobile access)
-
-    GET: Returns current password
-        Response: {"password": "123456"}
-
-    POST: Update password to new value
-        Request JSON: {"new_password": "654321"}
-        Response: {"success": true, "password": "654321"}
-
-    Validation:
-    - Password must be exactly 6 digits
-    - Only numeric values allowed
-
-    Performance optimized:
-    - GET: Returns cached password (no file I/O usually)
-    - POST: Single file write + cache update
-    """
+    
     try:
         from config import get_mobile_password, save_mobile_password
 
@@ -908,27 +1080,7 @@ def mobile_password_management():
 
 @app.route('/api/mobile/upload-and-match', methods=['POST'])
 def mobile_upload_and_match():
-    """Complete mobile workflow: Exact desktop flow (use_existing + replace)
-
-    Orchestrates exact desktop flow:
-    1. Load catalog via load_snapshot_to_main_db()
-    2. Load historical products (skip batch-upload, use_existing mode)
-    3. Clear new section
-    4. Batch upload new product (replace mode)
-    5. Batch match
-    6. Returns all data for frontend to display
-
-    Form data:
-        image: Image file (required)
-        catalog_id: Snapshot filename (required)
-        mode: "mode1" or "mode3" (required)
-        category: Product category (optional)
-        product_name: Product name (optional)
-        sku: Product SKU (optional)
-
-    Headers:
-        X-Mobile-Password: 6-digit PIN (required)
-    """
+    
     try:
         # Validate mobile password
         password = request.headers.get('X-Mobile-Password', '').strip()
@@ -1047,7 +1199,7 @@ def mobile_upload_and_match():
             # Call batch-upload backend functions directly (same as desktop batch-upload)
             try:
                 from database import insert_product, insert_features
-                from image_processing import extract_features_unified
+                from feature_extraction_service import extract_features_unified
 
                 # Handle mode 3 metadata if provided
                 metadata = None
@@ -1102,7 +1254,8 @@ def mobile_upload_and_match():
             logger.info(f"[MOBILE] Step 5: Matching product {product_id} (mode {mode})")
 
             try:
-                from product_matching import batch_find_matches, batch_find_metadata_matches
+                from product_matching import batch_find_matches
+                from hybrid_matching import batch_find_hybrid_matches
                 from database import get_metadata_schema
 
                 matches = []
@@ -1124,22 +1277,24 @@ def mobile_upload_and_match():
                         matches = batch_result['results'][0]['matches']
                     logger.info(f"[MOBILE] Mode 1 visual matching: {len(matches)} results")
                 elif mode == 'mode3':
-                    # Mode 3: Metadata matching (same as desktop REPLACE & PROCESS)
+                    # Mode 3: Hybrid matching (visual + metadata combined)
                     # Uses metadata schema created during CSV upload (part 1)
                     schema = get_metadata_schema()
 
                     if schema:
                         # Build weights from schema (equal weight for all columns)
-                        weights = {col['column_name']: 1.0 for col in schema}
-                        total = sum(weights.values())
-                        weights = {k: v / total for k, v in weights.items()}
+                        metadata_weights = {col['column_name']: 1.0 for col in schema}
+                        total = sum(metadata_weights.values())
+                        metadata_weights = {k: v / total for k, v in metadata_weights.items()}
 
-                        # Call batch matching with weights from existing schema
-                        batch_result = batch_find_metadata_matches(
+                        # Call batch hybrid matching (50% visual, 50% metadata)
+                        batch_result = batch_find_hybrid_matches(
                             product_ids=[product_id],
                             threshold=0,
                             limit=5,
-                            weights=weights,
+                            visual_weight=0.5,
+                            metadata_weight=0.5,
+                            metadata_weights=metadata_weights,
                             store_matches=True,
                             skip_invalid_products=True,
                             match_against_all=False
@@ -1147,7 +1302,7 @@ def mobile_upload_and_match():
                         # Extract matches from batch result format
                         if batch_result['results'] and batch_result['results'][0]['status'] == 'success':
                             matches = batch_result['results'][0]['matches']
-                        logger.info(f"[MOBILE] Mode 3 metadata matching: {len(matches)} results")
+                        logger.info(f"[MOBILE] Mode 3 hybrid matching: {len(matches)} results")
                     else:
                         # No metadata schema - fall back to visual (batch version)
                         logger.info("[MOBILE] No metadata schema found - falling back to visual matching")
@@ -1181,6 +1336,9 @@ def mobile_upload_and_match():
                 })
 
             logger.info(f"[MOBILE] Complete: Product {product_id}, {len(matches_response)} matches")
+
+            # Invalidate CSV cache since catalog was loaded and products modified
+            invalidate_csv_cache()
 
             # Return full response with all data for frontend to update state
             return jsonify({
@@ -1239,8 +1397,11 @@ def check_mobile_results_flag():
     global _mobile_results_flag
 
     try:
+        flag_ready = _mobile_results_flag['ready']
+        if flag_ready:
+            logger.info(f"[MOBILE] Check flag: ready={flag_ready} (will trigger results polling)")
         return jsonify({
-            'ready': _mobile_results_flag['ready'],
+            'ready': flag_ready,
             'timestamp': _mobile_results_flag['timestamp']
         }), 200
     except Exception as e:
@@ -1297,22 +1458,7 @@ def get_product_image(product_id):
 
 @app.route('/api/products/metadata', methods=['POST'])
 def create_metadata_product():
-    """
-    Create a product with metadata only (no image) - Mode 2 support.
     
-    JSON body:
-    - sku: Product SKU (required)
-    - product_name: Product name (required)
-    - category: Product category (optional)
-    - price: Product price (optional)
-    - performance_history: Performance history array (optional)
-    - is_historical: Boolean (default: false)
-    
-    Returns:
-    - 200: Success with product_id
-    - 400: Validation error
-    - 500: Server error
-    """
     try:
         data = request.get_json()
         
@@ -1388,7 +1534,10 @@ def create_metadata_product():
                 logger.warning(f"Failed to add performance history for product {product_id}: {e}")
         
         logger.info(f"Created metadata-only product: {product_id} (SKU: {sku}, Name: {product_name})")
-        
+
+        # Invalidate CSV cache since product was added
+        invalidate_csv_cache()
+
         return jsonify({
             'success': True,
             'product_id': product_id,
@@ -1408,28 +1557,6 @@ def create_metadata_product():
 
 @app.route('/api/products/metadata/batch', methods=['POST'])
 def create_metadata_products_batch():
-    """
-    Create multiple metadata-only products in one batch (Mode 2 CSV import).
-    
-    JSON body:
-    {
-        "products": [
-            {
-                "sku": "SKU001",
-                "product_name": "Product 1",
-                "category": "Electronics",
-                "is_historical": true,
-                "performance_history": [100, 150, 200]
-            },
-            ...
-        ]
-    }
-    
-    Returns:
-    - 200: Success with product_ids
-    - 400: Validation error
-    - 500: Server error
-    """
     try:
         data = request.get_json()
         
@@ -1674,7 +1801,10 @@ def create_metadata_products_batch():
         
         logger.info(f"[BATCH-METADATA] ✓ Complete! {len(product_ids)} products created successfully")
         logger.info(f"[BATCH-METADATA] Summary: {total_perf_inserted} performance records, {total_price_inserted} price records inserted")
-        
+
+        # Invalidate CSV cache since products were added
+        invalidate_csv_cache()
+
         return jsonify({
             'success': True,
             'product_ids': product_ids,
@@ -1723,24 +1853,6 @@ def get_metadata_schema_endpoint():
 
 @app.route('/api/metadata-schema', methods=['POST'])
 def save_metadata_schema_endpoint():
-    """
-    Save metadata schema (called after CSV parsing to register detected columns).
-
-    JSON body:
-    {
-        "columns": [
-            {"column_name": "brand", "data_type": "string", "display_name": "Brand"},
-            {"column_name": "price", "data_type": "numeric", "display_name": "Price"},
-            ...
-        ],
-        "clear_existing": true  // Optional: clear existing schema first
-    }
-
-    Returns:
-    - 200: Schema saved successfully
-    - 400: Validation error
-    - 500: Server error
-    """
     try:
         data = request.get_json()
 
@@ -1843,20 +1955,7 @@ def clear_metadata_schema_endpoint():
 
 @app.route('/api/products/upload', methods=['POST'])
 def upload_product():
-    """
-    Upload a new product with image and optional metadata.
-    
-    Form data:
-    - image: Image file (required) - JPEG, PNG, or WebP
-    - category: Product category (optional, can be NULL)
-    - product_name: Product name (optional)
-    - sku: Product SKU (optional, alphanumeric with hyphens/underscores)
-    
-    Returns:
-    - 200: Success with product_id and feature extraction status
-    - 400: Validation error
-    - 500: Server error
-    """
+
     try:
         # Validate image file is present
         if 'image' not in request.files:
@@ -2132,7 +2231,10 @@ def upload_product():
         
         if category_warning:
             response['warning_category'] = category_warning
-        
+
+        # Invalidate CSV cache since a product was added
+        invalidate_csv_cache()
+
         return jsonify(response), 200
         
     except Exception as e:
@@ -2148,23 +2250,6 @@ def upload_product():
 
 @app.route('/api/products/batch-upload', methods=['POST'])
 def batch_upload_products():
-    """
-    Batch upload multiple products with images and optional metadata.
-    Uses parallel GPU batch processing for CLIP feature extraction.
-
-    Form data (multipart/form-data):
-    - file_paths: JSON array of absolute file paths (MEMORY OPTIMIZATION) - images NOT uploaded
-    - images: Multiple image files (legacy, will be saved to uploads folder) - JPEG, PNG, or WebP
-    - categories: JSON array of categories (optional, same length as images or single value)
-    - product_names: JSON array of product names (optional, same length as images)
-    - skus: JSON array of SKUs (optional, same length as images)
-    - is_historical: Boolean (default: false)
-
-    Returns:
-    - 200: Success with results for each product
-    - 400: Validation error
-    - 500: Server error
-    """
     try:
         logger.info("[BATCH-UPLOAD] Starting batch upload")
 
@@ -2613,6 +2698,9 @@ def batch_upload_products():
         
         logger.info(f"[BATCH-UPLOAD] Returning JSON response: status={response_data['status']}, total={response_data['total']}, successful={response_data['successful']}, failed={response_data['failed']}, skipped={response_data['skipped']}, results_count={len(response_data['results'])}")
 
+        # Invalidate CSV cache since products were added
+        invalidate_csv_cache()
+
         return jsonify(response_data), 200
         
     except Exception as e:
@@ -2627,21 +2715,6 @@ def batch_upload_products():
 
 @app.route('/api/products/match', methods=['POST'])
 def match_products():
-    """
-    Find similar products for a given product.
-    
-    JSON body:
-    - product_id: ID of product to match (required)
-    - threshold: Minimum similarity score 0-100 (optional, default: 0)
-    - limit: Maximum number of matches (optional, default: 10)
-    - match_against_all: Match against all categories (optional, default: false)
-    
-    Returns:
-    - 200: Success with match results
-    - 400: Validation error
-    - 404: Product not found
-    - 500: Server error
-    """
     try:
         # Parse JSON body
         data = request.get_json()
@@ -2975,29 +3048,7 @@ def match_products():
 
 @app.route('/api/products/batch-match', methods=['POST'])
 def batch_match_products():
-    """
-    Batch match multiple products with full parallelization.
-    
-    This endpoint processes multiple products in parallel using:
-    - Mode 1 (Visual): FAISS + GPU + ThreadPoolExecutor
-    - Mode 2 (Metadata): Batch fetching + ThreadPoolExecutor
-    - Mode 3 (Hybrid): Both modes in parallel, then merge
-    
-    Request body:
-    {
-        "product_ids": [1, 2, 3, ...],
-        "threshold": 50,
-        "limit": 10,
-        "visual_weight": 0.5,
-        "metadata_weight": 0.5,
-        "match_against_all": false
-    }
-    
-    Returns:
-    - 200: Success with batch results
-    - 400: Invalid request
-    - 500: Server error
-    """
+
     try:
         data = request.get_json()
         
@@ -3184,14 +3235,7 @@ def batch_match_products():
 
 @app.route('/api/session/cleanup', methods=['POST'])
 def cleanup_session():
-    """
-    Clean up session data (matches) on app close.
-    Keeps catalogs but deletes all match results and clears FAISS indexes.
-    
-    Returns:
-    - 200: Cleanup successful
-    - 500: Server error
-    """
+
     try:
         from database import get_db_connection, invalidate_faiss_index
         
@@ -3245,8 +3289,8 @@ def get_match_results():
                 FROM products p
                 WHERE p.is_historical = 0
                 AND EXISTS (
-                    SELECT 1 FROM product_matches
-                    WHERE product_id = p.id
+                    SELECT 1 FROM matches
+                    WHERE new_product_id = p.id
                 )
                 ORDER BY p.id DESC
             ''')
@@ -3258,10 +3302,11 @@ def get_match_results():
                 product_id = product_row['id']
 
                 # Get stored matches for this product
+                # Only select base columns that exist in all snapshot versions
                 cursor.execute('''
-                    SELECT matched_product_id, similarity_score, match_type, metadata_scores
-                    FROM product_matches
-                    WHERE product_id = ?
+                    SELECT matched_product_id, similarity_score
+                    FROM matches
+                    WHERE new_product_id = ?
                     ORDER BY similarity_score DESC
                     LIMIT 5
                 ''', (product_id,))
@@ -3284,14 +3329,19 @@ def get_match_results():
                     for match in matches:
                         matched_product = get_product_by_id(match['matched_product_id'])
                         if matched_product:
-                            match_list.append({
+                            # Build match data matching batch-match format
+                            # Note: matched_product is a sqlite3.Row, use bracket notation
+                            match_data = {
                                 'product_id': match['matched_product_id'],
-                                'name': matched_product.get('product_name') or 'Unknown',
-                                'category': matched_product.get('category'),
-                                'sku': matched_product.get('sku'),
-                                'score': match['similarity_score'],
-                                'match_type': match['match_type']
-                            })
+                                'product_name': matched_product['product_name'] or 'Unknown',
+                                'name': matched_product['product_name'] or 'Unknown',
+                                'category': matched_product['category'],
+                                'sku': matched_product['sku'],
+                                'similarity_score': match['similarity_score'],  # Frontend expects this field
+                                'image_path': matched_product['image_path']
+                            }
+
+                            match_list.append(match_data)
 
                     if match_list:
                         results.append({
@@ -3320,19 +3370,7 @@ def get_match_results():
 
 @app.route('/api/products/search', methods=['GET'])
 def search_products():
-    """
-    Fast search for products by name, SKU, or category.
-    Uses database indexes for optimal performance.
-    
-    Query parameters:
-    - q: Search query (required)
-    - limit: Maximum results (default: 100, max: 1000)
-    
-    Returns:
-    - 200: List of matching products
-    - 400: Missing search query
-    - 500: Server error
-    """
+   
     try:
         query = request.args.get('q', '').strip()
         limit = request.args.get('limit', 100, type=int)
@@ -3371,14 +3409,6 @@ def search_products():
 
 @app.route('/api/products/<int:product_id>', methods=['GET'])
 def get_product(product_id):
-    """
-    Get product details by ID.
-    
-    Returns:
-    - 200: Success with product details
-    - 404: Product not found
-    - 500: Server error
-    """
     try:
         # Get product from database
         try:
@@ -3466,6 +3496,19 @@ def get_product(product_id):
 # Error handlers for common HTTP errors
 @app.errorhandler(404)
 def not_found(error):
+    # Silently ignore browser icon requests (common browser behavior, not actual errors)
+    ignored_paths = [
+        '/favicon.ico',
+        '/apple-touch-icon.png',
+        '/apple-touch-icon-precomposed.png',
+        '/apple-touch-icon-120x120.png',
+        '/apple-touch-icon-120x120-precomposed.png'
+    ]
+
+    if request.path in ignored_paths:
+        # Return 204 No Content silently without logging
+        return '', 204
+
     logger.error(f"404 Not Found: {request.method} {request.path}")
     logger.error(f"Full URL: {request.url}")
     logger.error(f"Error details: {error}")
@@ -3698,17 +3741,6 @@ def add_product_price_history(product_id):
 
 @app.route('/api/products/<int:product_id>/performance-history', methods=['GET'])
 def get_product_performance_history(product_id):
-    """
-    Get performance history for a product.
-    
-    Query parameters:
-    - limit: Maximum number of records (optional, default: 12)
-    
-    Returns:
-    - 200: Success with performance history and statistics
-    - 404: Product not found
-    - 500: Server error
-    """
     try:
         # Check if product exists
         product = get_product_by_id(product_id)
@@ -3765,18 +3797,7 @@ def get_product_performance_history(product_id):
 
 @app.route('/api/products/<int:product_id>/performance-history', methods=['POST'])
 def add_product_performance_history(product_id):
-    """
-    Add performance history records for a product.
-    
-    JSON body:
-    - performance: Array of performance records with 'date', 'sales', 'views', 'conversion_rate', 'revenue'
-    
-    Returns:
-    - 200: Success with number of records added
-    - 400: Validation error
-    - 404: Product not found
-    - 500: Server error
-    """
+
     try:
         # Check if product exists
         product = get_product_by_id(product_id)
@@ -4261,23 +4282,6 @@ def get_categories():
 
 @app.route('/api/catalog/products', methods=['GET'])
 def get_catalog_products():
-    """
-    Get paginated products with filtering.
-
-    Query parameters:
-    - page: Page number (default: 1)
-    - limit: Products per page (default: 50)
-    - search: Search query
-    - category: Category filter
-    - type: 'historical' or 'new'
-    - features: 'has_features' or 'no_features'
-    - sort: Sort order
-    - ids: Comma-separated list of product IDs (bypasses pagination)
-
-    Returns:
-    - 200: Success with products list
-    - 500: Server error
-    """
     try:
         # Check if specific IDs are requested (batch fetch mode)
         ids_param = request.args.get('ids', '')
@@ -4378,20 +4382,6 @@ def get_catalog_products():
 
 @app.route('/api/catalog/products/<int:product_id>', methods=['PUT'])
 def update_catalog_product(product_id):
-    """
-    Update a product's metadata with strict validation.
-    
-    JSON body:
-    - category: New category (optional, max 100 chars)
-    - product_name: New name (optional, max 200 chars)
-    - sku: New SKU (optional, max 50 chars, alphanumeric with hyphens/underscores)
-    
-    Returns:
-    - 200: Success
-    - 400: Validation error
-    - 404: Product not found
-    - 500: Server error
-    """
     try:
         product = get_product_by_id(product_id)
         if not product:
@@ -4430,7 +4420,10 @@ def update_catalog_product(product_id):
             product_name=product_name,
             sku=sku
         )
-        
+
+        # Invalidate CSV cache since product was updated
+        invalidate_csv_cache()
+
         return jsonify({
             'status': 'success',
             'message': 'Product updated successfully'
@@ -4495,7 +4488,10 @@ def delete_catalog_product(product_id):
                     logger.warning(f"Failed to delete image file: {e}")
             else:
                 logger.debug(f"Skipped deletion of external image file (not in uploads folder): {image_path}")
-        
+
+        # Invalidate CSV cache since product was deleted
+        invalidate_csv_cache()
+
         return jsonify({
             'status': 'success',
             'message': 'Product deleted successfully'
@@ -4618,7 +4614,10 @@ def bulk_delete_catalog_products():
             logger.debug(f"Invalidated all FAISS indexes after bulk delete")
         except Exception as e:
             logger.warning(f"Failed to invalidate FAISS indexes: {e}")
-        
+
+        # Invalidate CSV cache since products were deleted
+        invalidate_csv_cache()
+
         return jsonify({
             'status': 'success',
             'deleted_count': deleted_count,
@@ -4693,7 +4692,10 @@ def bulk_update_catalog_products():
             product_name=product_name,
             sku=sku
         )
-        
+
+        # Invalidate CSV cache since products were updated
+        invalidate_csv_cache()
+
         return jsonify({
             'status': 'success',
             'updated_count': updated_count,
@@ -5092,6 +5094,9 @@ def clear_working_catalog():
 
             conn.commit()
 
+        # Invalidate CSV cache since products were deleted
+        invalidate_csv_cache()
+
         return jsonify({
             'success': True,
             'products_deleted': products_deleted,
@@ -5479,7 +5484,7 @@ def delete_catalog_snapshot(snapshot_name):
         from snapshot_manager import delete_snapshot
         
         result = delete_snapshot(snapshot_name)
-        
+
         if result.get('error'):
             if 'not found' in result['error'].lower():
                 return create_error_response(
@@ -5492,7 +5497,11 @@ def delete_catalog_snapshot(snapshot_name):
                 result['error'],
                 status_code=400
             )
-        
+
+        # Clear category cache for the deleted catalog
+        invalidate_catalog_categories_cache(snapshot_name)
+        logger.info(f"[CACHE] Cleared category cache for deleted catalog: {snapshot_name}")
+
         return jsonify({
             'status': 'success',
             **result
@@ -5892,7 +5901,10 @@ def import_catalog_snapshot():
                 result['error'],
                 status_code=400
             )
-        
+
+        # Invalidate CSV cache since catalog was imported
+        invalidate_csv_cache()
+
         return jsonify({
             'status': 'success',
             **result
@@ -6004,6 +6016,9 @@ def load_snapshot_to_main(snapshot_name):
                 status_code=500
             )
         
+        # Invalidate CSV cache since snapshot was loaded
+        invalidate_csv_cache()
+
         # Rebuild FAISS indexes after loading snapshot
         logger.info("Rebuilding FAISS indexes after snapshot load...")
         try:
@@ -6086,23 +6101,37 @@ def get_catalog_csv_content():
                 status_code=400
             )
 
-        logger.info(f"[CSV-AUTO-LOAD] ▶ Request for {section} CSV auto-load")
-
         is_historical = (section == 'historical')
 
         # Get currently loaded snapshot
         loaded_info = get_loaded_snapshot_info()
-        snapshot_file = None
+        snapshot_file = loaded_info.get('snapshot_file') if loaded_info.get('loaded') else None
+
+        # Check cache first (cache key: snapshot_file + section)
+        cache_key = f"{snapshot_file}:{section}"
+        csv_data = get_cached_csv(cache_key)
+        if csv_data:
+            logger.debug(f"[CSV-AUTO-LOAD] ✓ Serving {section} CSV from cache")
+            logger.debug(f"[CSV-AUTO-LOAD] ✓ LOADED (cached): {section} CSV - {csv_data['filename']} ({csv_data['row_count']} rows)")
+            return jsonify({
+                'has_csv': True,
+                'section': section,
+                'csv_content': csv_data['csv_content'],
+                'filename': csv_data['filename'],
+                'row_count': csv_data['row_count'],
+                'uploaded_at': csv_data.get('uploaded_at'),
+                'cached': True
+            }), 200
+
+        logger.debug(f"[CSV-AUTO-LOAD] ▶ Request for {section} CSV auto-load (not cached)")
 
         if loaded_info.get('loaded'):
             # Snapshot is explicitly loaded
-            snapshot_file = loaded_info.get('snapshot_file')
-            logger.info(f"[CSV-AUTO-LOAD]   Loaded snapshot: {snapshot_file}")
+            logger.debug(f"[CSV-AUTO-LOAD]   Loaded snapshot: {snapshot_file}")
         else:
             # No explicit snapshot loaded - try to use main database directly
             # This handles the case where user selected "use_existing" without explicitly loading a snapshot
-            logger.info(f"[CSV-AUTO-LOAD] No explicit snapshot loaded - checking main database for CSV metadata...")
-            snapshot_file = None  # We'll extract CSV from main DB instead
+            logger.debug(f"[CSV-AUTO-LOAD] No explicit snapshot loaded - checking main database for CSV metadata...")
 
         # Load CSV - either from snapshot or main database
         csv_data = None
@@ -6120,12 +6149,12 @@ def get_catalog_csv_content():
                     status_code=404
                 )
 
-            logger.info(f"[CSV-AUTO-LOAD]   Retrieving {section} CSV from snapshot...")
+            logger.debug(f"[CSV-AUTO-LOAD]   Retrieving {section} CSV from snapshot...")
             csv_data = get_csv_from_snapshot(snapshot_path, is_historical=is_historical)
 
             # Fallback: if snapshot doesn't have CSV (e.g., created before CSV column fix), extract from main DB
             if not csv_data:
-                logger.info(f"[CSV-AUTO-LOAD]   Snapshot has no CSV data (old snapshot?), falling back to main database...")
+                logger.debug(f"[CSV-AUTO-LOAD]   Snapshot has no CSV data (old snapshot?), falling back to main database...")
                 try:
                     csv_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=is_historical)
                     if csv_result:
@@ -6137,14 +6166,14 @@ def get_catalog_csv_content():
                             'uploaded_at': datetime.now().isoformat(),
                             'section': section
                         }
-                        logger.info(f"[CSV-AUTO-LOAD] ✓ Fallback: Extracted from main DB: {csv_data['filename']} ({row_count} rows)")
+                        logger.debug(f"[CSV-AUTO-LOAD] ✓ Fallback: Extracted from main DB: {csv_data['filename']} ({row_count} rows)")
                 except Exception as e:
                     logger.warning(f"[CSV-AUTO-LOAD] Could not extract CSV from main database: {e}")
                     csv_data = None
         else:
             # No snapshot loaded - try to extract CSV from main database
             # This is used when user selected "use_existing" without formally loading a snapshot
-            logger.info(f"[CSV-AUTO-LOAD]   Extracting {section} CSV from main database...")
+            logger.debug(f"[CSV-AUTO-LOAD]   Extracting {section} CSV from main database...")
 
             try:
                 csv_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=is_historical)
@@ -6157,20 +6186,22 @@ def get_catalog_csv_content():
                         'uploaded_at': datetime.now().isoformat(),
                         'section': section
                     }
-                    logger.info(f"[CSV-AUTO-LOAD] ✓ Extracted from main DB: {csv_data['filename']} ({row_count} rows)")
+                    logger.debug(f"[CSV-AUTO-LOAD] ✓ Extracted from main DB: {csv_data['filename']} ({row_count} rows)")
             except Exception as e:
                 logger.warning(f"[CSV-AUTO-LOAD] Could not extract CSV from main database: {e}")
                 csv_data = None
 
         if not csv_data:
-            logger.info(f"[CSV-AUTO-LOAD] ✗ No {section} CSV found in snapshot (normal if not used)")
+            logger.debug(f"[CSV-AUTO-LOAD] ✗ No {section} CSV found in snapshot (normal if not used)")
             return jsonify({
                 'has_csv': False,
                 'section': section,
                 'message': f'No CSV data for {section} section'
             }), 200
 
-        logger.info(f"[CSV-AUTO-LOAD] ✓ LOADED: {section} CSV - {csv_data['filename']} ({csv_data['row_count']} rows)")
+        # Cache the result for future requests (with LRU eviction)
+        cache_csv_data(cache_key, csv_data)
+        logger.debug(f"[CSV-AUTO-LOAD] ✓ LOADED: {section} CSV - {csv_data['filename']} ({csv_data['row_count']} rows)")
         return jsonify({
             'has_csv': True,
             'section': section,

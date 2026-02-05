@@ -7,10 +7,21 @@ Architecture:
 - Child Windows: CSV Builder and Catalog Manager open as separate windows
 - File Staging: Child windows save output to staging/ directory and signal main app
 """
-import webview
-import threading
 import sys
 import os
+
+# Enable UTF-8 mode for Windows console to support Unicode characters (▶, ✓, etc.)
+# This must be set BEFORE any other imports
+if sys.platform == 'win32':
+    os.environ['PYTHONUTF8'] = '1'
+    # Reconfigure stdout/stderr to use UTF-8 with error replacement
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
+import webview
+import threading
 import time
 import platform
 import base64
@@ -24,13 +35,14 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 from backend.app import app
+from path_manager import get_staging_dir, get_downloads_dir
 
 # Global reference to main window
 main_window = None
 child_windows = {}
 
 # Staging directory for inter-window communication
-STAGING_DIR = os.path.join(os.path.dirname(__file__), 'staging')
+STAGING_DIR = get_staging_dir()
 
 
 def ensure_staging_dir():
@@ -76,20 +88,7 @@ class WebViewAPI:
 
     def _get_downloads_folder(self):
         """Get the user's Downloads folder path (cross-platform)"""
-        home = os.path.expanduser("~")
-        system = platform.system()
-
-        if system == 'Windows':
-            downloads = os.path.join(home, 'Downloads')
-        elif system == 'Darwin':  # macOS
-            downloads = os.path.join(home, 'Downloads')
-        else:  # Linux
-            downloads = os.path.join(home, 'Downloads')
-
-        if not os.path.exists(downloads):
-            os.makedirs(downloads)
-
-        return downloads
+        return get_downloads_dir()
 
     def save_file_auto(self, content, filename):
         """

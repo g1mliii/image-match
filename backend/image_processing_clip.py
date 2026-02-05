@@ -77,8 +77,7 @@ except ImportError:
         import cv2
         return cv2.imread(path, flags)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (will inherit UTF-8 configuration from root logger in app.py)
 logger = logging.getLogger(__name__)
 
 # Suppress transformers warnings about slow image processor
@@ -1250,7 +1249,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         return []
     
     logger.info(f"[CLIP-BATCH] ▶ Starting batch CLIP extraction for {len(image_paths)} images")
-    logger.info(f"[CLIP-BATCH] Parameters: batch_size={batch_size}, AMP={use_amp}, auto_adjust={auto_adjust_batch}")
+    logger.debug(f"[CLIP-BATCH] Parameters: batch_size={batch_size}, AMP={use_amp}, auto_adjust={auto_adjust_batch}")
     
     # Get CLIP model
     model, device = get_clip_model(model_name)
@@ -1296,13 +1295,13 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                 # Rule of thumb: ~50MB per image in batch
                 if total_vram >= 12:  # 12GB+ (like RX 9070 XT 16GB)
                     batch_size = min(batch_size, 64)
-                    logger.info(f"Large VRAM detected ({total_vram:.1f}GB), using batch_size={batch_size}")
+                    logger.debug(f"Large VRAM detected ({total_vram:.1f}GB), using batch_size={batch_size}")
                 elif total_vram >= 8:  # 8-12GB
                     batch_size = min(batch_size, 48)
-                    logger.info(f"Medium VRAM detected ({total_vram:.1f}GB), using batch_size={batch_size}")
+                    logger.debug(f"Medium VRAM detected ({total_vram:.1f}GB), using batch_size={batch_size}")
                 elif total_vram >= 4:  # 4-8GB
                     batch_size = min(batch_size, 32)
-                    logger.info(f"Standard VRAM detected ({total_vram:.1f}GB), using batch_size={batch_size}")
+                    logger.debug(f"Standard VRAM detected ({total_vram:.1f}GB), using batch_size={batch_size}")
                 else:  # < 4GB
                     batch_size = min(batch_size, 16)
                     logger.warning(f"Limited VRAM detected ({total_vram:.1f}GB), reducing batch_size={batch_size}")
@@ -1324,14 +1323,14 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     
     # Process in batches
     num_batches = (len(image_paths) + batch_size - 1) // batch_size
-    logger.info(f"[CLIP-BATCH] Processing {len(image_paths)} images in {num_batches} batch(es) of size {batch_size}")
-    
+    logger.debug(f"[CLIP-BATCH] Processing {len(image_paths)} images in {num_batches} batch(es) of size {batch_size}")
+
     for batch_num, i in enumerate(range(0, len(image_paths), batch_size), 1):
         batch_paths = image_paths[i:i + batch_size]
         batch_images = []
         batch_valid_indices = []
-        
-        logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Processing {len(batch_paths)} images...")
+
+        logger.debug(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Processing {len(batch_paths)} images...")
         
         # Load and validate images (optimized)
         for idx, image_path in enumerate(batch_paths):
@@ -1360,12 +1359,12 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                 # Check if device is CUDA (handles both 'cuda' and 'cuda:N' formats)
                 is_cuda = device.startswith('cuda')
                 device_type = 'cuda' if is_cuda else device
-                
-                logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ▶ Sending {len(batch_images)} images to {device} for parallel processing")
-                
+
+                logger.debug(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ▶ Sending {len(batch_images)} images to {device} for parallel processing")
+
                 # Use Automatic Mixed Precision for faster GPU inference
                 if use_amp and (is_cuda or device == 'mps'):
-                    logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Using Automatic Mixed Precision (AMP) for faster inference")
+                    logger.debug(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Using Automatic Mixed Precision (AMP) for faster inference")
                     with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=True):
                         embeddings = model.encode(
                             batch_images,
@@ -1383,9 +1382,10 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                             batch_size=len(batch_images),
                             normalize_embeddings=True
                         )
-                
-                logger.info(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ✓ Extracted {len(embeddings)} embeddings (512-dim each)")
-                
+
+
+                logger.debug(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] ✓ Extracted {len(embeddings)} embeddings (512-dim each)")
+
 
                 # Add successful results (optimized - pre-convert to float32)
                 embeddings = embeddings.astype(np.float32)

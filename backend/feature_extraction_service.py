@@ -11,8 +11,7 @@ import numpy as np
 import logging
 from typing import Dict, Any, Tuple, Optional, List
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (will inherit UTF-8 configuration from root logger in app.py)
 logger = logging.getLogger(__name__)
 
 # Import CLIP (required)

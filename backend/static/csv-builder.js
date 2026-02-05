@@ -406,7 +406,7 @@ function handleDirectCsvUpload(file) {
                 // Update UI
                 const csvInfo = document.getElementById('csvInfo');
                 if (csvInfo) {
-                    csvInfo.innerHTML = `<p style="color: #4CAF50; font-weight: bold;">✅ ${state.products.length} rows loaded from ${file.name}</p>`;
+                    csvInfo.innerHTML = `<p style="color: #4CAF50; font-weight: bold;">[✓] ${state.products.length} rows loaded from ${file.name}</p>`;
                 }
 
                 // Enable next button
@@ -415,7 +415,7 @@ function handleDirectCsvUpload(file) {
 
                 // Show prominent success message
                 console.log('[CSV-BUILDER] Successfully loaded', state.products.length, 'rows');
-                showToast(`✅ Successfully loaded ${state.products.length} rows from CSV!`, 'success', 4000);
+                showToast(`Successfully loaded ${state.products.length} rows from CSV!`, 'success', 4000);
             } else {
                 showToast('No valid data found in CSV', 'error');
             }
@@ -733,7 +733,7 @@ function parseImportedData(content, source) {
             return !knownFields.includes(normalized) && h.trim().length > 0;
         });
         if (dynamicColumns.length > 0) {
-            infoMessages.push(`✅ Dynamic metadata columns found: ${dynamicColumns.slice(0, 3).join(', ')}${dynamicColumns.length > 3 ? ` (+${dynamicColumns.length - 3} more)` : ''}`);
+            infoMessages.push(`Dynamic metadata columns found: ${dynamicColumns.slice(0, 3).join(', ')}${dynamicColumns.length > 3 ? ` (+${dynamicColumns.length - 3} more)` : ''}`);
         }
     } else {
         warnings.push(`ℹ️ No headers detected - using positional mapping (Col 1=filename, Col 2=category, Col 3=sku, Col 4=name, Col 5=price). Ensure your CSV matches this order!`);

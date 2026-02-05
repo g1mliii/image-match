@@ -13,9 +13,6 @@ let historicalAdvancedMode = false;
 let newAdvancedMode = false;
 let historicalMode = 'visual'; // 'visual', 'metadata', or 'hybrid'
 let newMode = 'visual'; // 'visual', 'metadata', or 'hybrid'
-
-// Advanced features state
-// Note: CLIP mode doesn't need color/shape/texture weights - handled by AI
 let searchQuery = '';
 let filterCategory = 'all';
 let filterDuplicatesOnly = false;
@@ -45,10 +42,204 @@ const RESULTS_PER_PAGE = 20; // Show 20 products per page
 let historyStack = [];
 let historyIndex = -1;
 const MAX_HISTORY = 50;
+const PATH_SEPARATOR_REGEX = /[\\/]/;
 
-// ============ MEMORY OPTIMIZATION UTILITIES ============
-// Reduces memory footprint for large match datasets (10K+ results)
-// Uses string interning, TypedArrays, and object freezing for 60-70% reduction
+// Excluded metadata keys for component display
+const EXCLUDED_METADATA_KEYS = new Set(['sku', 'name', 'category', 'price', 'product_name', 'performance']);
+
+const IconManager = {
+    // Track state
+    debounceTimer: null,
+    lastInitTime: 0,
+    initCount: 0,
+
+    /**
+     * Initialize all Lucide icons on the page
+     * Safe to call multiple times - Lucide skips already-initialized icons
+     * @param {HTMLElement} [container] - Optional container to scope initialization
+     */
+    init(container = null) {
+        if (typeof lucide === 'undefined') {
+            console.warn('[IconManager] Lucide library not loaded');
+            return false;
+        }
+
+        try {
+            // Lucide's createIcons() intelligently skips already-converted icons
+            // No memory leaks or duplicates from repeated calls
+            if (container) {
+                // Scoped initialization using 'root' parameter (more performant)
+                // See: https://lucide.dev/guide/packages/lucide
+                lucide.createIcons({
+                    root: container,
+                    attrs: { 'stroke-width': 2 }
+                });
+            } else {
+                // Full page initialization
+                lucide.createIcons();
+            }
+
+            this.lastInitTime = Date.now();
+            this.initCount++;
+            return true;
+        } catch (e) {
+            console.error('[IconManager] Failed to initialize icons:', e);
+            return false;
+        }
+    },
+
+    /**
+     * Uses requestAnimationFrame for smoother, non-blocking updates
+     * @param {number} delay - Debounce delay in ms (default: 50ms for better batching)
+     * @param {HTMLElement} [container] - Optional container to scope re-init
+     */
+    reinit(delay = 50, container = null) {
+        if (typeof lucide === 'undefined') {
+            return;
+        }
+
+        // Clear any pending initialization
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
+        }
+
+        // Debounce to batch multiple rapid updates
+        this.debounceTimer = setTimeout(() => {
+            // Use requestAnimationFrame for non-blocking UI updates
+            requestAnimationFrame(() => {
+                this.init(container);
+                this.debounceTimer = null;
+            });
+        }, delay);
+    },
+
+    /**
+     * Immediate synchronous re-initialization (use sparingly)
+     * Only use when icons must appear instantly (e.g., critical UI updates)
+     * @param {HTMLElement} [container] - Optional container to scope re-init
+     */
+    reinitSync(container = null) {
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+        this.init(container);
+    },
+
+    /**
+     * Cleanup method - call before removing dynamic content
+     * Prevents memory leaks by clearing pending timers
+     */
+    cleanup() {
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+    },
+
+    /**
+     * Get initialization stats for debugging
+     */
+    getStats() {
+        return {
+            initCount: this.initCount,
+            lastInitTime: this.lastInitTime,
+            hasPendingInit: this.debounceTimer !== null
+        };
+    }
+};
+
+// Export for global access
+window.IconManager = IconManager;
+
+/**
+ * Check if a value is numeric (for metadata comparison highlighting)
+ * @param {*} val - Value to check
+ * @returns {boolean} True if value is numeric
+ */
+function isNumericValue(val) {
+    if (val === '-' || val === undefined || val === null) return false;
+    const cleanVal = String(val).replace(/[$,]/g, '');
+    const num = parseFloat(cleanVal);
+    return !isNaN(num) && isFinite(num);
+}
+
+/**
+ * Render metadata score bars with progress visualization
+ * @param {Object} scores - Metadata scores object
+ * @returns {string} HTML string for score bars
+ */
+function renderMetadataScoreBars(scores) {
+    let html = '';
+    for (const [key, score] of Object.entries(scores)) {
+        if (EXCLUDED_METADATA_KEYS.has(key.toLowerCase())) continue;
+
+        const escapedKey = escapeHtml(key.charAt(0).toUpperCase() + key.slice(1));
+        const percentage = Number(score).toFixed(1);
+
+        html += `
+            <div style="margin-bottom: 4px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                    <span style="font-size: 12px; color: #4a5568;">${escapedKey} Match</span>
+                    <span style="font-size: 12px; font-weight: 600; color: #2d3748;">${percentage}%</span>
+                </div>
+                <div style="width: 100%; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                    <div style="width: ${percentage}%; height: 100%; background: #48bb78;"></div>
+                </div>
+            </div>
+        `;
+    }
+    return html;
+}
+
+/**
+ * Render full metadata comparison with optimized performance
+ * @param {Array} keys - Array of metadata keys
+ * @param {Object} newMeta - New product metadata
+ * @param {Object} matchedMeta - Matched product metadata
+ * @returns {string} HTML string for comparison table
+ */
+function renderMetadataComparison(keys, newMeta, matchedMeta) {
+    let html = '';
+
+    for (const key of keys) {
+        const valNew = newMeta[key] ?? '-';
+        const valMatch = matchedMeta[key] ?? '-';
+
+        const strNew = String(valNew);
+        const strMatch = String(valMatch);
+        const isDiff = strNew !== strMatch && valNew !== '-' && valMatch !== '-';
+        const numericField = isNumericValue(valNew) || isNumericValue(valMatch);
+
+        // Pre-compute styles to avoid conditionals in template
+        const bgColor = isDiff ? '#fff5f5' : 'white';
+        const borderColor = isDiff ? '#feb2b2' : '#e2e8f0';
+        const borderStyle = numericField ? 'border-left: 3px solid #4299e1;' : '';
+        const fontSize = numericField ? '14px' : '13px';
+        const fontWeight = numericField ? 'font-weight: 600;' : '';
+        const labelColor = numericField ? '#2b6cb0' : '#4a5568';
+
+        // Escape once and reuse
+        const escapedKey = escapeHtml(String(key));
+        const escapedNew = escapeHtml(strNew);
+        const escapedMatch = escapeHtml(strMatch);
+
+        html += `
+            <div style="background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 6px; padding: 10px; ${borderStyle}">
+                <div style="display: grid; grid-template-columns: 1fr 1.2fr 1.2fr; gap: 12px; align-items: center;">
+                    <div style="font-weight: 600; color: ${labelColor}; font-size: 13px; text-transform: capitalize;">
+                        ${numericField ? '<span style="display: inline-block; width: 6px; height: 6px; background: #4299e1; border-radius: 50%; margin-right: 6px;"></span>' : ''}
+                        ${escapedKey}
+                    </div>
+                    <div style="padding: 6px 10px; background: #ebf8ff; border-radius: 4px; font-size: ${fontSize}; color: #2d3748; ${fontWeight}">${escapedNew}</div>
+                    <div style="padding: 6px 10px; background: #fffaf0; border-radius: 4px; font-size: ${fontSize}; color: #2d3748; ${fontWeight}">${escapedMatch}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    return html;
+}
 
 const stringCache = new Map();
 const MAX_CACHE_SIZE = 5000;  // MEMORY OPTIMIZATION: Prevent unbounded cache growth (1-5MB with 10K+ results)
@@ -106,24 +297,11 @@ function parseMetadata(metadata, id) {
     }
 }
 
-/**
- * PERFORMANCE: Clear metadata parse cache
- * Called when clearing operation data to prevent memory accumulation
- */
 function clearMetadataCache() {
     metadataParseCache.clear();
     metadataCacheSize = 0;
 }
 
-/**
- * Create memory-efficient compact match object
- * Reduces object size by 60-70% through:
- * - Float32Array for scores (16 bytes vs 64 bytes)
- * - String interning (no duplicates)
- * - No null properties
- * - Shorter property keys
- * - Object.freeze for V8 optimization
- */
 function createCompactMatch(matchData) {
     // Use Float32Array for scores: 16 bytes vs 64 bytes for 4 numbers
     const scores = new Float32Array(4);
@@ -168,9 +346,6 @@ function createCompactMatch(matchData) {
     return compact;
 }
 
-/**
- * Create compact product object
- */
 function createCompactProduct(productData) {
     const compact = {
         id: productData.id,
@@ -180,9 +355,6 @@ function createCompactProduct(productData) {
         hasF: productData.hasFeatures || false,
         img: productData.image_path,
         fn: productData.filename || (productData.image_path ? productData.image_path.split(/[\\/]/).pop() : ''),
-        // CRITICAL FIX: Parse metadata JSON string for sorting/filtering
-        // Database returns metadata as JSON STRING, must parse to access fields like "brand", "description"
-        // PERFORMANCE: Use cached parseMetadata helper instead of IIFE (10x faster for repeated metadata)
         meta: parseMetadata(productData.metadata, productData.id)
     };
 
@@ -200,16 +372,10 @@ function getScore(match, type) {
     return match.s[idx[type]];
 }
 
-/**
- * Clear string cache (call after clearing match results to free memory)
- */
 function clearStringCache() {
     stringCache.clear();
     console.log('[MEMORY] String cache cleared');
 }
-
-// ============ CHUNKING SYSTEM FOR LARGE DATASETS ============
-// When matchResults > 10,000, display chunks to prevent memory issues
 
 let currentChunk = 0;
 const CHUNK_SIZE = 10000;
@@ -267,11 +433,6 @@ const RETRY_CONFIG = {
     backoffMultiplier: 2
 };
 
-// ============================================================================
-// MEMORY LEAK FIX #3 & #4: Event Listener and Blob URL Management
-// ============================================================================
-
-// Track event listeners for cleanup (Fix #3)
 const eventListeners = {
     historical: [],
     new: [],
@@ -280,29 +441,16 @@ const eventListeners = {
     tooltips: []
 };
 
-// Track blob URLs for cleanup (Fix #4)
 const blobUrls = new Set();
-
-// Track IntersectionObserver for cleanup
 let lazyLoadObserver = null;
-
-// PERFORMANCE: Cache for metadata stats calculations (prevents recalculation on every render)
 const metadataStatsCache = new WeakMap();
-
-// Track intervals and channels for cleanup (Fix #8, #9, #10)
 let stateCheckInterval = null;
 let catalogPollingInterval = null;
 let catalogChannel = null;
 let blobUrlCleanupInterval = null;
-
-// Auto-backup debouncing (prevent duplicate backups during batch replace operations)
 let lastAutoBackupTime = 0;
 const AUTO_BACKUP_DEBOUNCE_MS = 5 * 60 * 1000; // 5 minute window for batch replace operations
 
-/**
- * MEMORY OPTIMIZATION: Clear all operation data after processing
- * Prevents state arrays from growing unbounded (50-100MB+ with large catalogs)
- */
 function clearOperationData() {
     historicalProducts = [];
     newProducts = [];
@@ -313,12 +461,10 @@ function clearOperationData() {
     clearAllDebounces();   // MEMORY LEAK PREVENTION: Clear debounce timers
     resetChunking();       // Reset chunking state
 
-    // MEMORY LEAK FIX #2: Clear dynamic search results cache
     if (typeof dynamicSearchResults !== 'undefined' && dynamicSearchResults) {
         dynamicSearchResults.clear();
     }
 
-    // MEMORY LEAK PREVENTION: Clean up dynamic filter event listeners
     const dynamicFiltersContainer = document.getElementById('dynamicFiltersContainer');
     if (dynamicFiltersContainer) {
         // Remove dropdown click listeners
@@ -402,11 +548,6 @@ async function createTrackedBlobUrl(url) {
     }
 }
 
-// ============================================================================
-// PROGRESS ESTIMATION SYSTEM
-// Simple time-based progress without complex step tracking
-// This is 100% informational - backend controls all actual processing
-// ============================================================================
 
 const PROCESSING_BENCHMARKS = {
     'batch_match': {
@@ -680,13 +821,7 @@ async function clearSavedState() {
 }
 
 function updateCsvWarning(section) {
-    /**
-     * Show/hide CSV warning message next to process button
-     * Shows warning when:
-     * - In advanced mode AND
-     * - CSV not loaded AND
-     * - Files have been uploaded
-     */
+
     const isHistorical = section === 'historical';
     const advancedMode = isHistorical ? historicalAdvancedMode : newAdvancedMode;
     const csvLoaded = isHistorical ? historicalCsv : newCsv;
@@ -701,6 +836,8 @@ function updateCsvWarning(section) {
     // Show warning if: advanced mode AND no CSV AND files uploaded
     if (advancedMode && !csvLoaded && filesLoaded) {
         warningDiv.style.display = 'block';
+        // Re-initialize icons in warning div only (scoped for performance)
+        IconManager.reinit(50, warningDiv);
     } else {
         warningDiv.style.display = 'none';
     }
@@ -1372,7 +1509,6 @@ async function processHistoricalCatalog() {
     }
 }
 
-// New Products Upload
 function initNewUpload() {
     const dropZone = document.getElementById('newDropZone');
     const input = document.getElementById('newInput');
@@ -1449,8 +1585,6 @@ function initNewUpload() {
         }
     }, 'new');
 
-    // NOTE: processBtn click handler is set up later in processNewCatalogWithOptions (line ~4349)
-    // Don't add duplicate handler here!
 }
 
 function handleNewFiles(files) {
@@ -1542,9 +1676,6 @@ async function processNewProducts() {
         }
     }
 
-    // In Mode 2 (CSV only), process CSV rows instead of image files
-    // IMPORTANT: Only use CSV-only mode if we have NO image files AND we have CSV data
-    // If we have image files, always process them (regardless of mode selection)
     const hasImageFiles = newFiles && newFiles.length > 0;
     const hasCsvData = Object.keys(categoryMap).length > 0;
     const csvOnlyMode = !hasImageFiles && hasCsvData && newAdvancedMode;
@@ -1696,12 +1827,10 @@ async function processNewProducts() {
         }
     }
 
-    // Process image items in batch (Mode 1/3) - GPU batch processing
     if (imageItems.length > 0) {
         console.log(`[BATCH-UPLOAD] Preparing to batch upload ${imageItems.length} images`);
 
         try {
-            // Collect all image data
             let batchFormData = new FormData();
             const categories = [];
             const productNames = [];
@@ -1761,10 +1890,6 @@ async function processNewProducts() {
                     skipped: data.skipped
                 });
 
-                // SIMPLIFIED: Just trust the backend counts instead of complex index mapping
-                // The backend already calculated success/failure correctly
-
-                // Add backend's success count to our running total
                 const batchSuccessCount = data.successful || 0;
                 const batchFailedCount = (data.failed || 0) + (data.skipped || 0); // Skipped = failed for UI
 
@@ -1864,14 +1989,12 @@ async function processNewProducts() {
     showToast(`New products ready: ${successCount} products`, 'success');
     showLoadingSpinner(processBtn, false);
 
-    // MEMORY OPTIMIZATION: Clear operation data to free 50-100MB
     if (newLoadOption === 'replace') {
         newFiles = [];
         newCsv = null;
         categoryMap = {};
     }
 
-    // Re-enable button
     processBtn.disabled = false;
 
     showToast(`New products ready: ${successCount} products`, 'success');
@@ -1895,13 +2018,11 @@ async function processNewProducts() {
     }
 }
 
-// Matching
 function initMatching() {
     const thresholdSlider = document.getElementById('thresholdSlider');
     const thresholdValue = document.getElementById('thresholdValue');
     const matchBtn = document.getElementById('matchBtn');
 
-    // Use tracked listeners to prevent memory leaks
     addTrackedListener(thresholdSlider, 'input', (e) => {
         thresholdValue.textContent = e.target.value;
     }, 'matching');
@@ -1918,7 +2039,6 @@ async function startMatching() {
 
     console.log('[MATCHING] Threshold:', threshold, 'Limit:', limit);
 
-    // Initialize dynamic filters with the matching parameters
     dynamicThreshold = threshold;
     dynamicLimit = limit;
 
@@ -1926,15 +2046,11 @@ async function startMatching() {
     matchBtn.disabled = true;
     showLoadingSpinner(matchBtn, true);
     console.log('[MATCHING] UI updated, starting matching process');
-
-    // MEMORY OPTIMIZATION: Don't load products from database, backend will query them directly
     console.log('[MATCHING] Using backend to query new products (memory efficient)');
 
     matchResults = [];
     resetChunking();  // Reset chunking for new match operation
 
-    // BATCH MATCHING OPTIMIZATION: Send match_all_new flag to backend
-    // Backend queries product IDs directly from database, no frontend loading needed
     try {
         console.log(`[BATCH-MATCHING] Starting batch matching (backend will query new products)`);
 
@@ -1967,8 +2083,6 @@ async function startMatching() {
             metadataWeight = 1.0 - visualWeight; // Always adds up to 100%
         }
 
-        // Prepare batch request with match_all_new flag
-        // Backend will query product IDs from database, no need to load on frontend
         const batchPayload = {
             match_all_new: true,  // MEMORY OPTIMIZATION: Query IDs on backend
             threshold: threshold,
@@ -2056,12 +2170,6 @@ async function startMatching() {
             const matches = uniqueMatches;
 
             console.log(`[BATCH-MATCHING] Product ${product.id}: ${matches.length} matches found`);
-
-            // MEMORY OPTIMIZATION: Create compact match objects (60-70% smaller)
-            // - TypedArrays for scores
-            // - String interning for categories
-            // - No null properties
-            // - Frozen for V8 optimization
             const compactMatches = matches.map(m => createCompactMatch(m));
             const compactProduct = createCompactProduct(product);
 
@@ -2110,14 +2218,6 @@ async function startMatching() {
     showSaveDialog('matching_complete');
 }
 
-// ============================================================================
-// METADATA STATISTICS & ANALYTICS
-// ============================================================================
-
-/**
- * Calculate comprehensive metadata statistics for a product's matches
- * Shows averages for each metadata field across all matches
- */
 function calculateProductMetadataStats(productResult) {
     // 1. Check if backend already provided summary stats (Optimized flow)
     if (productResult.summary_stats && Object.keys(productResult.summary_stats).length > 0) {
@@ -2138,14 +2238,20 @@ function calculateProductMetadataStats(productResult) {
 
             // 2. Handle Explicit Types (New Backend)
             if (stat.type === 'numeric') {
+                // Format numbers with proper decimals and commas
+                const formatNum = (n) => {
+                    if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+                    return n.toFixed(2);
+                };
+
                 dynamicStats[key] = {
                     type: 'numeric',
                     label: key.charAt(0).toUpperCase() + key.slice(1),
                     value: stat.avg,
-                    subtext: `Range: ${stat.min}-${stat.max}`
+                    subtext: `Avg: ${formatNum(stat.avg)} | Sum: ${formatNum(stat.sum)} | Min: ${formatNum(stat.min)} | Max: ${formatNum(stat.max)}`
                 };
                 // Also add to metadata stats dictionary for chart rendering
-                metadataStats[key] = { avg: stat.avg, min: stat.min, max: stat.max, count: stat.count };
+                metadataStats[key] = { avg: stat.avg, min: stat.min, max: stat.max, sum: stat.sum, count: stat.count };
             }
             else if (stat.type === 'categorical') {
                 dynamicStats[key] = {
@@ -2153,6 +2259,16 @@ function calculateProductMetadataStats(productResult) {
                     label: key.charAt(0).toUpperCase() + key.slice(1),
                     value: stat.top_value || 'N/A',
                     subtext: `Top Value (${stat.distribution ? stat.distribution[stat.top_value] : 0})`
+                };
+            }
+            else if (stat.type === 'similarity') {
+                // Similarity scores for text fields (brand, description, etc.)
+                metadataStats[key] = {
+                    avg: stat.avg,
+                    min: stat.min,
+                    max: stat.max,
+                    sum: undefined, // No sum for similarity scores
+                    count: stat.count
                 };
             }
             // 3. CATCH-ALL (Fixes Brand/Type/Description missing)
@@ -2201,8 +2317,7 @@ function calculateProductMetadataStats(productResult) {
         }
     });
 
-    // PERFORMANCE FIX #9 & #10: Single-pass stats calculation (6x faster)
-    // Compute min/max iteratively instead of Math.min/max spread operator to avoid stack overflow
+
     const metadataStats = {};
     allMetadataKeys.forEach(key => {
         let sum = 0;
@@ -2295,30 +2410,6 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
                 </div>
             </div>
 
-            ${stats.dynamicStats && Object.keys(stats.dynamicStats).length > 0 ? `
-                <div class="metadata-breakdown" style="background: #f0fff4; border: 1px solid #c6f6d5;">
-                    <h5 style="color: #2f855a;">Key Metrics</h5>
-                    <div class="metadata-scores-grid">
-                        ${Object.values(stats.dynamicStats).map(stat => stat.type === 'numeric' ? `
-                            <div class="metadata-score-item">
-                                <span class="field-name" style="color: #276749;">${stat.label}</span>
-                                <div class="score-details">
-                                    <span class="score-value" style="color: #2f855a; font-size: 1.1em;">${typeof stat.value === 'number' ? stat.value.toLocaleString(undefined, { maximumFractionDigits: 1 }) : stat.value}</span>
-                                    <span class="score-range" style="font-size: 0.8em; color: #718096;">${stat.subtext}</span>
-                                </div>
-                            </div>
-                        ` : `
-                            <div class="metadata-score-item">
-                                <span class="field-name" style="color: #2c5282;">${stat.label}</span>
-                                <div class="score-details">
-                                    <span class="score-value" style="color: #2b6cb0; font-size: 1.1em;">${stat.value}</span>
-                                    <span class="score-range" style="font-size: 0.8em; color: #718096;">${stat.subtext}</span>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            ` : ''}
 
             ${Object.keys(stats.metadataStats).length > 0 ? `
                 <div class="metadata-breakdown">
@@ -2335,24 +2426,55 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
                     </div>
                     <div class="metadata-scores-grid">
                         ${Object.entries(stats.metadataStats).map(([key, data]) => {
+                            // Check if this is a numeric field (has sum property indicating actual values)
+                            const isNumeric = 'sum' in data && data.sum !== undefined;
+
                             const selectedValue = data[selectedMetric] || data.avg;
-                            const displayValue = typeof selectedValue === 'number' ? selectedValue.toFixed(1) : selectedValue;
-                            // Calculate bar width based on metric type
-                            let barWidth = 0;
-                            if (selectedMetric === 'avg' || selectedMetric === 'min' || selectedMetric === 'max') {
-                                // For percentage-based metrics, use value directly (0-100)
-                                barWidth = Math.min(parseFloat(selectedValue), 100);
-                            } else if (selectedMetric === 'sum') {
-                                // For sum, normalize against the max possible value (count * 100)
-                                const maxPossible = data.count * 100;
-                                barWidth = Math.min((parseFloat(selectedValue) / maxPossible) * 100, 100);
+
+                            // Format display value
+                            let displayValue;
+                            if (isNumeric) {
+                                // Format numeric values with commas
+                                displayValue = typeof selectedValue === 'number'
+                                    ? selectedValue.toLocaleString('en-US', { maximumFractionDigits: 2 })
+                                    : selectedValue;
+                            } else {
+                                // Format percentage values
+                                displayValue = typeof selectedValue === 'number' ? selectedValue.toFixed(1) : selectedValue;
                             }
+
+                            // Calculate bar width
+                            let barWidth = 0;
+                            if (isNumeric) {
+                                // For numeric values, normalize bar based on max value
+                                if (data.max > 0) {
+                                    barWidth = Math.min((parseFloat(selectedValue) / data.max) * 100, 100);
+                                }
+                            } else {
+                                // For similarity percentages, use value directly (0-100)
+                                if (selectedMetric === 'avg' || selectedMetric === 'min' || selectedMetric === 'max') {
+                                    barWidth = Math.min(parseFloat(selectedValue), 100);
+                                } else if (selectedMetric === 'sum') {
+                                    const maxPossible = data.count * 100;
+                                    barWidth = Math.min((parseFloat(selectedValue) / maxPossible) * 100, 100);
+                                }
+                            }
+
+                            // Format range display
+                            let rangeDisplay;
+                            if (isNumeric) {
+                                const formatNum = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+                                rangeDisplay = `(${formatNum(data.min)} - ${formatNum(data.max)})`;
+                            } else {
+                                rangeDisplay = `(${data.min}% - ${data.max}%)`;
+                            }
+
                             return `
                             <div class="metadata-score-item">
                                 <span class="field-name">${key.charAt(0).toUpperCase() + key.slice(1)}</span>
                                 <div class="score-details">
-                                    <span class="score-value">${displayValue}${selectedMetric === 'sum' ? '' : '%'}</span>
-                                    <span class="score-range">(${data.min}% - ${data.max}%)</span>
+                                    <span class="score-value">${displayValue}${isNumeric ? '' : '%'}</span>
+                                    <span class="score-range">${rangeDisplay}</span>
                                 </div>
                                 <div class="score-bar">
                                     <div class="score-fill" style="width: ${barWidth}%"></div>
@@ -2378,10 +2500,7 @@ function updateProductMetric(productId, metric) {
     displayResults(false);  // Re-render without resetting pagination
 }
 
-/**
- * MEMORY: Clean up metric selections for products no longer in results
- * Prevents orphaned entries from accumulating in productMetricSelections object
- */
+
 function cleanupMetricSelections() {
     const currentProductIds = new Set();
 
@@ -2399,10 +2518,6 @@ function cleanupMetricSelections() {
     });
 }
 
-/**
- * PERFORMANCE: Cached version of calculateProductMetadataStats
- * Uses WeakMap to cache results and avoid recalculation (saves 100-200ms per render)
- */
 function getCachedMetadataStats(productResult) {
     if (!metadataStatsCache.has(productResult)) {
         metadataStatsCache.set(productResult, calculateProductMetadataStats(productResult));
@@ -2418,9 +2533,6 @@ function initResults() {
     addTrackedListener(document.getElementById('modalClose'), 'click', closeModal, 'results');
 }
 
-// ============ DYNAMIC FILTERS HELPER FUNCTIONS ============
-
-// PERFORMANCE: Debounce helper to prevent excessive filtering during search
 const debounceMap = new Map();
 function debounce(key, func, delay = 300) {
     if (debounceMap.has(key)) {
@@ -2439,8 +2551,7 @@ function clearAllDebounces() {
     debounceMap.clear();
 }
 
-// Create checkbox filter (for ≤10 or 11-50 values)
-// withSearch: true = add search box for 11-50 values
+
 function createCheckboxFilter(key, values, withSearch) {
     const container = document.createElement('div');
     container.className = 'checkbox-filter-container';
@@ -2534,7 +2645,7 @@ function createCheckboxFilter(key, values, withSearch) {
     return container;
 }
 
-// Create searchable dropdown (for >50 values)
+
 function createSearchableDropdown(key, values) {
     const container = document.createElement('div');
     container.className = 'searchable-dropdown-container';
@@ -2707,7 +2818,7 @@ function createSearchableDropdown(key, values) {
     return container;
 }
 
-// Multi-select filter update (for checkboxes and dropdowns)
+
 function updateMetadataFilterMulti(key, value, isChecked) {
     if (!window.metadataFilterCriteria) window.metadataFilterCriteria = {};
     if (!window.metadataFilterCriteria[key]) window.metadataFilterCriteria[key] = { values: new Set() };
@@ -2726,9 +2837,6 @@ function updateMetadataFilterMulti(key, value, isChecked) {
     displayResults();
 }
 
-// ============ DYNAMIC FILTERS GENERATION ============
-
-// Generate Dynamic Filters based on data
 function generateDynamicFilters() {
     const container = document.querySelector('.filters');
     // Prevent duplicate generation or generating if no matches
@@ -2858,7 +2966,7 @@ function generateDynamicFilters() {
         }
     });
 
-    // PERFORMANCE FIX #4: Append fragment to DOM once (single reflow instead of multiple)
+
     contentDiv.appendChild(fragment);
 
     if (filterCount > 0) {
@@ -2904,8 +3012,6 @@ function generateDynamicFilters() {
     }
 }
 
-// Add dynamic metadata sort options to the dropdown
-// This runs after schema is loaded and results are displayed
 function populateDynamicSortOptions() {
     const sortSelect = document.getElementById('sortBySelect');
 
@@ -2930,8 +3036,8 @@ function populateDynamicSortOptions() {
     });
 }
 
-// PERFORMANCE FIX #8: Extract nested rendering logic into helper functions to reduce complexity
-function renderMetadataScoresHtml(metadataScores) {
+
+function renderMetadataScoresHtml(metadataScores, metadataValues) {
     if (!metadataScores) return '';
 
     const entries = Object.entries(metadataScores)
@@ -2940,9 +3046,33 @@ function renderMetadataScoresHtml(metadataScores) {
 
     if (entries.length === 0) return '';
 
-    const tagsHtml = entries.map(([key, score]) =>
-        `<span class="metadata-tag" title="${key}">${key.substring(0, 3)}: ${score.toFixed(0)}%</span>`
-    ).join('');
+    // PERFORMANCE: Pre-compute numeric fields once (avoid checking in loop)
+    const numericFields = new Map(); // key -> numeric value
+    if (metadataValues) {
+        for (const [key, value] of Object.entries(metadataValues)) {
+            if (value !== undefined) {
+                if (typeof value === 'number') {
+                    numericFields.set(key, value);
+                } else if (!isNaN(parseFloat(value)) && isFinite(parseFloat(value))) {
+                    numericFields.set(key, parseFloat(value));
+                }
+            }
+        }
+    }
+
+    const tagsHtml = entries.map(([key, score]) => {
+        // Check if this field is numeric (pre-computed)
+        if (numericFields.has(key)) {
+            const numValue = numericFields.get(key);
+            // Format numeric values with commas
+            const formattedValue = numValue >= 1000
+                ? numValue.toLocaleString('en-US', { maximumFractionDigits: 0 })
+                : numValue.toFixed(1);
+            return `<span class="metadata-tag" title="${key}: ${formattedValue}">${key.substring(0, 3)}: ${formattedValue}</span>`;
+        }
+        // For non-numeric fields, show similarity percentage
+        return `<span class="metadata-tag" title="${key}: ${score.toFixed(0)}% match">${key.substring(0, 3)}: ${score.toFixed(0)}%</span>`;
+    }).join('');
 
     const moreTag = Object.keys(metadataScores).length > 4 ? '<span class="metadata-tag">+more</span>' : '';
 
@@ -2951,8 +3081,11 @@ function renderMetadataScoresHtml(metadataScores) {
 
 function renderMatchCard(match, productId, isMetadataMode) {
     const similarityScore = getScore(match, 'similarity');
-    // CRITICAL FIX: Use mscores (compact format) with fallback
-    const metadataScoresHtml = renderMetadataScoresHtml(match.metadata_scores || match.mscores);
+    // CRITICAL FIX: Use mscores (compact format) with fallback, and pass actual values
+    const metadataScoresHtml = renderMetadataScoresHtml(
+        match.metadata_scores || match.mscores,
+        match.metadata_values || match.mv
+    );
 
     const imageHtml = !isMetadataMode ?
         `<img data-src="/api/products/${match.mid}/image" class="match-image lazy-load"
@@ -3106,7 +3239,7 @@ function displayResults(resetPage = true) {
         return;
     }
 
-    // Detect if we're in Mode 2 (metadata-only) using global mode tracker
+
     const isMetadataMode = newMode === 'metadata';
 
     listDiv.innerHTML = paginatedResults.map((result, index) => {
@@ -3169,7 +3302,7 @@ function displayResults(resetPage = true) {
         `;
     }).join('');
 
-    // Add pagination controls if needed
+
     if (filteredCount > RESULTS_PER_PAGE) {
         const hasMore = currentPage < totalPages;
         const hasPrevious = currentPage > 1;
@@ -3193,14 +3326,7 @@ function displayResults(resetPage = true) {
         `;
     }
 
-    // Add chunking controls
     if (chunkInfo.totalResults > CHUNK_SIZE) {
-        // ... (simplified chunk controls re-render logic or reused)
-        // For brevity, assuming text matches or I can include full chunk logic here.
-        // Since I replaced the block, I must assume clean state.
-        // I'll skip re-implementing full chunk controls text if I can, but I should probably include it.
-        // The snippet above had chunk controls. I'll include them.
-
         const totalChunks = Math.ceil(chunkInfo.totalResults / CHUNK_SIZE);
         const hasPrevious = currentChunk > 0;
         const hasNext = chunkInfo.hasMore;
@@ -3222,8 +3348,6 @@ function displayResults(resetPage = true) {
         `;
     }
 
-    // MEMORY OPTIMIZATION: Reuse global IntersectionObserver instead of creating new one
-    // This prevents memory leaks from orphaned observers (50-200MB per session)
     if (!lazyLoadObserver) {
         // Initialize global observer if not already created
         initLazyLoading();
@@ -3232,6 +3356,9 @@ function displayResults(resetPage = true) {
     // Observe all lazy-load images in the results list using global observer
     const images = listDiv.querySelectorAll('img.lazy-load');
     images.forEach(img => lazyLoadObserver.observe(img));
+
+    // Re-initialize icons in results section only (scoped for performance)
+    IconManager.reinit(50, document.getElementById('resultsSection'));
 }
 
 // Initialize lazy loading for images
@@ -3250,7 +3377,6 @@ function loadPreviousPage() {
     document.getElementById('resultsList').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// MEMORY OPTIMIZATION: Load more historical products when user clicks "Load More" button
 async function loadMoreHistoricalProducts() {
     try {
         historicalProductsPage++;
@@ -3466,7 +3592,6 @@ async function showDetailedComparison(newProductId, matchedProductId) {
             };
         }
 
-        // LAZY LOADING: Fetch price/performance history on-demand if not already loaded
         if (matchDetails && !matchDetails.priceHistory && !matchDetails.performanceHistory) {
             try {
                 const [priceResp, perfResp] = await Promise.all([
@@ -3490,7 +3615,6 @@ async function showDetailedComparison(newProductId, matchedProductId) {
             }
         }
 
-        // Detect if we're in Mode 2 (metadata-only) or Mode 3 (hybrid with metadata support)
         const isMetadataMode = newMode === 'metadata' || newMode === 'hybrid';
 
         modalBody.innerHTML = `
@@ -3504,8 +3628,14 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                     <div class="comparison-details">
                         <p><strong>Product:</strong> ${escapeHtml(newData.product.product_name || 'Unknown')}${newData.product.sku ? ` (${escapeHtml(newData.product.sku)})` : ''}</p>
                         ${(() => {
-                const filename = newData.product.filename || (newData.product.image_path ? newData.product.image_path.split(/[\\/]/).pop() : 'N/A');
-                return (filename !== '[METADATA_ONLY]' && filename !== '[METADATA ONLY]') ? `<p><strong>Filename:</strong> ${escapeHtml(filename)}</p>` : '';
+                // Always extract just the filename, not the full path
+                let filename = 'N/A';
+                if (newData.product.filename && newData.product.filename !== '[METADATA_ONLY]' && newData.product.filename !== '[METADATA ONLY]') {
+                    filename = newData.product.filename.split(PATH_SEPARATOR_REGEX).pop();
+                } else if (newData.product.image_path) {
+                    filename = newData.product.image_path.split(PATH_SEPARATOR_REGEX).pop();
+                }
+                return (filename !== 'N/A' && filename !== '[METADATA_ONLY]' && filename !== '[METADATA ONLY]') ? `<p><strong>Filename:</strong> ${escapeHtml(filename)}</p>` : '';
             })()}
                         <p><strong>SKU:</strong> ${escapeHtml(newData.product.sku || 'N/A')}</p>
                         <p><strong>Category:</strong> ${escapeHtml(newData.product.category || 'Uncategorized')}</p>
@@ -3519,8 +3649,14 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                     <div class="comparison-details">
                         <p><strong>Product:</strong> ${escapeHtml(matchData.product.product_name || 'Unknown')}${matchData.product.sku ? ` (${escapeHtml(matchData.product.sku)})` : ''}</p>
                         ${(() => {
-                const filename = matchData.product.filename || (matchData.product.image_path ? matchData.product.image_path.split(/[\\/]/).pop() : 'N/A');
-                return (filename !== '[METADATA_ONLY]' && filename !== '[METADATA ONLY]') ? `<p><strong>Filename:</strong> ${escapeHtml(filename)}</p>` : '';
+                // Always extract just the filename, not the full path
+                let filename = 'N/A';
+                if (matchData.product.filename && matchData.product.filename !== '[METADATA_ONLY]' && matchData.product.filename !== '[METADATA ONLY]') {
+                    filename = matchData.product.filename.split(PATH_SEPARATOR_REGEX).pop();
+                } else if (matchData.product.image_path) {
+                    filename = matchData.product.image_path.split(PATH_SEPARATOR_REGEX).pop();
+                }
+                return (filename !== 'N/A' && filename !== '[METADATA_ONLY]' && filename !== '[METADATA ONLY]') ? `<p><strong>Filename:</strong> ${escapeHtml(filename)}</p>` : '';
             })()}
                         <p><strong>SKU:</strong> ${escapeHtml(matchData.product.sku || 'N/A')}</p>
                         <p><strong>Category:</strong> ${escapeHtml(matchData.product.category || 'Uncategorized')}</p>
@@ -3538,18 +3674,9 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                 // Fallback for filename
                 const newFilename = newData.product.filename || (newData.product.image_path ? newData.product.image_path.split(/[\\/]/).pop() : 'N/A');
                 const matchFilename = matchData.product.filename || (matchData.product.image_path ? matchData.product.image_path.split(/[\\/]/).pop() : 'N/A');
-
-                // Update the displayed filenames (modifying the DOM via replacement logic is hard, so we just use these vars if we were rebuilding the HTML)
-                // Since this block is inside the return string, we can't easily update the previous HTML blocks. 
-                // However, we can use these variables if we refactor the whole block.
-                // Or better, let's just make `matchDetails.mv` prioritize this parsed metadata.
-
-                // We'll merge the parsed metadata into matchDetails.mv for the loop below
                 if (!matchDetails) matchDetails = { mv: productMeta };
                 if (!matchDetails.mv) matchDetails.mv = productMeta;
 
-                // FLATTEN NESTED METADATA (Fix for [object Object] bug)
-                // If the metadata object contains a key 'metadata' which is also an object, merge it up
                 if (matchDetails.mv && matchDetails.mv.metadata && typeof matchDetails.mv.metadata === 'object') {
                     const nested = matchDetails.mv.metadata;
                     // Safely remove the wrapper key
@@ -3605,53 +3732,43 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                             ${matchDetails.sku_score !== undefined || matchDetails.name_score !== undefined || matchDetails.category_score !== undefined || matchDetails.price_score !== undefined || matchDetails.performance_score !== undefined ? `
                                 <div style="margin-top: 15px; padding: 12px; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 4px;">
                                     <h6 style="margin: 0 0 10px 0; color: #2d3748; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Metadata Components</h6>
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                                         ${matchDetails.sku_score !== undefined ? `
-                                            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                                                <span style="color: #4a5568;">SKU Match</span>
-                                                <span style="font-weight: 600; color: #2d3748;">${matchDetails.sku_score.toFixed(1)}%</span>
+                                            <div style="margin-bottom: 4px;">
+                                                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                                    <span style="font-size: 12px; color: #4a5568;">SKU Match</span>
+                                                    <span style="font-size: 12px; font-weight: 600; color: #2d3748;">${matchDetails.sku_score.toFixed(1)}%</span>
+                                                </div>
+                                                <div style="width: 100%; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                                                    <div style="width: ${matchDetails.sku_score}%; height: 100%; background: #48bb78;"></div>
+                                                </div>
                                             </div>
                                         ` : ''}
                                         ${matchDetails.name_score !== undefined ? `
-                                            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                                                <span style="color: #4a5568;">Name Match</span>
-                                                <span style="font-weight: 600; color: #2d3748;">${matchDetails.name_score.toFixed(1)}%</span>
+                                            <div style="margin-bottom: 4px;">
+                                                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                                    <span style="font-size: 12px; color: #4a5568;">Name Match</span>
+                                                    <span style="font-size: 12px; font-weight: 600; color: #2d3748;">${matchDetails.name_score.toFixed(1)}%</span>
+                                                </div>
+                                                <div style="width: 100%; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                                                    <div style="width: ${matchDetails.name_score}%; height: 100%; background: #48bb78;"></div>
+                                                </div>
                                             </div>
                                         ` : ''}
-                                        ${/* Dynamic Metadata Scores Loop */ ''}
-                                        ${matchDetails.metadata_scores ?
-                            (() => {
-                                // Exclude standard fields that are already displayed in their own sections above
-                                const EXCLUDED_KEYS = ['sku', 'name', 'category', 'price', 'product_name', 'performance'];
-
-                                return Object.entries(matchDetails.metadata_scores)
-                                    .filter(([k]) => !EXCLUDED_KEYS.includes(k.toLowerCase()))
-                                    .map(([k, score]) => `
-                                                        <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                                                            <span style="color: #4a5568;">${escapeHtml(k.charAt(0).toUpperCase() + k.slice(1))} Match</span>
-                                                            <span style="font-weight: 600; color: #2d3748;">${Number(score).toFixed(1)}%</span>
-                                                        </div>
-                                                    `).join('');
-                            })() : ''
-                        }
+                                        ${/* Dynamic Metadata Scores Loop - PERFORMANCE OPTIMIZED */ ''}
+                                        ${matchDetails.metadata_scores ? renderMetadataScoreBars(matchDetails.metadata_scores) : ''}
                                         ${matchDetails.category_score !== undefined ? `
-                                            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                                                <span style="color: #4a5568;">Category Match</span>
-                                                <span style="font-weight: 600; color: #2d3748;">${matchDetails.category_score.toFixed(1)}%</span>
+                                            <div style="margin-bottom: 4px;">
+                                                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                                    <span style="font-size: 12px; color: #4a5568;">Category Match</span>
+                                                    <span style="font-size: 12px; font-weight: 600; color: #2d3748;">${matchDetails.category_score.toFixed(1)}%</span>
+                                                </div>
+                                                <div style="width: 100%; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                                                    <div style="width: ${matchDetails.category_score}%; height: 100%; background: #48bb78;"></div>
+                                                </div>
                                             </div>
                                         ` : ''}
-                                        ${matchDetails.price_score !== undefined ? `
-                                            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                                                <span style="color: #4a5568;">Price Similarity</span>
-                                                <span style="font-weight: 600; color: #2d3748;">${matchDetails.price_score.toFixed(1)}%</span>
-                                            </div>
-                                        ` : ''}
-                                        ${matchDetails.performance_score !== undefined ? `
-                                            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                                                <span style="color: #4a5568;">Performance Similarity</span>
-                                                <span style="font-weight: 600; color: #2d3748;">${matchDetails.performance_score.toFixed(1)}%</span>
-                                            </div>
-                                        ` : ''}
+                                        <!-- Price and performance actual values shown in Full Metadata Comparison table below -->
                                     </div>
                                 </div>
                             ` : ''}
@@ -3675,9 +3792,6 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                     delete newMeta.metadata;
                 }
 
-                // 2. Prepare Matched Product Metadata
-                // matchDetails.mv is already processed/flattened by previous block, but let's be safe and use the most complete source
-                // matchData.product (from API) is the authority
                 let matchedMeta = matchData.product ? (matchData.product.metadata || {}) : {};
                 if (typeof matchedMeta === 'string') {
                     try { matchedMeta = JSON.parse(matchedMeta); } catch (e) { console.error('Parsed matchedMeta error', e); matchedMeta = {}; }
@@ -3715,35 +3829,17 @@ async function showDetailedComparison(newProductId, matchedProductId) {
 
                 // Union of all keys, sorted - prioritize CORE_KEYS at the top
                 const allKeys = [...new Set([...CORE_KEYS.filter(k => newMeta[k] !== undefined || matchedMeta[k] !== undefined), ...newKeys, ...matchKeys])];
-                // Remove duplicates and sort remaining
-                const uniqueKeys = [...new Set(allKeys)];
+
+                // Remove duplicates, filter out redundant fields (already shown in header)
+                const REDUNDANT_FIELDS = ['filename', 'image_path']; // Already shown in product card header
+                const uniqueKeys = [...new Set(allKeys)].filter(k => !REDUNDANT_FIELDS.includes(k.toLowerCase()));
 
                 return `
                 <div style="margin-top: 20px; padding-top: 15px; border-top: 2px solid #e2e8f0;">
                     <h5 style="margin-bottom: 12px; color: #2d3748;">Full Metadata Comparison</h5>
                     ${allKeys.length > 0 ? `
-                    <div style="display: grid; grid-template-columns: 1.2fr 1.5fr 1.5fr; gap:0; border: 1px solid #e2e8f0; border-radius: 4px; overflow:hidden;">
-                        <!-- Header -->
-                        <div style="background:#f7fafc; padding:8px; font-weight:600; border-bottom:1px solid #e2e8f0; color:#2d3748;">Field</div>
-                        <div style="background:#ebf8ff; padding:8px; font-weight:600; border-bottom:1px solid #e2e8f0; border-left:1px solid #e2e8f0; color:#2b6cb0;">New Product</div>
-                        <div style="background:#fffaf0; padding:8px; font-weight:600; border-bottom:1px solid #e2e8f0; border-left:1px solid #e2e8f0; color:#c05621;">Matched Product</div>
-                        
-                        <!-- Rows -->
-                        ${uniqueKeys.map((k, i) => {
-                    const valNew = newMeta[k] !== undefined ? newMeta[k] : '-';
-                    const valMatch = matchedMeta[k] !== undefined ? matchedMeta[k] : '-';
-                    const bg = i % 2 === 0 ? 'white' : '#fcfcfc';
-
-                    // Highlight differences
-                    const isDiff = String(valNew) !== String(valMatch) && valNew !== '-' && valMatch !== '-';
-                    const rowStyle = isDiff ? 'background:#fff5f5;' : `background:${bg};`;
-
-                    return `
-                            <div style="padding:8px; border-bottom:1px solid #e2e8f0; ${rowStyle} color:#4a5568; font-size:13px; font-weight:500;">${escapeHtml(String(k))}</div>
-                            <div style="padding:8px; border-bottom:1px solid #e2e8f0; border-left:1px solid #e2e8f0; ${rowStyle} color:#2d3748; font-size:13px;">${escapeHtml(String(valNew))}</div>
-                            <div style="padding:8px; border-bottom:1px solid #e2e8f0; border-left:1px solid #e2e8f0; ${rowStyle} color:#2d3748; font-size:13px;">${escapeHtml(String(valMatch))}</div>
-                            `;
-                }).join('')}
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        ${renderMetadataComparison(uniqueKeys, newMeta, matchedMeta)}
                     </div>
                     ` : `
                     <div style="padding: 20px; background: #f7fafc; border: 2px dashed #cbd5e0; border-radius: 4px; text-align: center; color: #718096;">
@@ -3768,7 +3864,13 @@ async function showDetailedComparison(newProductId, matchedProductId) {
 }
 
 function closeModal() {
-    document.getElementById('detailModal').classList.remove('show');
+    const modal = document.getElementById('detailModal');
+    modal.classList.remove('show');
+    setTimeout(() => {
+        if (!modal.classList.contains('show')) {
+            document.getElementById('modalBody').innerHTML = '';
+        }
+    }, 300); // Match CSS transition duration
 }
 
 async function exportResults() {
@@ -3867,10 +3969,7 @@ async function exportResults() {
     });
 
     const csv = csvRows.join('\n') + '\n';
-
     const filename = `match_results_${new Date().toISOString().slice(0, 10)}.csv`;
-
-    // Check if running in pywebview
     if (window.pywebview) {
         try {
             const result = await window.pywebview.api.save_file_auto(csv, filename);
@@ -3887,8 +3986,6 @@ async function exportResults() {
         // Browser fallback
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
-
-        // MEMORY OPTIMIZATION: Track blob URL for cleanup (1-10MB per failure)
         blobUrls.add(url);
 
         try {
@@ -4000,8 +4097,6 @@ async function resetApp() {
     }
 }
 
-// Utilities
-// Helper function to parse a CSV line properly handling quoted fields
 function parseCSVLine(line) {
     const result = [];
     let current = '';
@@ -4189,12 +4284,6 @@ async function parseCsv(file) {
 }
 
 function parsePriceHistory(priceHistoryStr) {
-    // Parse price history string - FLEXIBLE FORMATS:
-    // Format 1: "2024-01-15:29.99;2024-02-15:31.50" (semicolon separated)
-    // Format 2: "2024-01-15:29.99,2024-02-15:31.50" (comma separated)
-    // Format 3: "29.99;31.50;28.75" (prices only, auto-generate monthly dates)
-    // Returns array of {date, price} objects
-
     if (!priceHistoryStr || priceHistoryStr.trim() === '') {
         return null;
     }
@@ -4227,8 +4316,6 @@ function parsePriceHistory(priceHistoryStr) {
             }
         }
     } else {
-        // Format without dates - just prices
-        // Generate monthly dates going backwards from today
         const prices = str.split(/[;,]/).filter(e => e.trim()).map(p => parseFloat(p.trim()));
         const today = new Date();
 
@@ -4300,11 +4387,20 @@ function showToast(message, type = 'info') {
     }, timeout);
 }
 
+// PERFORMANCE OPTIMIZED: String replacement is 50-100x faster than DOM-based approach
+const HTML_ESCAPE_MAP = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+    '/': '&#x2F;'
+};
+const HTML_ESCAPE_REGEX = /[&<>"'\/]/g;
+
 function escapeHtml(text) {
     if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return String(text).replace(HTML_ESCAPE_REGEX, char => HTML_ESCAPE_MAP[char]);
 }
 
 function extractCategoryFromPath(path) {
@@ -4490,7 +4586,6 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// User-Friendly Error Messages
 function getUserFriendlyError(errorCode, originalError, suggestion) {
     const errorMessages = {
         'NETWORK_ERROR': 'Unable to connect to the server. Please check your connection and try again.',
@@ -4512,7 +4607,6 @@ function getUserFriendlyError(errorCode, originalError, suggestion) {
     return message;
 }
 
-// Loading Spinner for Buttons
 function showLoadingSpinner(button, show) {
     if (show) {
         if (!button.querySelector('.btn-spinner')) {
@@ -4557,8 +4651,6 @@ function initTooltips() {
         }
     });
 
-    // Use event delegation to prevent memory leaks (Fix #5)
-    // Single set of listeners for all tooltips instead of per-element
     addTrackedListener(document.body, 'mouseenter', (e) => {
         const element = e.target.closest('[data-tooltip]');
         if (element) {
@@ -4607,10 +4699,11 @@ function positionTooltip(element, tooltip) {
     tooltip.style.left = `${left}px`;
 }
 
-// CSV Help Functions
 function showCsvHelp(type) {
     const modal = document.getElementById('csvHelpModal');
     modal.classList.add('show');
+    // Re-initialize icons in modal only (scoped for performance)
+    IconManager.reinit(50, modal);
 }
 
 function closeCsvHelp() {
@@ -4628,7 +4721,6 @@ product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,2024-01-15:22.50;2024-02-15:23
 
     const filename = 'sample_product_data.csv';
 
-    // Check if running in pywebview
     if (window.pywebview) {
         try {
             const result = await window.pywebview.api.save_file_auto(csv, filename);
@@ -4668,10 +4760,6 @@ product5.jpg,dinnerware,DW-005,Ceramic Bowl,22.50,2024-01-15:22.50;2024-02-15:23
 }
 
 async function downloadExistingCsv(section) {
-    /**
-     * Download existing catalog CSV for "Add to Existing" workflow
-     * Allows users to review current catalog before adding new products
-     */
     try {
         showToast(`Downloading ${section} catalog CSV...`, 'info');
 
@@ -4737,7 +4825,6 @@ async function downloadExistingCsv(section) {
     }
 }
 
-// Enhanced Toast with Action Button
 function showToastWithAction(message, type, actionText, actionCallback) {
     const toast = document.getElementById('toast');
 
@@ -4764,9 +4851,7 @@ function showToastWithAction(message, type, actionText, actionCallback) {
     }, timeout);
 }
 
-// Price History Visualization Functions
 
-// Chart color management
 let chartColor = localStorage.getItem('chartColor') || '#0066FF';
 
 function getChartColor() {
@@ -4905,12 +4990,6 @@ function updateWeights() {
     }
 }
 
-// ============ DYNAMIC METADATA WEIGHTS ============
-
-/**
- * Load metadata schema from backend API
- * Called after CSV upload to discover available columns
- */
 async function loadMetadataSchema() {
     try {
         const response = await fetch('/api/metadata-schema');
@@ -5128,8 +5207,7 @@ function updateHybridVisualSubWeights() {
     }
 }
 
-// Update Hybrid Metadata Sub-Weights
-// Deprecated - now handled dynamically per column
+
 function updateHybridMetadataSubWeights() {
     // Dynamic metadata weights are managed via renderDynamicWeightSliders()
 }
@@ -5187,37 +5265,19 @@ function initAdvancedFeatures() {
         if (el) el.addEventListener(event, handler);
     };
 
-    // Weight Sliders - Mode 1 (Visual)
+
     safeAddListener('colorWeightSlider', 'input', updateWeights);
     safeAddListener('shapeWeightSlider', 'input', updateWeights);
     safeAddListener('textureWeightSlider', 'input', updateWeights);
-
-    // Weight Sliders - Mode 2 (Metadata)
-    // NOTE: Metadata sub-weight sliders removed - weights are now fixed and displayed statically
-    // Backend uses fixed values: SKU 30%, Name 30%, Category 25%, Price 10%, Performance 5%
-
-    // Weight Slider - Mode 3 (Hybrid Balance)
     safeAddListener('hybridBalanceSlider', 'input', updateHybridWeights);
-
-    // Weight Sliders - Mode 3 (Hybrid Visual Sub)
     safeAddListener('hybridColorWeightSlider', 'input', updateHybridVisualSubWeights);
     safeAddListener('hybridShapeWeightSlider', 'input', updateHybridVisualSubWeights);
     safeAddListener('hybridTextureWeightSlider', 'input', updateHybridVisualSubWeights);
-
-    // Weight Sliders - Mode 3 (Hybrid Metadata Sub)
-    // NOTE: Metadata sub-weight sliders removed - weights are now fixed and displayed statically
-    // Backend uses fixed values: SKU 30%, Name 30%, Category 25%, Price 10%, Performance 5%
-
-    // Export Buttons
     safeAddListener('exportCsvBtn', 'click', exportResults);
     safeAddListener('exportWithImagesBtn', 'click', exportWithImages);
     safeAddListener('duplicateReportBtn', 'click', showDuplicateReport);
-
-    // Session Management
     safeAddListener('saveSessionBtn', 'click', saveSession);
     safeAddListener('loadSessionBtn', 'click', loadSession);
-
-    // Search and Filter
     safeAddListener('searchInput', 'input', applyFilters);
     safeAddListener('categoryFilter', 'change', applyFilters);
     safeAddListener('sortBySelect', 'change', applyFilters);
@@ -5275,7 +5335,6 @@ async function exportWithImages() {
             results: []
         };
 
-        // Process each product - batch to prevent memory spikes
         const BATCH_SIZE = 10;  // Process 10 products at a time
         for (let batchStart = 0; batchStart < matchResults.length; batchStart += BATCH_SIZE) {
             const batch = matchResults.slice(batchStart, batchStart + BATCH_SIZE);
@@ -5291,7 +5350,6 @@ async function exportWithImages() {
                     showToast(`Processing ${processedCount}/${totalProducts} products...`, 'info');
                 }
 
-                // Get metadata stats
                 const metadataStats = getCachedMetadataStats(result);
 
                 // Sanitize product name for folder naming
@@ -5513,14 +5571,12 @@ Threshold: ${parseInt(document.getElementById('thresholdSlider').value)}%
     }
 }
 
-// Show Duplicate Report
 function showDuplicateReport() {
     if (matchResults.length === 0) {
         showToast('No results to analyze', 'warning');
         return;
     }
 
-    // Find all duplicates (similarity > 90%)
     const duplicates = [];
 
     matchResults.forEach(result => {
@@ -5540,7 +5596,6 @@ function showDuplicateReport() {
         return;
     }
 
-    // Create modal content
     const modal = document.getElementById('detailModal');
     const modalBody = document.getElementById('modalBody');
 
@@ -5668,7 +5723,6 @@ async function exportDuplicateReport() {
         });
     }
 
-    // PERFORMANCE FIX #2: Use array.push() instead of string concatenation to avoid O(n²) complexity
     const csvRows = [headerRow.map(h => `"${h}"`).join(',')];
 
     duplicates.forEach(dup => {
@@ -5725,7 +5779,7 @@ async function exportDuplicateReport() {
     }
 }
 
-// Save Session
+
 async function saveSession() {
     if (matchResults.length === 0) {
         showToast('No session data to save', 'warning');
@@ -5746,7 +5800,7 @@ async function saveSession() {
     const sessionContent = JSON.stringify(sessionData, null, 2);
     const filename = `matching_session_${new Date().toISOString().slice(0, 10)}.json`;
 
-    // Check if running in pywebview
+
     if (window.pywebview) {
         try {
             const result = await window.pywebview.api.save_file_auto(sessionContent, filename);
@@ -5779,7 +5833,7 @@ async function saveSession() {
     }
 }
 
-// Load Session
+
 function loadSession() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -5837,7 +5891,7 @@ function loadSession() {
     input.click();
 }
 
-// Apply Filters
+
 function applyFilters() {
     searchQuery = document.getElementById('searchInput').value.toLowerCase();
     filterCategory = document.getElementById('categoryFilter').value;
@@ -5857,7 +5911,6 @@ function applyFilters() {
     saveToHistory('filters_applied', { searchQuery, filterCategory, filterDuplicatesOnly, sortBy });
 }
 
-// Update Main Search Status (shows count of filtered results)
 function updateMainSearchStatus() {
     const statusEl = document.getElementById('searchStatus');
     if (!searchQuery) {
@@ -6004,8 +6057,7 @@ function populateSortOptions() {
     });
 }
 
-// Filter and Sort Results
-// PERFORMANCE OPTIMIZED: Reduced from O(n*m*k) to O(n*m) with caching and pre-calculation
+
 function filterAndSortResults(results) {
     // Populate sort options on first run
     if (!window.sortOptionsPopulated && window.metadataSchema) {
@@ -6030,8 +6082,7 @@ function filterAndSortResults(results) {
         const result = results[i];
         let filteredMatches = result.m;
 
-        // PERFORMANCE OPTIMIZATION: Combine all filtering passes into single loop
-        // This reduces O(n×m×k) complexity by doing all checks in one pass
+
         if (dynamicThreshold > 30 || hasMetadataFilters || hasSearchResults) {
             filteredMatches = filteredMatches.filter(match => {
                 // Check 1: Threshold (early exit if fails)
@@ -6147,8 +6198,6 @@ function filterAndSortResults(results) {
         filtered.push(resultObj);
     }
 
-    // PERFORMANCE OPTIMIZATION: Cache schema lookups before sort (prevents 160,000+ iterations for 1000 products!)
-    // These lookups are O(n) each and were being called inside the comparator (8,000+ times for 1000 items)
     const schemaMap = new Map(window.metadataSchema?.map(c => [c.column_name, c]) || []);
     const sortSchemaCol = schemaMap.get(sortBy);
     const isMetadataSort = schemaMap.has(sortBy) || sortBy === 'sku';
@@ -6189,21 +6238,16 @@ function filterAndSortResults(results) {
             if (isMetadataSort) {
                 const colName = sortBy;
 
-                // Get values from product metadata (if available)
-                // Priority: 1) Root property (sku, name, etc), 2) meta dict
                 let valA = a.p[colName] !== undefined && a.p[colName] !== null ? a.p[colName] :
                            (a.p.meta && a.p.meta[colName] !== undefined && a.p.meta[colName] !== null ? a.p.meta[colName] : '');
                 let valB = b.p[colName] !== undefined && b.p[colName] !== null ? b.p[colName] :
                            (b.p.meta && b.p.meta[colName] !== undefined && b.p.meta[colName] !== null ? b.p.meta[colName] : '');
 
-                // DEBUG: Log first comparison to verify sorting is working
                 if (!window.debugSort) {
                     console.log(`[SORT] Sorting by ${colName}: "${valA}" vs "${valB}"`);
                     window.debugSort = true;
                 }
 
-                // PERFORMANCE: Use cached schema column and type detection
-                // Fallback to value inspection only if schema says it's not numeric
                 const isNumeric = isNumericSort ||
                     (!isNaN(parseFloat(valA)) && !isNaN(parseFloat(valB)) && valA !== '' && valB !== '');
 
@@ -6302,8 +6346,6 @@ function restoreState(state) {
 }
 
 function updateUndoRedoButtons() {
-    // This would update undo/redo button states if we add them to the UI
-    // For now, we'll just track the state
 }
 
 // Initialize advanced features on page load
@@ -6385,7 +6427,6 @@ function updateFileLabel(input, labelId) {
     }
 }
 
-// Mode Toggle Functions
 function setMode(section, mode) {
     console.log(`setMode called: section=${section}, mode=${mode}`);
 
@@ -6557,8 +6598,7 @@ function setMode(section, mode) {
     saveMainAppState();
 }
 
-// Prompt for CSV Builder after folder upload in advanced mode
-// Open CSV Builder with files pre-populated (called from BUILD CSV button)
+
 async function openCsvBuilderWithFiles(section) {
     const files = section === 'historical' ? historicalFiles : newFiles;
 
@@ -6741,7 +6781,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupMobileResultsListener();
 });
 
-// ============ Mobile Match Results (API-Based Notification) ============
 
 let matchResultsPollingInterval = null;
 let mobileFlagCheckInterval = null;  // Check flag every 2 seconds
@@ -6965,7 +7004,7 @@ function updateGPUStatus(status) {
     if (status.available && status.device !== 'cpu') {
         // GPU is active
         gpuStatusEl.classList.add('gpu-active');
-        statusIcon.textContent = '';
+        statusIcon.innerHTML = '<i data-lucide="zap" style="width: 16px; height: 16px;"></i>';
 
         let deviceName = 'GPU';
         let tooltip = 'GPU acceleration active';
@@ -6991,13 +7030,13 @@ function updateGPUStatus(status) {
     } else if (status.error) {
         // GPU error
         gpuStatusEl.classList.add('gpu-error');
-        statusIcon.textContent = '';
+        statusIcon.innerHTML = '<i data-lucide="alert-circle" style="width: 16px; height: 16px;"></i>';
         statusText.textContent = 'GPU Error';
         gpuStatusEl.setAttribute('data-tooltip', `GPU initialization failed: ${status.error}. Using CPU mode.`);
     } else {
         // CPU mode
         gpuStatusEl.classList.add('gpu-cpu');
-        statusIcon.textContent = '';
+        statusIcon.innerHTML = '<i data-lucide="cpu" style="width: 16px; height: 16px;"></i>';
         statusText.textContent = 'CPU Mode';
 
         let tooltip = 'Running on CPU - ';
@@ -7008,6 +7047,9 @@ function updateGPUStatus(status) {
 
         gpuStatusEl.setAttribute('data-tooltip', tooltip);
     }
+
+    // Re-initialize icons in GPU status element only (scoped for performance)
+    IconManager.reinit(50, gpuStatusEl);
 }
 
 // Add processing speed display during batch operations
@@ -7286,7 +7328,6 @@ async function processHistoricalCatalogWithOptions() {
     await processHistoricalCatalog();
 }
 
-// ============ NEW PRODUCTS CATALOG OPTIONS ============
 
 function initNewCatalogOptions() {
     // Check if there's an existing new products catalog
@@ -7540,10 +7581,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-// ============ Catalog State Synchronization ============
-// Ensures main app state stays in sync with database changes from Catalog Manager
-
-// Store last known catalog state for change detection
 let lastKnownCatalogState = {
     totalProducts: 0,
     historicalProducts: 0,
@@ -7706,7 +7743,7 @@ async function ensureStateValid() {
     return true;
 }
 
-// Listen for visibility changes (user returns from Catalog Manager tab)
+
 document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
         // User returned to this tab - check if catalog changed
@@ -7912,9 +7949,6 @@ function checkCatalogChangesInMainApp() {
     }
 }
 
-// ============================================================================
-// SAVE DIALOG FUNCTIONS
-// ============================================================================
 
 let pendingSaveOperation = null;
 
@@ -7975,11 +8009,6 @@ async function submitSaveDialog() {
 
     try {
         const operation = pendingSaveOperation || 'snapshot';
-
-        // IMPORTANT: Always save the ENTIRE database as ONE snapshot file
-        // This ensures both historical and new CSVs are stored together in a single snapshot
-        // We use /api/catalogs/save-current for single-file snapshots with both sections' CSVs
-
         console.log(`[SAVE] Saving snapshot "${snapshotName}" as ${saveType}`);
 
         const response = await fetch('/api/catalogs/save-current', {
@@ -8009,9 +8038,6 @@ async function submitSaveDialog() {
     }
 }
 
-// ============================================================================
-// CRASH RECOVERY DIALOG FUNCTIONS
-// ============================================================================
 
 let crashRecoveryData = null;
 
@@ -8134,13 +8160,6 @@ async function restoreCrashRecovery() {
     closeCrashRecoveryDialog();
 }
 
-/**
- * Auto-load CSV content from catalog when using "use_existing" mode
- * This eliminates the need to re-upload CSV for Mode 3 matching
- *
- * Loads SEPARATE CSVs for historical and new sections from the same snapshot
- * to preserve schema integrity (each section may have different metadata columns)
- */
 async function autoLoadCatalogCSV() {
     try {
         // Load historical CSV
@@ -8161,7 +8180,7 @@ async function autoLoadCatalogCSV() {
             // Also update status section if it exists
             const historicalStatus = document.getElementById('historicalStatus');
             if (historicalStatus) {
-                historicalStatus.innerHTML += `<p class="success">✓ Historical CSV loaded: ${historicalData.filename} (${historicalData.row_count} rows)</p>`;
+                historicalStatus.innerHTML += `<p class="success">[✓] Historical CSV loaded: ${historicalData.filename} (${historicalData.row_count} rows)</p>`;
             }
         }
 
@@ -8183,7 +8202,7 @@ async function autoLoadCatalogCSV() {
             // Also update status section if it exists
             const newStatus = document.getElementById('newStatus');
             if (newStatus) {
-                newStatus.innerHTML += `<p class="success">✓ New CSV loaded: ${newData.filename} (${newData.row_count} rows)</p>`;
+                newStatus.innerHTML += `<p class="success">[✓] New CSV loaded: ${newData.filename} (${newData.row_count} rows)</p>`;
             }
         }
 
@@ -8195,17 +8214,6 @@ async function autoLoadCatalogCSV() {
     }
 }
 
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// ============ Mobile Connection Modal ============
-
 async function openMobileModal() {
     const modal = document.getElementById('mobileModal');
     if (!modal) return;
@@ -8214,6 +8222,9 @@ async function openMobileModal() {
 
     // Load mobile connection info
     await loadMobileConnectionInfo();
+
+    // Re-initialize icons in modal only (scoped for performance)
+    IconManager.reinit(50, modal);
 }
 
 function closeMobileModal() {

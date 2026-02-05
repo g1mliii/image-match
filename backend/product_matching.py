@@ -44,8 +44,7 @@ from similarity import (
     SimilarityComputationError
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (will inherit UTF-8 configuration from root logger in app.py)
 logger = logging.getLogger(__name__)
 
 # Import CLIP functions (required)
@@ -156,8 +155,24 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         }
     }
 
-    # Analyze each key (numeric vs categorical)
+    # Blacklist internal/technical fields that should never appear in UI
+    BLACKLIST_FIELDS = {'id', 'is_historical', 'image_path', 'created_at', 'updated_at', 'product_id'}
+
+    # Collect metadata_scores for similarity percentages (Mode 2/3)
+    # metadata_scores contains similarity scores for text fields (brand, description, etc.)
+    all_metadata_scores_keys = set()
+    for m in matches:
+        if 'metadata_scores' in m and m['metadata_scores']:
+            all_metadata_scores_keys.update(m['metadata_scores'].keys())
+
+    # Analyze each key (numeric vs text with similarity scores)
+    numeric_fields = []
+    similarity_fields = []
+    numeric_field_values = {}
     for key, values in values_map.items():
+        # Skip internal/technical fields
+        if key.lower() in BLACKLIST_FIELDS:
+            continue
         # Try to parse all as numeric
         numeric_values = []
         is_numeric = True
@@ -173,7 +188,7 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
                 break
 
         if is_numeric and numeric_values:
-            # Calculate Numeric Stats (Avg, Min, Max, Sum)
+            # Calculate Numeric Stats (Avg, Min, Max, Sum) - for actual values
             sum_val = sum(numeric_values)
             avg_val = sum_val / len(numeric_values)
             min_val = min(numeric_values)
@@ -187,24 +202,30 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
                 'max': round(max_val, 2),
                 'count': len(numeric_values)
             }
-        else:
-            # Calculate Categorical Stats (Top common values)
-            # Count frequencies
-            counts = {}
-            for v in values:
-                v_str = str(v)
-                counts[v_str] = counts.get(v_str, 0) + 1
+            numeric_fields.append(key)
+            numeric_field_values[key] = {'avg': avg_val, 'sum': sum_val, 'min': min_val, 'max': max_val}
+        elif key in all_metadata_scores_keys:
+            # For text fields, use similarity scores (percentages)
+            scores = [m['metadata_scores'].get(key, 0) for m in matches if 'metadata_scores' in m]
+            if scores:
+                scores_sum = sum(scores)
+                stats[key] = {
+                    'type': 'similarity',
+                    'avg': round(scores_sum / len(scores), 1),
+                    'sum': round(scores_sum, 1),
+                    'min': round(min(scores), 1),
+                    'max': round(max(scores), 1),
+                    'count': len(scores)
+                }
+                similarity_fields.append(key)
 
-            # Sort by frequency
-            sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-            top_value = sorted_counts[0][0] if sorted_counts else None
-
-            stats[key] = {
-                'type': 'categorical',
-                'top_value': top_value,
-                'unique_count': len(counts),
-                'distribution': dict(sorted_counts[:5])  # Top 5 values
-            }
+    # Log concise summary of field detection (with guard to prevent string formatting overhead)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"[STATS] Processed {len(matches)} matches: {len(numeric_fields)} numeric, {len(similarity_fields)} similarity")
+        if numeric_fields:
+            logger.debug(f"[STATS] Numeric fields with actual values: {', '.join([f'{k}(avg={v['avg']:.2f})' for k, v in numeric_field_values.items()])}")
+        if similarity_fields:
+            logger.debug(f"[STATS] Similarity fields: {', '.join(similarity_fields)}")
 
     return stats
 
@@ -521,18 +542,18 @@ def find_matches(
         if not isinstance(query_embedding, np.ndarray) or len(query_embedding) != 512:
             logger.error(f"Product {product_id} has invalid CLIP embedding (expected 512-dim array, got {type(query_embedding)} with shape {query_embedding.shape if isinstance(query_embedding, np.ndarray) else 'N/A'})")
             raise MissingFeaturesError(product_id)
-        
-        logger.info(f"Product {product_id} CLIP embedding validated successfully")
+
+        logger.debug(f"Product {product_id} CLIP embedding validated successfully")
     else:
         # Legacy mode: validate traditional features
         from matching_utils import validate_feature_dict
-        
+
         is_valid, error_msg = validate_feature_dict(query_features, product_id, "query features")
         if not is_valid:
             logger.error(error_msg)
             raise MissingFeaturesError(product_id)
-        
-        logger.info(f"Product {product_id} legacy features validated successfully")
+
+        logger.debug(f"Product {product_id} legacy features validated successfully")
     
     # Step 3: Determine category for filtering with fuzzy matching
     from database import get_all_categories
@@ -567,7 +588,7 @@ def find_matches(
         if product_category is not None:
             warnings_list.append(f"Product category '{product_category}' normalized to NULL")
 
-        logger.info(f"Product {product_id} has no category (will match against all products)")
+        logger.debug(f"Product {product_id} has no category (will match against all products)")
         
         if not match_against_all:
             warnings_list.append(
@@ -1089,73 +1110,6 @@ def get_match_statistics(product_id: int) -> Dict[str, Any]:
         'medium_similarity': len([s for s in scores if 50 <= s <= 70]),
         'low_similarity': len([s for s in scores if s < 50])
     }
-
-
-
-# ============================================================================
-# SUMMARY STATISTICS FOR MATCHING RESULTS
-# ============================================================================
-
-def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Calculate summary statistics (average, min, max) for matching results.
-    
-    Args:
-        matches: List of match dictionaries
-        
-    Returns:
-        Dictionary of summary statistics
-    """
-    if not matches:
-        return {}
-        
-    summary_stats = {}
-    
-    # 1. Overall similarity stats
-    sim_scores = [m['similarity_score'] for m in matches]
-    sim_sum = sum(sim_scores)
-    summary_stats['_overall'] = {
-        'avg': sim_sum / len(sim_scores),
-        'sum': sim_sum,
-        'min': min(sim_scores),
-        'max': max(sim_scores),
-        'count': len(sim_scores)
-    }
-    
-    # 2. Metadata column scores stats (Mode 2/3)
-    # Get all unique columns from all matches
-    all_columns = set()
-    for m in matches:
-        if 'metadata_scores' in m:
-            all_columns.update(m['metadata_scores'].keys())
-            
-    for col in all_columns:
-        scores = [m['metadata_scores'].get(col, 0) for m in matches if 'metadata_scores' in m and col in m['metadata_scores']]
-        if scores:
-            scores_sum = sum(scores)
-            summary_stats[col] = {
-                'avg': scores_sum / len(scores),
-                'sum': scores_sum,
-                'min': min(scores),
-                'max': max(scores),
-                'count': len(scores)
-            }
-            
-    # 3. Visual components stats (Mode 1)
-    for component in ['color', 'shape', 'texture']:
-        score_key = f'{component}_score'
-        comp_scores = [m.get(score_key, 0) for m in matches if score_key in m]
-        if comp_scores:
-            comp_sum = sum(comp_scores)
-            summary_stats[component] = {
-                'avg': comp_sum / len(comp_scores),
-                'sum': comp_sum,
-                'min': min(comp_scores),
-                'max': max(comp_scores),
-                'count': len(comp_scores)
-            }
-            
-    return summary_stats
 
 
 # ============================================================================
@@ -2192,9 +2146,9 @@ def batch_find_matches(
                 failed += 1
                 logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {str(e)}")
 
-            # PERFORMANCE: Log progress every 10% instead of every 10 iterations (reduces log spam)
+            # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
             current_percent = int((i / len(product_ids)) * 100)
-            if current_percent >= last_logged_percent + 10:
+            if current_percent >= last_logged_percent + 20:
                 logger.info(f"[BATCH-MODE1] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
                 last_logged_percent = current_percent
     
@@ -2415,9 +2369,9 @@ def batch_find_metadata_matches(
                 logger.error(f"Unexpected error matching product {product_id}: {e}")
                 failed += 1
 
-            # PERFORMANCE: Log progress every 10% instead of every 10 iterations (reduces log spam)
+            # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
             current_percent = int((i / len(product_ids)) * 100)
-            if current_percent >= last_logged_percent + 10:
+            if current_percent >= last_logged_percent + 20:
                 logger.info(f"[BATCH-MODE2] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
                 last_logged_percent = current_percent
     

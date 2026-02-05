@@ -10,11 +10,12 @@ from typing import Optional, List, Dict, Any, Tuple
 
 # Import debug mode check (from config to avoid circular imports)
 from config import is_debug_mode
+from path_manager import get_database_path
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'product_matching.db')
+DB_PATH = get_database_path()
 
 # MEMORY OPTIMIZATION: Simple connection pool to reduce fragmentation
 # Maintains 3-5 reusable connections instead of creating new ones for each operation
@@ -348,7 +349,7 @@ def init_db():
     
     # Run migration to add CLIP support columns if needed
     migrate_features_table()
-    
+
 def get_product_by_id(product_id):
     """Get product by ID"""
     with get_db_connection() as conn:
@@ -921,21 +922,21 @@ def bulk_insert_matches(matches: List[Tuple[int, int, float, float, float, float
         Number of matches inserted
     """
     if not matches:
-        logger.info("[BULK-INSERT-MATCHES] No matches to insert")
+        logger.debug("[BULK-INSERT-MATCHES] No matches to insert")
         return 0
-    
-    logger.info(f"[BULK-INSERT-MATCHES] ▶ Inserting {len(matches)} matches in 1 transaction")
-    
+
+    logger.debug(f"[BULK-INSERT-MATCHES] ▶ Inserting {len(matches)} matches in 1 transaction")
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.executemany('''
-            INSERT INTO matches 
-            (new_product_id, matched_product_id, similarity_score, 
+            INSERT INTO matches
+            (new_product_id, matched_product_id, similarity_score,
              color_score, shape_score, texture_score)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', matches)
         inserted = cursor.rowcount
-        logger.info(f"[BULK-INSERT-MATCHES] ✓ Inserted {inserted} matches (1 DB transaction)")
+        logger.debug(f"[BULK-INSERT-MATCHES] ✓ Inserted {inserted} matches (1 DB transaction)")
         return inserted
 
 def bulk_insert_features(features_list: List[Tuple[int, bytes, bytes, bytes, str, Optional[str]]]) -> int:
@@ -950,11 +951,11 @@ def bulk_insert_features(features_list: List[Tuple[int, bytes, bytes, bytes, str
         Number of feature records inserted
     """
     if not features_list:
-        logger.info("[BULK-INSERT-FEATURES] No features to insert")
+        logger.debug("[BULK-INSERT-FEATURES] No features to insert")
         return 0
-    
-    logger.info(f"[BULK-INSERT-FEATURES] ▶ Inserting {len(features_list)} feature records in 1 transaction")
-    
+
+    logger.debug(f"[BULK-INSERT-FEATURES] ▶ Inserting {len(features_list)} feature records in 1 transaction")
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.executemany('''
@@ -963,7 +964,7 @@ def bulk_insert_features(features_list: List[Tuple[int, bytes, bytes, bytes, str
             VALUES (?, ?, ?, ?, ?, ?)
         ''', features_list)
         inserted = cursor.rowcount
-        logger.info(f"[BULK-INSERT-FEATURES] ✓ Inserted {inserted} feature records (1 DB transaction)")
+        logger.debug(f"[BULK-INSERT-FEATURES] ✓ Inserted {inserted} feature records (1 DB transaction)")
         return inserted
 
 def get_matches_for_product(new_product_id: int, limit: int = 10) -> List[sqlite3.Row]:
@@ -2855,13 +2856,13 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
             try:
                 # Get all CLIP embeddings for category (both historical AND new products)
                 # FAISS indexes ALL products for bidirectional matching
-                logger.info(f"[FAISS-BUILD] Building index for category '{category}'...")
+                logger.debug(f"[FAISS-BUILD] Building index for category '{category}'...")
                 features = get_all_features_by_category(
                     category=category,
                     is_historical=True,  # None = get ALL products (historical + new)
                     embedding_type='clip'
                 )
-                
+
                 if not features:
                     logger.warning(f"[FAISS-BUILD] No CLIP features found for category '{category}', skipping")
                     return {
@@ -2869,8 +2870,8 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
                         'status': 'skipped',
                         'reason': 'no_features'
                     }
-                
-                logger.info(f"[FAISS-BUILD] Found {len(features)} products with CLIP features for category '{category}'")
+
+                logger.debug(f"[FAISS-BUILD] Found {len(features)} products with CLIP features for category '{category}'")
                 
                 # Extract embeddings and product IDs
                 product_ids = [pid for pid, _ in features]

@@ -151,6 +151,25 @@
             opacity: 0.8;
         }
 
+        .image-preview {
+            margin-top: 15px;
+            display: none;
+            text-align: center; /* Center the image horizontally */
+        }
+
+        .image-preview.visible {
+            display: block;
+        }
+
+        .image-preview img {
+            max-width: 100%;
+            max-height: 300px;
+            border: 2px solid #000;
+            display: block; /* Make image a block element */
+            margin: 0 auto; /* Center the image */
+            object-fit: contain; /* Maintain aspect ratio */
+        }
+
         .metadata-fields {
             display: none;
             margin-top: 20px;
@@ -173,6 +192,18 @@
         .metadata-field input[type="text"],
         .metadata-field input[type="number"] {
             margin-bottom: 0;
+        }
+
+        /* PERFORMANCE: CSS class for metadata select (avoid inline styles) */
+        .metadata-select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 0;
+            background-color: #fff;
+            color: #000;
+            border: 2px solid #000;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
         }
 
         .btn-primary {
@@ -299,17 +330,21 @@
             }
         }
     </style>
+
+    <!-- Lucide Icons (pinned version for better caching) -->
+    <!-- Lucide Icons (latest stable version) -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>📱 MOBILE UPLOAD</h1>
+            <h1><i data-lucide="smartphone" style="width: 20px; height: 20px; vertical-align: middle;"></i> MOBILE UPLOAD</h1>
             <p>Upload products and get instant matches</p>
         </header>
 
         <!-- Auth Section -->
         <div class="section">
-            <h2>Authentication</h2>
+            <h2><i data-lucide="lock" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 6px;"></i>Authentication</h2>
             <label for="password">Password (6 digits)</label>
             <input
                 type="password"
@@ -318,7 +353,7 @@
                 maxlength="6"
                 autocomplete="off"
             >
-            <button class="btn-primary" onclick="authenticate()">AUTHENTICATE</button>
+            <button class="btn-primary" onclick="authenticate()"><i data-lucide="check" style="width: 16px; height: 16px; vertical-align: middle;"></i> AUTHENTICATE</button>
             <div id="authMessage"></div>
         </div>
 
@@ -326,7 +361,7 @@
         <div id="uploadSection" style="display: none;">
             <!-- Catalog Selection -->
             <div class="section">
-                <h2>Catalog Selection</h2>
+                <h2><i data-lucide="folder" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 6px;"></i>Catalog Selection</h2>
                 <label for="catalogSelect">Select Catalog</label>
                 <select id="catalogSelect" onchange="handleCatalogChange()">
                     <option value="">Loading catalogs...</option>
@@ -335,13 +370,15 @@
 
             <!-- Mode Selection -->
             <div class="section">
-                <h2>Matching Mode</h2>
+                <h2><i data-lucide="sliders" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 6px;"></i>Matching Mode</h2>
                 <div class="mode-buttons">
                     <button class="mode-btn" onclick="selectMode('mode1')">
+                        <i data-lucide="eye" style="width: 20px; height: 20px; display: block; margin: 0 auto 5px;"></i>
                         MODE 1<br>
                         <span style="font-size: 11px; opacity: 0.7;">Visual Only</span>
                     </button>
                     <button class="mode-btn" onclick="selectMode('mode3')">
+                        <i data-lucide="git-merge" style="width: 20px; height: 20px; display: block; margin: 0 auto 5px;"></i>
                         MODE 3<br>
                         <span style="font-size: 11px; opacity: 0.7;">Visual + Metadata</span>
                     </button>
@@ -350,9 +387,9 @@
 
             <!-- Photo Upload -->
             <div class="section">
-                <h2>Photo Upload</h2>
+                <h2><i data-lucide="camera" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 6px;"></i>Photo Upload</h2>
                 <div class="file-upload-area" onclick="document.getElementById('photoInput').click()">
-                    <div>📷 TAP TO TAKE PHOTO OR SELECT FROM GALLERY</div>
+                    <div><i data-lucide="camera" style="width: 32px; height: 32px; vertical-align: middle;"></i> TAP TO TAKE PHOTO OR SELECT FROM GALLERY</div>
                     <div class="file-name" id="fileName"></div>
                 </div>
                 <input
@@ -363,30 +400,39 @@
                     capture="camera"
                     onchange="handleFileSelect(event)"
                 >
+                <div class="image-preview" id="imagePreview">
+                    <img id="previewImage" alt="Preview">
+                </div>
             </div>
 
             <!-- Product Info (Mode 3 Only) -->
             <div class="section" id="productInfoSection" style="display: none;">
-                <h2>Product Information</h2>
-                <label for="category">Category (Optional)</label>
-                <input type="text" id="category" placeholder="e.g., Electronics">
+                <h2><i data-lucide="info" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 6px;"></i>Product Information</h2>
 
-                <label for="productName">Product Name (Optional)</label>
-                <input type="text" id="productName" placeholder="e.g., Sony Camera">
+                <!-- Base fields - only shown if no metadata schema -->
+                <div id="baseFields">
+                    <label for="category">Category (Optional)</label>
+                    <select id="category">
+                        <option value="">-- Select Category --</option>
+                    </select>
 
-                <label for="sku">SKU (Optional)</label>
-                <input type="text" id="sku" placeholder="e.g., SKU-123">
+                    <label for="productName">Product Name (Optional)</label>
+                    <input type="text" id="productName" placeholder="e.g., Sony Camera">
+
+                    <label for="sku">SKU (Optional)</label>
+                    <input type="text" id="sku" placeholder="e.g., SKU-123">
+                </div>
 
                 <!-- Dynamic Metadata Fields (Mode 3 Only) -->
                 <div id="metadataContainer" class="metadata-fields">
-                    <h3 style="margin-bottom: 15px;">Additional Metadata</h3>
+                    <h3 style="margin-bottom: 15px;">Product Metadata</h3>
                     <div id="metadataFields"></div>
                 </div>
             </div>
 
             <!-- Upload Button -->
             <button class="btn-primary" onclick="uploadProduct()" id="uploadBtn" disabled>
-                UPLOAD & MATCH
+                <i data-lucide="upload" style="width: 16px; height: 16px; vertical-align: middle;"></i> UPLOAD & MATCH
             </button>
 
             <!-- Loading Indicator -->
@@ -398,8 +444,8 @@
             <!-- Messages -->
             <div id="messageContainer"></div>
 
-            <!-- Results -->
-            <div id="resultsContainer" class="results">
+            <!-- Results (hidden - main app will show them) -->
+            <div id="resultsContainer" class="results" style="display: none;">
                 <h2>Results</h2>
                 <div id="matchResults"></div>
             </div>
@@ -412,6 +458,67 @@
         let selectedMode = null;
         let selectedFile = null;
         let currentCatalogSchema = null;
+        let domCache = null;
+        let messageTimeout = null;
+        let catalogChangeDebounce = null;
+
+        // PERFORMANCE: Category caching to avoid redundant API calls
+        let cachedCategories = null;
+        let cachedCatalogId = null;
+
+        // FIX: Cache DOM references for better performance
+        function initDOMCache() {
+            domCache = {
+                uploadBtn: document.getElementById('uploadBtn'),
+                loadingIndicator: document.getElementById('loadingIndicator'),
+                photoInput: document.getElementById('photoInput'),
+                fileName: document.getElementById('fileName'),
+                imagePreview: document.getElementById('imagePreview'),
+                previewImage: document.getElementById('previewImage'),
+                metadataFields: document.getElementById('metadataFields'),
+                metadataContainer: document.getElementById('metadataContainer'),
+                productInfoSection: document.getElementById('productInfoSection'),
+                category: document.getElementById('category'),
+                productName: document.getElementById('productName'),
+                sku: document.getElementById('sku'),
+                messageContainer: document.getElementById('messageContainer'),
+                resultsContainer: document.getElementById('resultsContainer'),
+                matchResults: document.getElementById('matchResults'),
+                uploadSection: document.getElementById('uploadSection'),
+                baseFields: document.getElementById('baseFields')
+            };
+        }
+
+        // Server-side logging helper
+        function serverLog(level, message, data = null) {
+            console.log(`[${level.toUpperCase()}] ${message}`, data || '');
+
+            // Send to server for logging
+            fetch('/api/mobile/log', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Mobile-Password': authToken || ''
+                },
+                body: JSON.stringify({ level, message, data })
+            }).catch(err => console.error('Failed to send log to server:', err));
+        }
+
+        // Debug helper - shows current state
+        window.showDebugState = function() {
+            const state = {
+                authToken: authToken ? '✓ Set' : '❌ Not set',
+                selectedCatalog: selectedCatalog || '❌ Not selected',
+                selectedMode: selectedMode || '❌ Not selected',
+                selectedFile: selectedFile ? `✓ ${selectedFile.name}` : '❌ No file',
+                metadataFieldsCount: currentCatalogSchema?.metadata_fields?.length || 0,
+                metadataFields: currentCatalogSchema?.metadata_fields?.map(f => f.column_name) || [],
+                uploadBtnDisabled: document.getElementById('uploadBtn')?.disabled
+            };
+            console.log('=== CURRENT STATE ===', state);
+            serverLog('info', 'Debug state requested', state);
+            return state;
+        };
 
         // Load password from localStorage
         window.addEventListener('load', () => {
@@ -455,6 +562,9 @@
                 showMessage('messageContainer', 'Authenticated successfully', 'success');
                 document.getElementById('uploadSection').style.display = 'block';
 
+                // FIX: Initialize DOM cache for performance
+                initDOMCache();
+
                 // Load catalogs
                 await loadCatalogs(data.catalogs);
             } catch (error) {
@@ -465,31 +575,156 @@
 
         async function loadCatalogs(catalogs) {
             const select = document.getElementById('catalogSelect');
+
+            // Temporarily remove onchange to prevent triggering during population
+            const originalOnChange = select.onchange;
+            select.onchange = null;
+
             select.innerHTML = '<option value="">Select a catalog...</option>';
+
+            let loadedCatalog = null;
+            const loadedCatalogs = catalogs.filter(c => c.is_loaded);
+
+            serverLog('info', 'Loading catalogs', {
+                totalCount: catalogs.length,
+                loadedCount: loadedCatalogs.length,
+                loadedNames: loadedCatalogs.map(c => c.name)
+            });
 
             catalogs.forEach(cat => {
                 const option = document.createElement('option');
                 option.value = cat.id;
                 option.textContent = `${cat.name} (${cat.product_count} products)`;
-                if (cat.is_loaded) option.textContent += ' ✓ LOADED';
+                if (cat.is_loaded) {
+                    option.textContent += ' [LOADED]';
+                    loadedCatalog = cat.id; // Remember the loaded catalog
+                }
                 select.appendChild(option);
+
+                // Debug: Log each catalog option
+                serverLog('info', 'Added catalog option', {
+                    id: cat.id,
+                    name: cat.name,
+                    isLoaded: cat.is_loaded
+                });
             });
+
+            // Restore onchange handler
+            select.onchange = originalOnChange;
+
+            // Auto-select the loaded catalog if there's only one
+            if (loadedCatalog && loadedCatalogs.length === 1) {
+                serverLog('info', 'Auto-selecting single loaded catalog', { catalog: loadedCatalog });
+                select.value = loadedCatalog;
+                // Trigger the change event to load schema and categories
+                await handleCatalogChange();
+            } else if (loadedCatalogs.length > 1) {
+                serverLog('warning', 'Multiple loaded catalogs found - user must select manually', {
+                    catalogs: loadedCatalogs.map(c => c.name)
+                });
+            } else {
+                serverLog('info', 'No loaded catalog found - user must select from dropdown');
+            }
         }
 
         async function handleCatalogChange() {
-            selectedCatalog = document.getElementById('catalogSelect').value;
+            // FIX: Debounce rapid catalog changes to prevent redundant API calls
+            if (catalogChangeDebounce) {
+                clearTimeout(catalogChangeDebounce);
+            }
 
-            if (!selectedCatalog) {
+            const selectElement = document.getElementById('catalogSelect');
+            const newCatalog = selectElement.value;
+
+            // Skip if catalog hasn't actually changed
+            if (newCatalog === selectedCatalog) {
+                serverLog('info', 'Catalog unchanged, skipping');
+                return;
+            }
+
+            // Debounce the actual change
+            catalogChangeDebounce = setTimeout(async () => {
+                await handleCatalogChangeImpl(selectElement, newCatalog);
+                catalogChangeDebounce = null;
+            }, 300);
+        }
+
+        async function handleCatalogChangeImpl(selectElement, newCatalog) {
+            // Debug: Log dropdown state
+            serverLog('info', 'handleCatalogChange called', {
+                value: newCatalog || '(empty)',
+                selectedIndex: selectElement.selectedIndex,
+                optionsCount: selectElement.options.length,
+                selectedText: selectElement.options[selectElement.selectedIndex]?.text || '(none)'
+            });
+
+            selectedCatalog = newCatalog;
+            serverLog('info', 'Catalog selection changed', { catalog: selectedCatalog || '(none)' });
+
+            if (!selectedCatalog || selectedCatalog.trim() === '') {
+                // Clear fields when no catalog is selected
                 document.getElementById('metadataFields').innerHTML = '';
+                document.getElementById('category').innerHTML = '<option value="">-- Select Category --</option>';
                 currentCatalogSchema = null;
-                // Hide metadata container when no catalog selected
+                // PERFORMANCE FIX: Clear category cache when catalog deselected
+                cachedCategories = null;
+                cachedCatalogId = null;
                 document.getElementById('metadataContainer').classList.remove('visible');
                 updateUploadButton();
                 return;
             }
 
-            // Load catalog schema for metadata fields
+            // FIX: Fetch categories FIRST before loading schema/metadata fields
+            // This ensures updateMetadataFields() has fresh categories when creating dropdowns
+            if (cachedCatalogId !== selectedCatalog) {
+                try {
+                    serverLog('info', 'Fetching categories for:', { catalog: selectedCatalog });
+                    // Add timestamp to prevent browser caching stale data
+                    const response = await fetch(
+                        `/api/mobile/catalog-categories?catalog_id=${selectedCatalog}&_t=${Date.now()}`,
+                        {
+                            headers: { 'X-Mobile-Password': authToken }
+                        }
+                    );
+
+                    if (response.ok) {
+                        const data = await response.json();
+
+                        // Cache categories for reuse
+                        cachedCategories = data.categories || [];
+                        cachedCatalogId = selectedCatalog;
+
+                        const categorySelect = document.getElementById('category');
+                        categorySelect.innerHTML = '<option value="">-- Select Category --</option>';
+
+                        cachedCategories.forEach(category => {
+                            const option = document.createElement('option');
+                            option.value = category;
+                            option.textContent = category;
+                            categorySelect.appendChild(option);
+                        });
+
+                        serverLog('info', 'Categories fetched and cached', {
+                            count: cachedCategories.length,
+                            categories: cachedCategories
+                        });
+                    } else {
+                        serverLog('error', 'Failed to load categories', { status: response.status });
+                        cachedCategories = [];
+                    }
+                } catch (error) {
+                    serverLog('error', 'Categories load error', { error: error.message });
+                    cachedCategories = [];
+                }
+            } else {
+                serverLog('info', 'Using cached categories', {
+                    count: cachedCategories?.length || 0
+                });
+            }
+
+            // NOW load catalog schema for metadata fields (categories are already cached)
             try {
+                serverLog('info', 'Fetching catalog schema', { catalog: selectedCatalog });
                 const response = await fetch(
                     `/api/mobile/catalog-schema?catalog_id=${selectedCatalog}`,
                     {
@@ -499,15 +734,27 @@
 
                 if (response.ok) {
                     currentCatalogSchema = await response.json();
-                    updateMetadataFields();
+                    const metadataCount = currentCatalogSchema.metadata_fields ? currentCatalogSchema.metadata_fields.length : 0;
+                    const metadataNames = currentCatalogSchema.metadata_fields ? currentCatalogSchema.metadata_fields.map(f => f.column_name) : [];
+
+                    serverLog('info', 'Catalog schema loaded', {
+                        metadataFieldsCount: metadataCount,
+                        metadataFields: metadataNames
+                    });
+
+                    // Categories are already fetched above, so updateMetadataFields() will use correct cache
+                    await updateMetadataFields();
 
                     // Show metadata container if Mode 3 is selected
                     if (selectedMode === 'mode3') {
+                        serverLog('info', 'Mode 3 active, showing metadata container');
                         document.getElementById('metadataContainer').classList.add('visible');
                     }
+                } else {
+                    serverLog('error', 'Failed to load catalog schema', { status: response.status });
                 }
             } catch (error) {
-                console.error('Schema load error:', error);
+                serverLog('error', 'Schema load error', { error: error.message });
             }
 
             updateUploadButton();
@@ -515,6 +762,7 @@
 
         function selectMode(mode) {
             selectedMode = mode;
+            serverLog('info', 'Mode selected', { mode });
 
             // Update button states
             document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -535,9 +783,13 @@
                 productInfoSection.style.display = 'block';
 
                 // Show dynamic metadata fields only if catalog schema is loaded
-                if (currentCatalogSchema) {
+                if (currentCatalogSchema && currentCatalogSchema.metadata_fields) {
+                    serverLog('info', 'Showing metadata container', {
+                        fieldsCount: currentCatalogSchema.metadata_fields.length
+                    });
                     metadataContainer.classList.add('visible');
                 } else {
+                    serverLog('info', 'No catalog schema loaded yet, metadata hidden');
                     metadataContainer.classList.remove('visible');
                 }
             }
@@ -547,43 +799,230 @@
 
         function handleFileSelect(event) {
             selectedFile = event.target.files[0];
+            serverLog('info', 'File selected', {
+                hasFile: !!selectedFile,
+                fileName: selectedFile?.name,
+                fileSize: selectedFile?.size
+            });
 
             if (selectedFile) {
                 document.getElementById('fileName').textContent = selectedFile.name;
+
+                // Auto-populate filename in metadata field if it exists
+                const filenameInput = document.getElementById('meta_filename');
+                if (filenameInput && !filenameInput.value) {
+                    // Remove file extension and set as filename
+                    const nameWithoutExt = selectedFile.name.replace(/\.[^/.]+$/, '');
+                    filenameInput.value = nameWithoutExt;
+                    serverLog('info', 'Auto-populated filename metadata', { filename: nameWithoutExt });
+                }
+
+                // FIX: Clear old preview to prevent memory leak
+                const previewImg = document.getElementById('previewImage');
+                const previewContainer = document.getElementById('imagePreview');
+                if (previewImg.src && previewImg.src.startsWith('data:')) {
+                    previewImg.src = ''; // Clear old data URL
+                }
+
+                // Show image preview
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    previewContainer.classList.add('visible');
+                    serverLog('info', 'Image preview displayed');
+                };
+                reader.onerror = function() {
+                    reader.abort();
+                    serverLog('error', 'Failed to read image file');
+                };
+                reader.readAsDataURL(selectedFile);
             }
 
             updateUploadButton();
         }
 
-        function updateMetadataFields() {
-            if (!currentCatalogSchema || !currentCatalogSchema.metadata_fields) {
+        async function updateMetadataFields() {
+            if (!currentCatalogSchema) {
+                serverLog('warning', 'updateMetadataFields: No catalog schema loaded');
+                return;
+            }
+
+            if (!currentCatalogSchema.metadata_fields) {
+                serverLog('warning', 'updateMetadataFields: No metadata_fields in schema');
                 return;
             }
 
             const container = document.getElementById('metadataFields');
-            container.innerHTML = '';
 
-            currentCatalogSchema.metadata_fields.forEach(field => {
+            // FIX: Explicitly remove all child nodes for better memory cleanup
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (currentCatalogSchema.metadata_fields.length === 0) {
+                serverLog('warning', 'Catalog has 0 metadata fields - only base fields will show');
+                // Show base fields when no metadata available
+                document.getElementById('baseFields').style.display = 'block';
+                return;
+            }
+
+            // Hide base fields when metadata fields are available
+            document.getElementById('baseFields').style.display = 'none';
+
+            // PERFORMANCE FIX: Use cached categories instead of fetching again
+            const categories = cachedCategories || [];
+
+            if (categories.length === 0) {
+                serverLog('warning', 'No cached categories available for dropdown');
+            } else {
+                serverLog('info', 'Using cached categories', { count: categories.length });
+            }
+
+            const fieldNames = currentCatalogSchema.metadata_fields.map(f =>
+                `${f.column_name}(${f.data_type})`
+            );
+
+            serverLog('info', 'Creating metadata input fields', {
+                count: currentCatalogSchema.metadata_fields.length,
+                fields: fieldNames,
+                categoriesAvailable: categories.length
+            });
+
+            // PERFORMANCE FIX: Use DocumentFragment for batch DOM updates (single reflow)
+            const fragment = document.createDocumentFragment();
+
+            currentCatalogSchema.metadata_fields.forEach((field, index) => {
                 const fieldDiv = document.createElement('div');
                 fieldDiv.className = 'metadata-field';
 
                 const label = document.createElement('label');
                 label.textContent = field.display_name || field.column_name;
 
-                const input = document.createElement('input');
-                input.type = field.data_type === 'numeric' ? 'number' : 'text';
-                input.id = `meta_${field.column_name}`;
-                input.placeholder = `Optional`;
+                // PERFORMANCE FIX: Hoist toLowerCase() outside conditional
+                const fieldNameLower = field.column_name.toLowerCase();
 
-                fieldDiv.appendChild(label);
-                fieldDiv.appendChild(input);
-                container.appendChild(fieldDiv);
+                // CATEGORY DROPDOWN: Use cached categories
+                if (fieldNameLower === 'category' && categories.length > 0) {
+                    const select = document.createElement('select');
+                    select.id = `meta_${field.column_name}`;
+                    // PERFORMANCE FIX: Use CSS class instead of inline styles
+                    select.className = 'metadata-select';
+
+                    // Add empty option
+                    const emptyOption = document.createElement('option');
+                    emptyOption.value = '';
+                    emptyOption.textContent = '-- Select Category --';
+                    select.appendChild(emptyOption);
+
+                    // Add category options
+                    categories.forEach(cat => {
+                        const option = document.createElement('option');
+                        option.value = cat;
+                        option.textContent = cat;
+                        select.appendChild(option);
+                    });
+
+                    fieldDiv.appendChild(label);
+                    fieldDiv.appendChild(select);
+                    serverLog('info', 'Created category dropdown from cache', {
+                        categoriesCount: categories.length
+                    });
+                } else {
+                    // Regular text or number input
+                    const input = document.createElement('input');
+                    input.type = field.data_type === 'numeric' ? 'number' : 'text';
+                    input.id = `meta_${field.column_name}`;
+                    input.placeholder = `Optional`;
+
+                    fieldDiv.appendChild(label);
+                    fieldDiv.appendChild(input);
+                }
+
+                // Append to fragment instead of directly to DOM
+                fragment.appendChild(fieldDiv);
             });
+
+            // PERFORMANCE FIX: Single DOM append for all fields (one reflow instead of N)
+            container.appendChild(fragment);
+
+            serverLog('info', 'Metadata fields created successfully');
         }
 
         function updateUploadButton() {
-            const btn = document.getElementById('uploadBtn');
-            btn.disabled = !selectedFile || !selectedCatalog || !selectedMode;
+            if (!domCache) return; // FIX: Guard for DOM cache
+
+            const canUpload = !!(selectedFile && selectedCatalog && selectedMode);
+            domCache.uploadBtn.disabled = !canUpload;
+
+            const state = {
+                hasFile: !!selectedFile,
+                hasCatalog: !!selectedCatalog,
+                hasMode: !!selectedMode,
+                buttonEnabled: canUpload
+            };
+
+            serverLog('info', 'Upload button state updated', state);
+        }
+
+        // MEMORY LEAK FIX: Compress images with proper cleanup
+        async function compressImage(file, maxWidth = 1200, quality = 0.8) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+                reader.onload = function(e) {
+                    const img = new Image();
+
+                    img.onload = function() {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+
+                            if (width > maxWidth) {
+                                height = (height * maxWidth) / width;
+                                width = maxWidth;
+                            }
+
+                            canvas.width = width;
+                            canvas.height = height;
+
+                            // Use alpha: false for better JPEG performance
+                            const ctx = canvas.getContext('2d', { alpha: false });
+                            ctx.drawImage(img, 0, 0, width, height);
+
+                            canvas.toBlob((blob) => {
+                                // MEMORY CLEANUP: Release canvas and image resources
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                canvas.width = 0;
+                                canvas.height = 0;
+                                img.src = ''; // Release image memory
+
+                                resolve(new File([blob], file.name, {
+                                    type: 'image/jpeg',
+                                    lastModified: Date.now()
+                                }));
+                            }, 'image/jpeg', quality);
+                        } catch (error) {
+                            img.src = '';
+                            reject(error);
+                        }
+                    };
+
+                    img.onerror = function() {
+                        img.src = '';
+                        reject(new Error('Failed to load image'));
+                    };
+
+                    img.src = e.target.result;
+                };
+
+                reader.onerror = function() {
+                    reader.abort();
+                    reject(new Error('Failed to read file'));
+                };
+
+                reader.readAsDataURL(file);
+            });
         }
 
         async function uploadProduct() {
@@ -592,29 +1031,60 @@
                 return;
             }
 
-            document.getElementById('loadingIndicator').classList.add('visible');
-            document.getElementById('uploadBtn').disabled = true;
+            if (!domCache) return; // Guard for DOM cache
+
+            domCache.loadingIndicator.classList.add('visible');
+            domCache.uploadBtn.disabled = true;
+
+            let formData = null; // FIX: Track for cleanup
 
             try {
-                const formData = new FormData();
-                formData.append('image', selectedFile);
+                // FIX: Compress image before upload for better mobile performance
+                const compressedFile = await compressImage(selectedFile);
+                serverLog('info', 'Image compressed', {
+                    original: selectedFile.size,
+                    compressed: compressedFile.size,
+                    reduction: ((1 - compressedFile.size / selectedFile.size) * 100).toFixed(1) + '%'
+                });
+
+                formData = new FormData();
+                formData.append('image', compressedFile);
                 formData.append('catalog_id', selectedCatalog);
                 formData.append('mode', selectedMode);
 
                 // Add product info fields only for mode3
                 if (selectedMode === 'mode3') {
-                    formData.append('category', document.getElementById('category').value);
-                    formData.append('product_name', document.getElementById('productName').value);
-                    formData.append('sku', document.getElementById('sku').value);
+                    // FIX: Check if metadata fields exist first, otherwise use base fields
+                    // When catalog has metadata_schema, base fields are hidden and metadata fields are used
+                    const hasMetadataFields = currentCatalogSchema && currentCatalogSchema.metadata_fields && currentCatalogSchema.metadata_fields.length > 0;
 
-                    // Add dynamic metadata fields
-                    if (currentCatalogSchema) {
+                    if (hasMetadataFields) {
+                        // Use metadata fields (dynamically created)
                         currentCatalogSchema.metadata_fields.forEach(field => {
-                            const value = document.getElementById(`meta_${field.column_name}`)?.value;
-                            if (value) {
-                                formData.append(`metadata_${field.column_name}`, value);
+                            const fieldId = `meta_${field.column_name}`;
+                            const element = document.getElementById(fieldId);
+                            const value = element?.value;
+
+                            if (value && value.trim() !== '') {
+                                // Special handling for core fields (category, sku, name)
+                                if (field.column_name.toLowerCase() === 'category') {
+                                    formData.append('category', value);
+                                    serverLog('info', 'Category from metadata field', { category: value });
+                                } else if (field.column_name.toLowerCase() === 'sku') {
+                                    formData.append('sku', value);
+                                } else if (field.column_name.toLowerCase() === 'name' || field.column_name.toLowerCase() === 'product_name') {
+                                    formData.append('product_name', value);
+                                } else {
+                                    // All other metadata fields
+                                    formData.append(`metadata_${field.column_name}`, value);
+                                }
                             }
                         });
+                    } else {
+                        // Use base fields (when no metadata schema exists)
+                        formData.append('category', document.getElementById('category').value);
+                        formData.append('product_name', document.getElementById('productName').value);
+                        formData.append('sku', document.getElementById('sku').value);
                     }
                 }
 
@@ -656,15 +1126,21 @@
 
                     // Reset form
                     selectedFile = null;
-                    document.getElementById('photoInput').value = '';
-                    document.getElementById('fileName').textContent = '';
+                    domCache.photoInput.value = '';
+                    domCache.fileName.textContent = '';
+                    domCache.imagePreview.classList.remove('visible');
+                    domCache.previewImage.src = ''; // FIX: Clear preview URL
+                    updateUploadButton();
                 }
             } catch (error) {
                 console.error('Upload error:', error);
                 showMessage('messageContainer', 'Upload failed', 'error');
             } finally {
-                document.getElementById('loadingIndicator').classList.remove('visible');
-                document.getElementById('uploadBtn').disabled = false;
+                // FIX: Explicitly clear FormData and file reference for memory cleanup
+                formData = null;
+
+                domCache.loadingIndicator.classList.remove('visible');
+                domCache.uploadBtn.disabled = false;
             }
         }
 
@@ -689,6 +1165,12 @@
         }
 
         function showMessage(containerId, message, type) {
+            // FIX: Clear existing timeout to prevent memory leak
+            if (messageTimeout) {
+                clearTimeout(messageTimeout);
+                messageTimeout = null;
+            }
+
             const container = document.getElementById(containerId);
             const messageEl = document.createElement('div');
             messageEl.className = `message ${type}`;
@@ -697,11 +1179,48 @@
             container.appendChild(messageEl);
 
             if (type === 'success') {
-                setTimeout(() => {
+                messageTimeout = setTimeout(() => {
                     container.innerHTML = '';
+                    messageTimeout = null;
                 }, 5000);
             }
         }
+    </script>
+
+    <!-- Initialize Lucide Icons with enhanced error handling -->
+    <script>
+        // Lightweight icon manager for mobile page
+        window.reinitIcons = function() {
+            if (typeof lucide !== 'undefined') {
+                try {
+                    lucide.createIcons();
+                } catch (e) {
+                    console.error('[LUCIDE] Icon re-initialization failed:', e);
+                }
+            }
+        };
+
+        (function() {
+            function initIcons() {
+                if (typeof lucide === 'undefined') {
+                    console.warn('[LUCIDE] Failed to load Lucide icons library');
+                    return;
+                }
+
+                try {
+                    lucide.createIcons();
+                } catch (e) {
+                    console.error('[LUCIDE] Icon initialization failed:', e);
+                }
+            }
+
+            // Initialize immediately if DOM is ready, otherwise wait
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initIcons, { once: true });
+            } else {
+                initIcons();
+            }
+        })();
     </script>
 </body>
 </html>

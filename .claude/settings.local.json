@@ -12,7 +12,18 @@
       "Bash(cmd.exe /c \"del /F nul\")",
       "Bash(sqlite3:*)",
       "Bash(python:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(dir:*)",
+      "Bash(build_all_payloads.bat)",
+      "Bash(cmd /c build_all_payloads.bat)",
+      "Bash(timeout 3 tail:*)",
+      "Bash(pip install:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(du -sh:*)",
+      "Bash(find:*)",
+      "Bash(pip show:*)",
+      "WebSearch"
     ]
   },
   "enableAllProjectMcpServers": true,

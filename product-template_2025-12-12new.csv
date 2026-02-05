@@ -1,47 +1,47 @@
-filename,category,sku,name,description,brand,type
-IMG_1139.jpg,,GEN-NEW-001,New Generic Product,Fresh generic product image,Generic Brand,Standard
-Screenshot 2025-09-30 225158.png,,SCR-NEW-001,New Screenshot A,New interface screenshot,Tech Corp,UI Design
-Screenshot 2025-11-26 224031.png,,SCR-NEW-002,New Screenshot B,Updated dashboard design,Dashboard Inc,Software
-Screenshot 2025-11-26 234605.png,,SCR-NEW-003,New Screenshot C,New analytics panel,Data Systems,Analytics
-Screenshot 2025-11-26 234838.png,,SCR-NEW-004,New Screenshot D,Latest mobile interface,App Studio,Mobile
-Screenshot 2025-11-27 223223.png,,SCR-NEW-005,New Screenshot E,New web design,Web Masters,Web Design
-Screenshot 2025-11-28 111507.png,,SCR-NEW-006,New Screenshot F,Latest database interface,Data Tech,Database
-Gemini_Generated_Image_amwiymamwiymamwi.png,website,WEB-NEW-001,AI Image Hero V2,Updated AI imagery,Creative Studio,Hero Images
-Gemini_Generated_Image_cklaevcklaevckla (1).png,website,WEB-NEW-002,Creative Pack V2,New creative designs,Design Pack Co,Backgrounds
-Gemini_Generated_Image_cklaevcklaevckla.png,website,WEB-NEW-003,Abstract Bundle V2,Updated abstract designs,Abstract Designs,Design Assets
-Gemini_Generated_Image_md9s2lmd9s2lmd9s.png,website,WEB-NEW-004,Modern Design Kit,Contemporary design elements,Modern Design,Modern Design
-Screenshot 2025-09-19 233155.png,website,WEB-NEW-005,New Dashboard UI,Updated dashboard components,UI Systems,Components
-Screenshot 2025-09-19 233216.png,website,WEB-NEW-006,Mobile Interface V2,New responsive design,Mobile First,Mobile Design
-Screenshot 2025-09-19 233616.png,website,WEB-NEW-007,E-commerce Pro,Advanced store layout,E-Shop,Templates
-Screenshot 2025-09-30 113622.png,website,WEB-NEW-008,Business Template,New business layout,Web Agency,Web Templates
-Screenshot 2025-11-26 123141.png,website,WEB-NEW-009,Portfolio Theme V2,Updated portfolio design,Portfolio Pro,Portfolio
-Untitled design.png,website,WEB-NEW-010,Custom Landing Page,Bespoke landing page,Landing Page Pro,Landing Pages
-Screenshot 2025-11-28 125548.png,potplayer,MEDIA-NEW-001,Player Skin Modern,Fresh player design,Media Player Inc,Player Skins
-Screenshot 2025-11-28 130104.png,potplayer,MEDIA-NEW-002,Dark Theme V2,Updated dark interface,Theme Studio,UI Themes
-Screenshot 2025-11-28 132527.png,potplayer,MEDIA-NEW-003,Minimal Interface Pro,New minimal design,Minimal Tech,Minimal Design
-Screenshot 2025-11-28 135348.png,potplayer,MEDIA-NEW-004,Pro Controls V2,Updated player controls,Pro Media,Professional
-Screenshot 2025-11-28 135355.png,potplayer,MEDIA-NEW-005,Custom Skin Pro,New custom design,Custom Tech,Customization
-Screenshot 2025-11-28 135639.png,potplayer,MEDIA-NEW-006,Modern Theme V2,Latest modern design,Modern Studio,Modern Design
-Screenshot 2025-11-20 191259.png,imagematch,IMG-NEW-001,Visual Search Pro,Advanced visual search,Search Corp,Search Tools
-Screenshot 2025-11-20 191307.png,imagematch,IMG-NEW-002,AI Comparison Tool,New AI comparison,AI Vision,AI Tools
-Screenshot 2025-11-25 164455.png,imagematch,IMG-NEW-003,Product Matcher,Updated product matching,Match Systems,Product Tools
-Screenshot 2025-11-25 170722.png,imagematch,IMG-NEW-004,Similarity Engine,New similarity detection,Similarity Tech,Detection Tools
-Screenshot 2025-09-16 123009.png,extension,EXT-NEW-001,Extension Pack V2,Updated extension set,Browser Tech,Extensions
-Screenshot 2025-09-16 123648.png,extension,EXT-NEW-002,Plugin Suite Pro,Professional plugin set,Chrome Systems,Plugins
-Screenshot 2025-09-16 160052.png,extension,EXT-NEW-003,Dev Tools Pro,Advanced dev tools,Dev Tools Inc,Development
-Screenshot 2025-10-22 125149.png,extension,EXT-NEW-004,Productivity Pro,New productivity tools,Productivity Labs,Productivity
-Screenshot 2025-11-10 162743.png,extension,EXT-NEW-005,Customizer Pro,Advanced customizer,UI Custom,Customization
-Screenshot 2025-11-10 164331.png,extension,EXT-NEW-006,API Tool Pro,Professional API tools,API Labs,Integration
-Screenshot 2025-11-26 123127.png,extension,EXT-NEW-007,Security Pro,Enhanced security,Security Pro,Security
-Screenshot 2025-11-26 123131.png,extension,EXT-NEW-008,Performance Pro,New performance tools,Monitor Tech,Monitoring
-Screenshot 2025-12-01 022616.png,extension,EXT-NEW-009,Theme Pro,Professional themes,Theme Master,Theme Management
-Screenshot 2025-09-22 200846.png,coding,CODE-NEW-001,Editor Theme Pro,Professional editor theme,Editor Themes,Themes
-Screenshot 2025-09-26 122942.png,coding,CODE-NEW-002,Syntax Pack Pro,Advanced syntax tools,Code Studio,Code Tools
-Screenshot 2025-09-26 144155.png,coding,CODE-NEW-003,IDE Scheme Pro,Professional IDE setup,IDE Systems,Configuration
-Screenshot 2025-11-26 144526.png,coding,CODE-NEW-004,Icon Set Pro,Professional icon set,Icon Labs,Icons
-Screenshot 2025-11-24 234109 - Copy.png,clothing,CLO-NEW-001,T-Shirt Design Green,Green t-shirt design,Fashion Co,Apparel
-Screenshot 2025-11-24 234109.png,clothing,CLO-NEW-002,T-Shirt Design Yellow,Yellow t-shirt design,Fashion Co,Apparel
-Screenshot 2025-11-25 225929.png,clothing,CLO-NEW-003,Hoodie Mockup White,White hoodie mockup,Fashion Co,Apparel
-Screenshot 2025-11-25 225932.png,clothing,CLO-NEW-004,Hoodie Mockup Navy,Navy hoodie mockup,Fashion Co,Apparel
-Screenshot 2025-11-25 230228.png,clothing,CLO-NEW-005,Jacket Design Spring,Spring jacket design,Fashion Co,Outerwear
-Screenshot 2025-11-25 230303.png,clothing,CLO-NEW-006,Pants Template Sport,Sport pants design,Fashion Co,Bottoms
+filename,category,sku,name,description,brand,type,price,revenue
+IMG_1139.jpg,,GEN-NEW-001,New Generic Product,Fresh generic product image,Generic Brand,Standard,136.44,14094.92
+Screenshot 2025-09-30 225158.png,,SCR-NEW-001,New Screenshot A,New interface screenshot,Tech Corp,UI Design,52.55,13983.64
+Screenshot 2025-11-26 224031.png,,SCR-NEW-002,New Screenshot B,Updated dashboard design,Dashboard Inc,Software,287.68,48882.49
+Screenshot 2025-11-26 234605.png,,SCR-NEW-003,New Screenshot C,New analytics panel,Data Systems,Analytics,111.17,39803.52
+Screenshot 2025-11-26 234838.png,,SCR-NEW-004,New Screenshot D,Latest mobile interface,App Studio,Mobile,120.8,9491.32
+Screenshot 2025-11-27 223223.png,,SCR-NEW-005,New Screenshot E,New web design,Web Masters,Web Design,38.61,37177.8
+Screenshot 2025-11-28 111507.png,,SCR-NEW-006,New Screenshot F,Latest database interface,Data Tech,Database,40.15,38654.61
+Gemini_Generated_Image_amwiymamwiymamwi.png,website,WEB-NEW-001,AI Image Hero V2,Updated AI imagery,Creative Studio,Hero Images,241.43,31258.6
+Gemini_Generated_Image_cklaevcklaevckla (1).png,website,WEB-NEW-002,Creative Pack V2,New creative designs,Design Pack Co,Backgrounds,92.39,4193.01
+Gemini_Generated_Image_cklaevcklaevckla.png,website,WEB-NEW-003,Abstract Bundle V2,Updated abstract designs,Abstract Designs,Design Assets,187.09,3726.1
+Gemini_Generated_Image_md9s2lmd9s2lmd9s.png,website,WEB-NEW-004,Modern Design Kit,Contemporary design elements,Modern Design,Modern Design,29.18,12057.93
+Screenshot 2025-09-19 233155.png,website,WEB-NEW-005,New Dashboard UI,Updated dashboard components,UI Systems,Components,154.9,13823.52
+Screenshot 2025-09-19 233216.png,website,WEB-NEW-006,Mobile Interface V2,New responsive design,Mobile First,Mobile Design,299.77,29329.31
+Screenshot 2025-09-19 233616.png,website,WEB-NEW-007,E-commerce Pro,Advanced store layout,E-Shop,Templates,253.26,25567.69
+Screenshot 2025-09-30 113622.png,website,WEB-NEW-008,Business Template,New business layout,Web Agency,Web Templates,293.11,9615.86
+Screenshot 2025-11-26 123141.png,website,WEB-NEW-009,Portfolio Theme V2,Updated portfolio design,Portfolio Pro,Portfolio,257.49,25566.99
+Untitled design.png,website,WEB-NEW-010,Custom Landing Page,Bespoke landing page,Landing Page Pro,Landing Pages,158.69,29149.14
+Screenshot 2025-11-28 125548.png,potplayer,MEDIA-NEW-001,Player Skin Modern,Fresh player design,Media Player Inc,Player Skins,284.4,21789.61
+Screenshot 2025-11-28 130104.png,potplayer,MEDIA-NEW-002,Dark Theme V2,Updated dark interface,Theme Studio,UI Themes,54.12,40794.58
+Screenshot 2025-11-28 132527.png,potplayer,MEDIA-NEW-003,Minimal Interface Pro,New minimal design,Minimal Tech,Minimal Design,97.48,5184.5
+Screenshot 2025-11-28 135348.png,potplayer,MEDIA-NEW-004,Pro Controls V2,Updated player controls,Pro Media,Professional,23.32,13028.57
+Screenshot 2025-11-28 135355.png,potplayer,MEDIA-NEW-005,Custom Skin Pro,New custom design,Custom Tech,Customization,192.64,6177.5
+Screenshot 2025-11-28 135639.png,potplayer,MEDIA-NEW-006,Modern Theme V2,Latest modern design,Modern Studio,Modern Design,142.27,42154.27
+Screenshot 2025-11-20 191259.png,imagematch,IMG-NEW-001,Visual Search Pro,Advanced visual search,Search Corp,Search Tools,261.13,5540.85
+Screenshot 2025-11-20 191307.png,imagematch,IMG-NEW-002,AI Comparison Tool,New AI comparison,AI Vision,AI Tools,286.46,14818.15
+Screenshot 2025-11-25 164455.png,imagematch,IMG-NEW-003,Product Matcher,Updated product matching,Match Systems,Product Tools,146.19,1121.79
+Screenshot 2025-11-25 170722.png,imagematch,IMG-NEW-004,Similarity Engine,New similarity detection,Similarity Tech,Detection Tools,93.55,21948.17
+Screenshot 2025-09-16 123009.png,extension,EXT-NEW-001,Extension Pack V2,Updated extension set,Browser Tech,Extensions,162.1,29156.07
+Screenshot 2025-09-16 123648.png,extension,EXT-NEW-002,Plugin Suite Pro,Professional plugin set,Chrome Systems,Plugins,132.44,46024.63
+Screenshot 2025-09-16 160052.png,extension,EXT-NEW-003,Dev Tools Pro,Advanced dev tools,Dev Tools Inc,Development,201.01,11703.96
+Screenshot 2025-10-22 125149.png,extension,EXT-NEW-004,Productivity Pro,New productivity tools,Productivity Labs,Productivity,43.62,23380.34
+Screenshot 2025-11-10 162743.png,extension,EXT-NEW-005,Customizer Pro,Advanced customizer,UI Custom,Customization,109.05,20567.03
+Screenshot 2025-11-10 164331.png,extension,EXT-NEW-006,API Tool Pro,Professional API tools,API Labs,Integration,236.34,15232.05
+Screenshot 2025-11-26 123127.png,extension,EXT-NEW-007,Security Pro,Enhanced security,Security Pro,Security,204.27,26833.25
+Screenshot 2025-11-26 123131.png,extension,EXT-NEW-008,Performance Pro,New performance tools,Monitor Tech,Monitoring,228.23,3506.71
+Screenshot 2025-12-01 022616.png,extension,EXT-NEW-009,Theme Pro,Professional themes,Theme Master,Theme Management,121.22,18259.18
+Screenshot 2025-09-22 200846.png,coding,CODE-NEW-001,Editor Theme Pro,Professional editor theme,Editor Themes,Themes,232.24,3784.61
+Screenshot 2025-09-26 122942.png,coding,CODE-NEW-002,Syntax Pack Pro,Advanced syntax tools,Code Studio,Code Tools,173.63,45113.79
+Screenshot 2025-09-26 144155.png,coding,CODE-NEW-003,IDE Scheme Pro,Professional IDE setup,IDE Systems,Configuration,291.11,32851.06
+Screenshot 2025-11-26 144526.png,coding,CODE-NEW-004,Icon Set Pro,Professional icon set,Icon Labs,Icons,59.54,17602.96
+Screenshot 2025-11-24 234109 - Copy.png,clothing,CLO-NEW-001,T-Shirt Design Green,Green t-shirt design,Fashion Co,Apparel,164.71,36692.76
+Screenshot 2025-11-24 234109.png,clothing,CLO-NEW-002,T-Shirt Design Yellow,Yellow t-shirt design,Fashion Co,Apparel,88.86,37580.21
+Screenshot 2025-11-25 225929.png,clothing,CLO-NEW-003,Hoodie Mockup White,White hoodie mockup,Fashion Co,Apparel,230.07,1995.73
+Screenshot 2025-11-25 225932.png,clothing,CLO-NEW-004,Hoodie Mockup Navy,Navy hoodie mockup,Fashion Co,Apparel,276.55,44540.02
+Screenshot 2025-11-25 230228.png,clothing,CLO-NEW-005,Jacket Design Spring,Spring jacket design,Fashion Co,Outerwear,131.8,48140.83
+Screenshot 2025-11-25 230303.png,clothing,CLO-NEW-006,Pants Template Sport,Sport pants design,Fashion Co,Bottoms,23.41,33856.46

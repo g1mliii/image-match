@@ -17,17 +17,18 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import contextmanager
+from path_manager import get_backend_dir, get_catalogs_dir, get_config_dir, get_database_path
 
 logger = logging.getLogger(__name__)
 
 # Directory paths
-BACKEND_DIR = os.path.dirname(__file__)
-CATALOGS_DIR = os.path.join(BACKEND_DIR, 'catalogs')
-CONFIG_DIR = os.path.join(BACKEND_DIR, 'config')
+BACKEND_DIR = get_backend_dir()
+CATALOGS_DIR = get_catalogs_dir()
+CONFIG_DIR = get_config_dir()
 ACTIVE_CATALOGS_FILE = os.path.join(CONFIG_DIR, 'active_catalogs.json')
-DEFAULT_DB_PATH = os.path.join(BACKEND_DIR, 'product_matching.db')
+DEFAULT_DB_PATH = get_database_path()
 
-# Ensure directories exist
+# Ensure directories exist (get_catalogs_dir() and get_config_dir() already do this)
 os.makedirs(CATALOGS_DIR, exist_ok=True)
 os.makedirs(CONFIG_DIR, exist_ok=True)
 
@@ -1477,7 +1478,7 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
 
             if not cursor.fetchone():
                 # No metadata_schema - return None
-                logger.info(f"[CSV-EXTRACT] No metadata_schema in database, skipping {section_name} CSV extraction")
+                logger.debug(f"[CSV-EXTRACT] No metadata_schema in database, skipping {section_name} CSV extraction")
                 return None
 
             # Get column definitions from metadata_schema
@@ -1493,10 +1494,10 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
             product_count = cursor.fetchone()[0]
 
             if product_count == 0:
-                logger.info(f"[CSV-EXTRACT] No {section_name} products found in database, skipping CSV")
+                logger.debug(f"[CSV-EXTRACT] No {section_name} products found in database, skipping CSV")
                 return None
 
-            logger.info(f"[CSV-EXTRACT] Starting {section_name} CSV extraction from {product_count} products...")
+            logger.debug(f"[CSV-EXTRACT] Starting {section_name} CSV extraction from {product_count} products...")
 
             # Build CSV using StringIO for better performance
             csv_buffer = io.StringIO()
@@ -1857,6 +1858,13 @@ def load_snapshot_to_main_db(snapshot_file: str) -> Dict[str, Any]:
         
         # Copy snapshot to main database
         shutil.copy2(snapshot_path, DEFAULT_DB_PATH)
+
+        # CRITICAL: Close all database connections after replacing the database file
+        # This prevents "database disk image is malformed" errors when the connection pool
+        # holds stale connections to the old database file
+        from database import close_all_db_connections
+        close_all_db_connections()
+        logger.info("Closed all database connections after snapshot load")
 
         # NOTE: Image copying/management disabled
         # All snapshots share the same backend/uploads/ folder to save space.

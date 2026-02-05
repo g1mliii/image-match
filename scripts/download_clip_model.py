@@ -30,7 +30,7 @@ def download_clip_model():
     model_path = cache_dir / f'models--sentence-transformers--{model_name}'
     
     if model_path.exists():
-        print(f"\n✓ Model already downloaded: {model_name}")
+        print(f"\n[OK] Model already downloaded: {model_name}")
         print(f"  Location: {model_path}")
         return True
     
@@ -44,21 +44,21 @@ def download_clip_model():
         print("\nInitializing download...")
         model = SentenceTransformer(model_name)
         
-        print(f"\n✓ Model downloaded successfully!")
+        print(f"\n[OK] Model downloaded successfully!")
         print(f"  Location: {cache_dir}")
         print(f"  Model: {model_name}")
-        
+
         # Verify
         if model_path.exists():
-            print("\n✓ Verification passed - model is cached")
+            print("\n[OK] Verification passed - model is cached")
         else:
-            print("\n⚠ Warning: Model downloaded but cache location unexpected")
+            print("\n[WARNING] Model downloaded but cache location unexpected")
             print(f"  Expected: {model_path}")
         
         return True
         
     except Exception as e:
-        print(f"\n✗ Error downloading model: {e}")
+        print(f"\n[ERROR] Error downloading model: {e}")
         print("\nTroubleshooting:")
         print("1. Check your internet connection")
         print("2. Try again later")

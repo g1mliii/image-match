@@ -4,11 +4,12 @@ Centralized configuration to avoid circular import issues
 """
 import os
 import logging
+from path_manager import get_backend_dir, get_config_dir
 
 logger = logging.getLogger(__name__)
 
 # Backend directory
-BACKEND_DIR = os.path.dirname(__file__)
+BACKEND_DIR = get_backend_dir()
 
 # ============ Debug Mode Configuration ============
 # Debug mode enables verbose logging for troubleshooting
@@ -40,7 +41,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-CONFIG_DIR = os.path.join(BACKEND_DIR, 'config')
+CONFIG_DIR = get_config_dir()
 MOBILE_CONFIG_FILE = os.path.join(CONFIG_DIR, 'mobile_config.json')
 
 # Cache for performance (avoid repeated file I/O)
