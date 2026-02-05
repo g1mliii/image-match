@@ -1,0 +1,47 @@
+filename,sku,name,category,price,brand,color
+Screenshot 2025-11-24 234109.png,CLO-001,Winter Jacket,clothing,89.99,FashionCo,Blue
+Screenshot 2025-11-24 234109 - Copy.png,CLO-002,Winter Jacket Copy,clothing,89.99,FashionCo,Blue
+Screenshot 2025-11-25 225929.png,CLO-003,Summer Dress,clothing,45.00,StyleHub,White
+Screenshot 2025-11-25 225932.png,CLO-004,Summer Top,clothing,35.00,StyleHub,Pink
+Screenshot 2025-11-25 230228.png,CLO-005,Casual Wear,clothing,55.00,StyleHub,Gray
+Screenshot 2025-11-25 230303.png,CLO-006,Evening Dress,clothing,120.00,StyleHub,Black
+Screenshot 2025-09-22 200846.png,COD-001,Dark Theme Editor,coding,0,DevTools,Dark
+Screenshot 2025-09-26 122942.png,COD-002,Terminal Setup,coding,0,DevTools,Green
+Screenshot 2025-09-26 144155.png,COD-003,Code Review,coding,0,DevTools,Light
+Screenshot 2025-11-26 144526.png,COD-004,Debug Session,coding,0,DevTools,Mixed
+Screenshot 2025-09-16 123009.png,EXT-001,Extension Panel,extension,0,WebTools,White
+Screenshot 2025-09-16 123648.png,EXT-002,Extension Settings,extension,0,WebTools,Gray
+Screenshot 2025-09-16 160052.png,EXT-003,Extension Popup,extension,0,WebTools,Blue
+Screenshot 2025-10-22 125149.png,EXT-004,Extension Update,extension,0,WebTools,Green
+Screenshot 2025-11-10 162743.png,EXT-005,Ad Blocker,extension,0,WebTools,Red
+Screenshot 2025-11-10 164331.png,EXT-006,Privacy Settings,extension,0,WebTools,Purple
+Screenshot 2025-11-26 123127.png,EXT-007,New Extension,extension,0,WebTools,Orange
+Screenshot 2025-11-26 123131.png,EXT-008,Extension Test,extension,0,WebTools,Yellow
+Screenshot 2025-12-01 022616.png,EXT-009,Late Night Extension,extension,0,WebTools,Dark
+Screenshot 2025-11-20 191259.png,IMG-001,Match Results,imagematch,0,CatalogMatch,Mixed
+Screenshot 2025-11-20 191307.png,IMG-002,Match Details,imagematch,0,CatalogMatch,Mixed
+Screenshot 2025-11-25 164455.png,IMG-003,Catalog Browse,imagematch,0,CatalogMatch,White
+Screenshot 2025-11-25 170722.png,IMG-004,Product Grid,imagematch,0,CatalogMatch,Light
+Screenshot 2025-11-28 125548.png,POT-001,Video Player,potplayer,0,MediaTools,Dark
+Screenshot 2025-11-28 130104.png,POT-002,Playlist View,potplayer,0,MediaTools,Dark
+Screenshot 2025-11-28 132527.png,POT-003,Settings Menu,potplayer,0,MediaTools,Gray
+Screenshot 2025-11-28 135348.png,POT-004,Playback Options,potplayer,0,MediaTools,Dark
+Screenshot 2025-11-28 135355.png,POT-005,Audio Settings,potplayer,0,MediaTools,Dark
+Screenshot 2025-11-28 135639.png,POT-006,Video Settings,potplayer,0,MediaTools,Dark
+Gemini_Generated_Image_amwiymamwiymamwi.png,WEB-001,AI Banner,website,25.00,AIArt,Colorful
+Gemini_Generated_Image_cklaevcklaevckla (1).png,WEB-002,AI Hero Copy,website,25.00,AIArt,Colorful
+Gemini_Generated_Image_cklaevcklaevckla.png,WEB-003,AI Hero,website,25.00,AIArt,Colorful
+Gemini_Generated_Image_md9s2lmd9s2lmd9s.png,WEB-004,AI Background,website,25.00,AIArt,Colorful
+Screenshot 2025-09-19 233155.png,WEB-005,Homepage V1,website,0,WebDesign,White
+Screenshot 2025-09-19 233216.png,WEB-006,Homepage V2,website,0,WebDesign,White
+Screenshot 2025-09-19 233616.png,WEB-007,About Page,website,0,WebDesign,Blue
+Screenshot 2025-09-30 113622.png,WEB-008,Contact Page,website,0,WebDesign,Green
+Screenshot 2025-11-26 123141.png,WEB-009,Blog Page,website,0,WebDesign,White
+Untitled design.png,WEB-010,Design Asset,website,15.00,DesignCo,Mixed
+IMG_1139.jpg,ROOT-001,Phone Capture,personal,0,Apple,Natural
+Screenshot 2025-09-30 225158.png,ROOT-002,Misc Item 1,uncategorized,0,Misc,Mixed
+Screenshot 2025-11-26 224031.png,ROOT-003,Misc Item 2,uncategorized,0,Misc,Mixed
+Screenshot 2025-11-26 234605.png,ROOT-004,Misc Item 3,uncategorized,0,Misc,Dark
+Screenshot 2025-11-26 234838.png,ROOT-005,Misc Item 4,uncategorized,0,Misc,Light
+Screenshot 2025-11-27 223223.png,ROOT-006,Misc Item 5,uncategorized,0,Misc,Mixed
+Screenshot 2025-11-28 111507.png,ROOT-007,Misc Item 6,uncategorized,0,Misc,Light

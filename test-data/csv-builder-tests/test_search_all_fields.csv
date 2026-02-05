@@ -1,0 +1,47 @@
+sku,name,category,price,description,notes,tags
+CLO-001,Winter Jacket,clothing,89.99,Screenshot 2025-11-24 234109 shows our jacket,winter collection,jacket
+CLO-002,Winter Copy,clothing,89.99,Duplicate item,File: Screenshot 2025-11-24 234109 - Copy,duplicate
+CLO-003,Summer Dress,clothing,45.00,Light summer wear,Reference: Screenshot 2025-11-25 225929,dress
+CLO-004,Summer Top,clothing,35.00,Screenshot 2025-11-25 225932 casual top,summer line,top
+CLO-005,Casual Wear,clothing,55.00,Everyday clothing,See Screenshot 2025-11-25 230228,casual
+CLO-006,Evening Dress,clothing,120.00,Formal wear Screenshot 2025-11-25 230303,evening,formal
+COD-001,Dark Editor,coding,0,Screenshot 2025-09-22 200846 dark theme,dev tools,editor
+COD-002,Terminal,coding,0,Config shown in Screenshot 2025-09-26 122942,terminal,config
+COD-003,Code Review,coding,0,Review session,Screenshot 2025-09-26 144155 capture,review
+COD-004,Debug View,coding,0,Debugging Screenshot 2025-11-26 144526,debug,code
+EXT-001,Extension Panel,extension,0,Screenshot 2025-09-16 123009 panel view,browser,panel
+EXT-002,Settings,extension,0,Extension settings,Screenshot 2025-09-16 123648 config,settings
+EXT-003,Popup,extension,0,Screenshot 2025-09-16 160052 popup window,extension,popup
+EXT-004,Update Screen,extension,0,Extension update,Screenshot 2025-10-22 125149,update
+EXT-005,Ad Blocker,extension,0,Screenshot 2025-11-10 162743 blocker,privacy,adblock
+EXT-006,Privacy Tool,extension,0,Privacy settings,Screenshot 2025-11-10 164331,privacy
+EXT-007,New Extension,extension,0,Screenshot 2025-11-26 123127 new install,new,install
+EXT-008,Extension Test,extension,0,Testing Screenshot 2025-11-26 123131,test,qa
+EXT-009,Late Work,extension,0,Screenshot 2025-12-01 022616 late night,late,work
+IMG-001,Match Results,imagematch,0,Results from Screenshot 2025-11-20 191259,matching,results
+IMG-002,Match Details,imagematch,0,Screenshot 2025-11-20 191307 detail view,matching,details
+IMG-003,Catalog Browse,imagematch,0,Browsing view,Screenshot 2025-11-25 164455,catalog
+IMG-004,Product Grid,imagematch,0,Screenshot 2025-11-25 170722 grid layout,products,grid
+POT-001,Video Player,potplayer,0,Screenshot 2025-11-28 125548 player UI,media,player
+POT-002,Playlist,potplayer,0,Playlist view,Screenshot 2025-11-28 130104,playlist
+POT-003,Settings,potplayer,0,Screenshot 2025-11-28 132527 settings menu,settings,config
+POT-004,Playback,potplayer,0,Playback options,Screenshot 2025-11-28 135348,playback
+POT-005,Audio,potplayer,0,Screenshot 2025-11-28 135355 audio config,audio,settings
+POT-006,Video Config,potplayer,0,Video settings,Screenshot 2025-11-28 135639,video
+WEB-001,AI Banner,website,25.00,Gemini_Generated_Image_amwiymamwiymamwi banner,ai,banner
+WEB-002,AI Hero Copy,website,25.00,Hero section,Gemini_Generated_Image_cklaevcklaevckla (1),hero
+WEB-003,AI Hero,website,25.00,Gemini_Generated_Image_cklaevcklaevckla main hero,ai,hero
+WEB-004,AI Background,website,25.00,Background image,Gemini_Generated_Image_md9s2lmd9s2lmd9s,background
+WEB-005,Homepage V1,website,0,Screenshot 2025-09-19 233155 homepage,home,v1
+WEB-006,Homepage V2,website,0,Alternative homepage,Screenshot 2025-09-19 233216,home
+WEB-007,About Page,website,0,Screenshot 2025-09-19 233616 about us,about,page
+WEB-008,Contact Page,website,0,Contact form,Screenshot 2025-09-30 113622,contact
+WEB-009,Blog Page,website,0,Screenshot 2025-11-26 123141 blog layout,blog,content
+WEB-010,Design Asset,website,15.00,Untitled design file,design,asset
+ROOT-001,Phone Photo,personal,0,IMG_1139 from phone camera,phone,photo
+ROOT-002,Misc Item 1,uncategorized,0,Screenshot 2025-09-30 225158 misc,misc,root
+ROOT-003,Misc Item 2,uncategorized,0,Root level,Screenshot 2025-11-26 224031,misc
+ROOT-004,Misc Item 3,uncategorized,0,Screenshot 2025-11-26 234605 late capture,misc,late
+ROOT-005,Misc Item 4,uncategorized,0,Another misc,Screenshot 2025-11-26 234838,misc
+ROOT-006,Misc Item 5,uncategorized,0,Screenshot 2025-11-27 223223 capture,misc,root
+ROOT-007,Misc Item 6,uncategorized,0,Final misc,Screenshot 2025-11-28 111507,misc

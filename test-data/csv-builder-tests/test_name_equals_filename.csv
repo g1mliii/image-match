@@ -1,0 +1,47 @@
+sku,name,category,price,brand
+CLO-001,Screenshot 2025-11-24 234109,clothing,89.99,FashionCo
+CLO-002,Screenshot 2025-11-24 234109 - Copy,clothing,89.99,FashionCo
+CLO-003,Screenshot 2025-11-25 225929,clothing,45.00,StyleHub
+CLO-004,Screenshot 2025-11-25 225932,clothing,35.00,StyleHub
+CLO-005,Screenshot 2025-11-25 230228,clothing,55.00,StyleHub
+CLO-006,Screenshot 2025-11-25 230303,clothing,120.00,StyleHub
+COD-001,Screenshot 2025-09-22 200846,coding,0,DevTools
+COD-002,Screenshot 2025-09-26 122942,coding,0,DevTools
+COD-003,Screenshot 2025-09-26 144155,coding,0,DevTools
+COD-004,Screenshot 2025-11-26 144526,coding,0,DevTools
+EXT-001,Screenshot 2025-09-16 123009,extension,0,WebTools
+EXT-002,Screenshot 2025-09-16 123648,extension,0,WebTools
+EXT-003,Screenshot 2025-09-16 160052,extension,0,WebTools
+EXT-004,Screenshot 2025-10-22 125149,extension,0,WebTools
+EXT-005,Screenshot 2025-11-10 162743,extension,0,WebTools
+EXT-006,Screenshot 2025-11-10 164331,extension,0,WebTools
+EXT-007,Screenshot 2025-11-26 123127,extension,0,WebTools
+EXT-008,Screenshot 2025-11-26 123131,extension,0,WebTools
+EXT-009,Screenshot 2025-12-01 022616,extension,0,WebTools
+IMG-001,Screenshot 2025-11-20 191259,imagematch,0,CatalogMatch
+IMG-002,Screenshot 2025-11-20 191307,imagematch,0,CatalogMatch
+IMG-003,Screenshot 2025-11-25 164455,imagematch,0,CatalogMatch
+IMG-004,Screenshot 2025-11-25 170722,imagematch,0,CatalogMatch
+POT-001,Screenshot 2025-11-28 125548,potplayer,0,MediaTools
+POT-002,Screenshot 2025-11-28 130104,potplayer,0,MediaTools
+POT-003,Screenshot 2025-11-28 132527,potplayer,0,MediaTools
+POT-004,Screenshot 2025-11-28 135348,potplayer,0,MediaTools
+POT-005,Screenshot 2025-11-28 135355,potplayer,0,MediaTools
+POT-006,Screenshot 2025-11-28 135639,potplayer,0,MediaTools
+WEB-001,Gemini_Generated_Image_amwiymamwiymamwi,website,25.00,AIArt
+WEB-002,Gemini_Generated_Image_cklaevcklaevckla (1),website,25.00,AIArt
+WEB-003,Gemini_Generated_Image_cklaevcklaevckla,website,25.00,AIArt
+WEB-004,Gemini_Generated_Image_md9s2lmd9s2lmd9s,website,25.00,AIArt
+WEB-005,Screenshot 2025-09-19 233155,website,0,WebDesign
+WEB-006,Screenshot 2025-09-19 233216,website,0,WebDesign
+WEB-007,Screenshot 2025-09-19 233616,website,0,WebDesign
+WEB-008,Screenshot 2025-09-30 113622,website,0,WebDesign
+WEB-009,Screenshot 2025-11-26 123141,website,0,WebDesign
+WEB-010,Untitled design,website,15.00,DesignCo
+ROOT-001,IMG_1139,personal,0,Apple
+ROOT-002,Screenshot 2025-09-30 225158,uncategorized,0,Misc
+ROOT-003,Screenshot 2025-11-26 224031,uncategorized,0,Misc
+ROOT-004,Screenshot 2025-11-26 234605,uncategorized,0,Misc
+ROOT-005,Screenshot 2025-11-26 234838,uncategorized,0,Misc
+ROOT-006,Screenshot 2025-11-27 223223,uncategorized,0,Misc
+ROOT-007,Screenshot 2025-11-28 111507,uncategorized,0,Misc

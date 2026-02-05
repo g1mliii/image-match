@@ -97,12 +97,12 @@
             </div>
             <div class="help-text" id="builderHelp" style="display: none; margin-top: 15px; text-align: left;">
                 <p><strong>WHAT IS THE CSV BUILDER?</strong></p>
-                <p>The CSV Builder helps you create or import CSV files with product metadata that matches your product images.</p>
+                <p>The CSV Builder helps you create CSV files that link product metadata to your images for advanced matching.</p>
                 <p><strong>HOW IT WORKS:</strong></p>
-                <p>1. Upload your product images OR import a CSV file directly</p>
-                <p>2. Link data to images using matching strategies, preview detected columns</p>
-                <p>3. Export or load directly to main app</p>
-                <p><strong>DYNAMIC COLUMNS:</strong> Any CSV columns you upload will be detected and available for weighted matching in the main app!</p>
+                <p>1. Upload a folder of product images, OR import a complete CSV directly</p>
+                <p>2. If you uploaded images, import existing product data and link it using filename matching strategies</p>
+                <p>3. Preview the linked data, then export or load directly to the main app</p>
+                <p><strong>DYNAMIC COLUMNS:</strong> Any columns in your CSV (brand, size, color, material, etc.) will be auto-detected and available for weighted matching in the main app!</p>
             </div>
             <button onclick="closeAndReturn()" class="btn-link">CLOSE</button>
             <span id="targetSection" style="margin-left: 10px; font-size: 0.9em; color: #666;"></span>
@@ -133,9 +133,9 @@
                 </div>
                 <div class="help-text" id="step1Help" style="display: none; margin-bottom: 20px;">
                     <p><strong>TWO WAYS TO START:</strong></p>
-                    <p><strong>OPTION 1: Upload Images</strong> - Drop a folder of images. Filenames will be extracted and you can link CSV data in the next step.</p>
-                    <p><strong>OPTION 2: Import CSV Directly</strong> - If you already have a complete CSV with all data, import it directly.</p>
-                    <p><strong>SUPPORTED FORMATS:</strong> Images (JPG, PNG, WebP), CSV files</p>
+                    <p><strong>OPTION 1: Upload Images</strong> - Drop a folder of product images. Filenames and categories (from folder names) will be extracted. In the next step, you can import a CSV to link metadata to your images.</p>
+                    <p><strong>OPTION 2: Import CSV Directly</strong> - If you already have a CSV with all your product data (including a filename column), import it directly. Any columns you include will be auto-detected and available for weighted matching.</p>
+                    <p><strong>SUPPORTED FORMATS:</strong> Images (JPG, PNG, WebP, GIF), CSV files</p>
                 </div>
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
@@ -174,13 +174,15 @@
                     <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
                 </div>
                 <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>LINK DATA TO IMAGES:</strong></p>
-                    <p>If you uploaded images, import a CSV to link product data to your images using the matching strategies below.</p>
+                    <p><strong>LINK METADATA TO IMAGES:</strong></p>
+                    <p>Import a CSV file to link product metadata to your uploaded images. The linking strategy determines how image filenames are matched to CSV data.</p>
                     <p><strong>LINKING STRATEGIES:</strong></p>
-                    <p>• <strong>Filename = SKU:</strong> Use image filename (without extension) as SKU</p>
-                    <p>• <strong>Filename contains SKU:</strong> Extract SKU pattern from filename</p>
-                    <p>• <strong>Folder = SKU:</strong> Use parent folder name as SKU</p>
-                    <p>• <strong>Fuzzy match:</strong> Match filename to product name</p>
+                    <p>• <strong>Filename = SKU:</strong> Image filename matches CSV SKU field • product123.jpg → SKU "product123"</p>
+                    <p>• <strong>Filename Contains SKU:</strong> Extract SKU from complex filenames • IMG_ABC-123_front.jpg → finds "ABC-123"</p>
+                    <p>• <strong>CSV Has Image Column:</strong> CSV has "filename", "product", or "image" column with filenames</p>
+                    <p>• <strong>Product Name Match:</strong> Fuzzy match filename to CSV "name" field (handles variations)</p>
+                    <p>• <strong>Search All Fields:</strong> Check all columns including edge cases (SKU=name, etc.)</p>
+                    <p><strong>TIP:</strong> Start with "Filename = SKU" (most common). If your CSV has a column listing image filenames, use "CSV Has Image Column". For messy data, try "Search All Fields".</p>
                 </div>
 
                 <!-- Import Panel (shown when images were uploaded) -->
@@ -206,42 +208,27 @@
                             <label>
                                 <input type="radio" name="linkStrategy" value="filename_equals_sku" checked onchange="previewLinking()">
                                 <span>Filename = SKU</span>
-                                <small>Remove extension, use as SKU</small>
+                                <small>Image filename (no ext) matches CSV SKU • product123.jpg → SKU "product123"</small>
                             </label>
                             <label>
                                 <input type="radio" name="linkStrategy" value="filename_contains_sku" onchange="previewLinking()">
-                                <span>Filename contains SKU</span>
-                                <small>Extract SKU pattern from filename</small>
-                            </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="folder_equals_sku" onchange="previewLinking()">
-                                <span>Folder name = SKU</span>
-                                <small>Use parent folder as SKU</small>
-                            </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="fuzzy_name" onchange="previewLinking()">
-                                <span>Fuzzy name matching</span>
-                                <small>Match filename to product name</small>
-                            </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="sku_equals_filename" onchange="previewLinking()">
-                                <span>SKU = Image Filename</span>
-                                <small>Metadata SKU matches image filename</small>
+                                <span>Filename Contains SKU</span>
+                                <small>Extract SKU from filename • IMG_ABC-123_front.jpg → finds "ABC-123" in CSV SKU</small>
                             </label>
                             <label>
                                 <input type="radio" name="linkStrategy" value="metadata_filename" onchange="previewLinking()">
-                                <span>Metadata Filename Column</span>
-                                <small>CSV has filename/image column</small>
+                                <span>CSV Has Image Column</span>
+                                <small>CSV has "filename", "product", or "image" column with image filenames</small>
                             </label>
                             <label>
-                                <input type="radio" name="linkStrategy" value="name_equals_filename" onchange="previewLinking()">
-                                <span>Name = Image Filename</span>
-                                <small>Product name matches image filename</small>
+                                <input type="radio" name="linkStrategy" value="fuzzy_name" onchange="previewLinking()">
+                                <span>Product Name Match</span>
+                                <small>Fuzzy match filename to CSV "name" field • handles variations & typos</small>
                             </label>
                             <label>
                                 <input type="radio" name="linkStrategy" value="search_all_fields" onchange="previewLinking()">
                                 <span>Search All Fields</span>
-                                <small>Check any metadata column for match</small>
+                                <small>Check SKU, name, and all columns • catches edge cases like "SKU is name"</small>
                             </label>
                         </div>
 
@@ -267,7 +254,7 @@
                 </div>
 
                 <!-- Column Preview Panel -->
-                <div id="columnPreviewPanel" style="margin-top: 20px; padding: 15px; border: 2px solid #000; background: #f9f9f9;">
+                <div id="columnPreviewPanel" style="margin-top: 20px; padding: 15px; border: 2px solid #000; background: #f5f0e6;">
                     <h3>DETECTED COLUMNS</h3>
                     <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">These columns will be available for weighted matching in the main app.</p>
                     <div id="detectedColumnsContainer">
@@ -301,11 +288,12 @@
                 </div>
                 <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
                     <p><strong>EXPORT YOUR CSV:</strong></p>
-                    <p>1. Review the preview to make sure everything looks correct</p>
-                    <p>2. Download the CSV or load directly to the main app</p>
-                    <p><strong>NEXT STEPS:</strong></p>
-                    <p>• Upload this CSV in the main app's "Advanced Mode" section</p>
-                    <p>• The columns will be detected and you can adjust weights for matching</p>
+                    <p>1. Review the preview to verify filenames, categories, and metadata are correct</p>
+                    <p>2. Download the CSV file or load directly to the main app</p>
+                    <p><strong>USING YOUR CSV:</strong></p>
+                    <p>• In the main app, select Metadata or Hybrid mode to use CSV data for matching</p>
+                    <p>• All columns will be auto-detected and available for weighted matching</p>
+                    <p>• Adjust column weights in Advanced settings to prioritize certain fields</p>
                 </div>
 
                 <div class="export-options">
@@ -334,7 +322,7 @@
                         <button class="btn" onclick="refreshPreview()">REFRESH</button>
                         <span id="previewStats"></span>
                     </div>
-                    <pre id="csvPreviewContent" style="max-height: 300px; overflow: auto; background: #fff; padding: 15px; border: 2px solid #000;"></pre>
+                    <pre id="csvPreviewContent" style="max-height: 300px; overflow: auto; background: #f5f0e6; padding: 15px; border: 2px solid #000;"></pre>
                 </div>
 
                 <div class="actions" style="margin-top: 20px; flex-wrap: wrap; gap: 10px;">

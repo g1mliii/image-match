@@ -1460,7 +1460,7 @@ function linkBySKUEqualsFilename(product) {
 
 /**
  * Direct filename column matching
- * Use case: CSV has a "filename" or "image" column with exact filenames
+ * Use case: CSV has a "filename", "image", or "product" column with exact filenames
  * Example: CSV row has filename="ABC-123.jpg", image is "ABC-123.jpg"
  */
 function linkByMetadataFilename(product) {
@@ -1468,8 +1468,8 @@ function linkByMetadataFilename(product) {
 
     const imageFilename = product.filename.toLowerCase();
 
-    // Try common column names for filename
-    const filenameFields = ['filename', 'image', 'image_name', 'file', 'photo', 'picture'];
+    // Try common column names for filename (ordered by likelihood)
+    const filenameFields = ['filename', 'product', 'image', 'image_name', 'file', 'photo', 'picture'];
 
     return state.importedData.find(data => {
         if (!data) return false;

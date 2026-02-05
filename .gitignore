@@ -14,8 +14,14 @@ release/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
+
+# Application locks
+*.applock
 
 # Uploads
 backend/uploads/

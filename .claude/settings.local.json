@@ -23,7 +23,8 @@
       "Bash(du -sh:*)",
       "Bash(find:*)",
       "Bash(pip show:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(ls:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
