@@ -351,7 +351,7 @@ def batch_find_hybrid_matches(
         max_workers = min(32, (os.cpu_count() or 1) + 4)
     
     logger.info(f"[BATCH-HYBRID] ▶ Starting batch hybrid matching for {len(product_ids)} products")
-    logger.info(f"[BATCH-HYBRID] Workers: {max_workers}, Visual weight: {visual_weight*100}%, Metadata weight: {metadata_weight*100}%")
+    logger.debug(f"[BATCH-HYBRID] Workers: {max_workers}, Visual weight: {visual_weight*100}%, Metadata weight: {metadata_weight*100}%")
     
     start_time = time.time()
     
@@ -429,7 +429,7 @@ def batch_find_hybrid_matches(
     # Build lookup dictionaries for fast access
     visual_lookup = {r['product_id']: r for r in visual_results['results']}
     metadata_lookup = {r['product_id']: r for r in metadata_results['results']}
-    logger.info(f"[BATCH-HYBRID] [MERGE] Built lookup tables - Visual: {len(visual_lookup)}, Metadata: {len(metadata_lookup)}")
+    logger.debug(f"[BATCH-HYBRID] [MERGE] Built lookup tables - Visual: {len(visual_lookup)}, Metadata: {len(metadata_lookup)}")
     
     def merge_product_results(product_id: int) -> Dict[str, Any]:
         """Merge visual and metadata results for a single product"""
@@ -566,6 +566,7 @@ def batch_find_hybrid_matches(
     failed = 0
     all_matches_to_insert = []
     total_matches_inserted = 0  # Track total for logging (includes incremental + batch)
+    total_matches_generated = 0
 
     # Fetch all query product data upfront for results display
     from database import get_products_by_ids
@@ -716,6 +717,7 @@ def batch_find_hybrid_matches(
                         match.get('shape_score', match.get('visual_score', 0.0)),
                         match.get('texture_score', match.get('visual_score', 0.0))
                     ))
+                total_matches_generated += len(product_matches)
 
                 # OPTIMIZATION: Insert incrementally while other workers are still merging
                 # This starts inserting while other workers are still running, freeing memory as we go
@@ -728,9 +730,6 @@ def batch_find_hybrid_matches(
                     except Exception as e:
                         logger.warning(f"[BATCH-HYBRID] [INSERT] Incremental insert failed for {result['product_id']}: {e}, will retry at end")
                         all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
-                else:
-                    # If not storing immediately, collect for batch insert at end
-                    all_matches_to_insert.extend(product_matches)
 
             if result['status'] == 'success':
                 successful += 1
@@ -739,9 +738,9 @@ def batch_find_hybrid_matches(
                 failed += 1
                 logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: FAILED - {result.get('error', 'Unknown error')}")
 
-            # Log progress every 10 products
+            # Log progress every 10 products (debug-only to reduce normal log noise)
             if i % 10 == 0:
-                logger.info(f"[BATCH-HYBRID] [MERGE] Progress: {i}/{len(product_ids)} merged ({successful} successful, {failed} failed)")
+                logger.debug(f"[BATCH-HYBRID] [MERGE] Progress: {i}/{len(product_ids)} merged ({successful} successful, {failed} failed)")
     
     # PERFORMANCE OPTIMIZATION: Insert any remaining matches in chunks
     # (Most matches were already inserted incrementally, this handles any failed insertions)
@@ -798,17 +797,20 @@ def batch_find_hybrid_matches(
         'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0,
         'visual_weight': visual_weight,
         'metadata_weight': metadata_weight,
-        'total_matches': total_matches_inserted  # Total matches stored in database (incremental + batch)
+        'total_matches': total_matches_generated
     }
 
     total_time = time.time() - start_time
     logger.info(f"[BATCH-HYBRID] ✓ COMPLETE! Total time: {total_time:.2f}s")
-    logger.info(f"[BATCH-HYBRID] Timing breakdown:")
-    logger.info(f"[BATCH-HYBRID]   - Mode 1 (Visual):   {mode1_time:.2f}s")
-    logger.info(f"[BATCH-HYBRID]   - Mode 2 (Metadata): {mode2_time:.2f}s")
-    logger.info(f"[BATCH-HYBRID]   - Merge:             {merge_time:.2f}s")
+    logger.debug(f"[BATCH-HYBRID] Timing breakdown:")
+    logger.debug(f"[BATCH-HYBRID]   - Mode 1 (Visual):   {mode1_time:.2f}s")
+    logger.debug(f"[BATCH-HYBRID]   - Mode 2 (Metadata): {mode2_time:.2f}s")
+    logger.debug(f"[BATCH-HYBRID]   - Merge:             {merge_time:.2f}s")
     logger.info(f"[BATCH-HYBRID] Results: {successful}/{len(product_ids)} successful ({summary['success_rate']}%)")
-    logger.info(f"[BATCH-HYBRID] Total matches stored: {total_matches_inserted} (inserted incrementally while merging + batch insert for remaining)")
+    if store_matches:
+        logger.info(f"[BATCH-HYBRID] Total matches stored: {total_matches_inserted} (inserted incrementally while merging + batch insert for remaining)")
+    else:
+        logger.debug(f"[BATCH-HYBRID] Total matches generated (not stored): {total_matches_generated}")
     
     return {
         'results': results,

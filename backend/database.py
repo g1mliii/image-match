@@ -1123,7 +1123,7 @@ def get_all_categories(force_refresh: bool = False) -> List[str]:
         _category_cache['data'] = categories
         _category_cache['timestamp'] = current_time
 
-        logger.info(f"[GET-CATEGORIES] Fetched {len(categories)} categories from database (cached for {_category_cache_ttl}s)")
+        logger.debug(f"[GET-CATEGORIES] Fetched {len(categories)} categories from database (cached for {_category_cache_ttl}s)")
         if is_debug_mode():
             logger.debug(f"[GET-CATEGORIES] Categories: {categories}")
 
@@ -2836,13 +2836,13 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
         import numpy as np
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        logger.info("Rebuilding FAISS indexes from database (parallelized)...")
+        logger.debug("Rebuilding FAISS indexes from database (parallelized)...")
         
         # Get all categories
         categories = get_all_categories()
         categories.append(None)  # Include uncategorized products
         
-        logger.info(f"Found {len(categories)} categories to index")
+        logger.debug(f"Found {len(categories)} categories to index")
         
         stats = {
             'categories_processed': 0,
@@ -2881,7 +2881,7 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
                 success = faiss_manager.build_index(category, embeddings, product_ids)
                 
                 if success:
-                    logger.info(f"Built FAISS index for '{category}': {len(product_ids)} products")
+                    logger.debug(f"Built FAISS index for '{category}': {len(product_ids)} products")
                     return {
                         'category': category,
                         'status': 'success',
@@ -2905,7 +2905,7 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
         
         # Parallel execution with thread pool (4-8 workers)
         max_workers = min(8, len(categories))
-        logger.info(f"Using {max_workers} parallel workers for index building")
+        logger.debug(f"Using {max_workers} parallel workers for index building")
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(build_category_index, cat): cat for cat in categories}
@@ -3123,7 +3123,7 @@ def save_metadata_schema(columns: List[Dict[str, Any]]) -> bool:
                 ''', (column_name, data_type, display_name, default_weight))
 
             conn.commit()
-            logger.info(f"Saved metadata schema with {len(columns)} columns")
+            logger.debug(f"Saved metadata schema with {len(columns)} columns")
             return True
 
     except Exception as e:
@@ -3176,7 +3176,7 @@ def clear_metadata_schema() -> bool:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM metadata_schema')
             conn.commit()
-            logger.info("Cleared metadata schema")
+            logger.debug("Cleared metadata schema")
             return True
 
     except Exception as e:

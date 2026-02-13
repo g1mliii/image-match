@@ -654,7 +654,7 @@
         }
     </style>
 </head>
-<body>
+<body class="compact-ui">
     <div class="container">
         <header>
             <h1>CATALOG MANAGER</h1>
@@ -791,7 +791,7 @@
                     </div>
                 </div>
 
-                <div class="section" style="margin-top: 20px;">
+                <div class="section" style="margin-top: 12px;">
                     <h3>DATA QUALITY</h3>
                     <div class="stats-grid">
                         <div class="stat-card">
@@ -814,8 +814,8 @@
                 </div>
 
                 <!-- Cleanup Button -->
-                <div class="section" style="margin-top: 30px; text-align: center;">
-                    <button class="btn" onclick="showCleanupModal()" style="padding: 15px 30px; font-size: 1em;">
+                <div class="section" style="margin-top: 16px; text-align: center;">
+                    <button class="btn" onclick="showCleanupModal()" style="padding: 10px 18px; font-size: 1em;">
                         CLEANUP DATABASE
                     </button>
                 </div>
@@ -827,7 +827,7 @@
                     <h3 style="display: inline;">CATALOG SNAPSHOTS</h3>
                     <button class="help-btn" onclick="toggleHelp('snapshotsHelp')" style="margin-left: 10px;">?</button>
                 </div>
-                <div class="help-text" id="snapshotsHelp" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="snapshotsHelp" style="display: none; margin-bottom: 12px;">
                     <p><strong>CATALOG SNAPSHOTS</strong></p>
                     <p>Save and load different versions of your catalog. Think of snapshots as version control for your products - perfect for managing seasonal catalogs, testing scenarios, or creating backups.</p>
                     
@@ -845,14 +845,14 @@
                 </div>
                 
                 <!-- Snapshot Actions -->
-                <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+                <div style="display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
                     <button class="btn" onclick="saveCurrentAsSnapshot()">SAVE CURRENT CATALOG</button>
                     <button class="btn" onclick="showMergeSnapshotsModal()">MERGE SNAPSHOTS</button>
                     <button class="btn" onclick="loadSnapshots()">REFRESH</button>
                 </div>
                 
                 <!-- Active Snapshot Info -->
-                <div id="activeSnapshotSummary" style="padding: 15px; background: #ebe5d6; border: 3px solid #000; margin-bottom: 20px;">
+                <div id="activeSnapshotSummary" style="padding: 10px; background: #ebe5d6; border: 3px solid #000; margin-bottom: 12px;">
                     <strong>Currently Loaded:</strong> <span id="activeSnapshotName">None (using main database)</span>
                 </div>
                 
@@ -870,7 +870,7 @@
                     <h3 style="display: inline;">BROWSE PRODUCTS</h3>
                     <button class="help-btn" onclick="toggleHelp('browseHelp')" style="margin-left: 10px;">?</button>
                 </div>
-                <div class="help-text" id="browseHelp" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="browseHelp" style="display: none; margin-bottom: 12px;">
                     <p><strong>BROWSE TAB</strong></p>
                     <p>View and manage individual products in a 2-column list layout. Products are displayed with thumbnails and lazy-loaded for performance.</p>
                     <ul>
@@ -883,7 +883,7 @@
                 </div>
                 
                 <!-- Filter Bar -->
-                <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; width: 100%; box-sizing: border-box;">
+                <div style="display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; width: 100%; box-sizing: border-box;">
                     <input type="text" id="searchInput" placeholder="Search..." onkeyup="debounceSearch()" style="flex: 1; min-width: 200px; padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
                     <select id="categoryFilter" onchange="loadProducts()" style="padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;">
                         <option value="">All Categories</option>
@@ -914,7 +914,7 @@
                 </div>
                 
                 <!-- Pagination -->
-                <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px; padding: 15px; border-top: 2px solid #000;">
+                <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 12px; padding: 10px; border-top: 2px solid #000;">
                     <button id="prevBtn" onclick="prevPage()" disabled class="btn">PREV</button>
                     <span id="pageInfo" style="font-weight: bold;">Page 1 of 1</span>
                     <button id="nextBtn" onclick="nextPage()" disabled class="btn">NEXT</button>
@@ -947,30 +947,30 @@
         <div class="modal-content" style="max-width: 700px;">
             <span class="modal-close" onclick="closeCleanupModal()">×</span>
             <h2 style="margin-bottom: 10px;">DATABASE CLEANUP</h2>
-            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">Save a snapshot before cleanup! Deletions are permanent.</p>
+            <p style="margin-bottom: 12px; color: #666; font-size: 0.9em;">Save a snapshot before cleanup! Deletions are permanent.</p>
             
             <div style="display: flex; flex-direction: column; gap: 12px;">
-                <button class="cleanup-btn danger" onclick="confirmCleanup('all'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                <button class="cleanup-btn danger" onclick="confirmCleanup('all'); closeCleanupModal();" style="text-align: left; padding: 8px 12px;">
                     <div style="font-weight: bold; margin-bottom: 3px;">CLEAR ALL</div>
                     <div style="font-size: 0.85em; color: #666;">Delete everything - complete fresh start</div>
                 </button>
-                <button class="cleanup-btn" onclick="confirmCleanup('historical'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                <button class="cleanup-btn" onclick="confirmCleanup('historical'); closeCleanupModal();" style="text-align: left; padding: 8px 12px;">
                     <div style="font-weight: bold; margin-bottom: 3px;">CLEAR HISTORICAL</div>
                     <div style="font-size: 0.85em; color: #666;">Remove reference catalog, keep new products</div>
                 </button>
-                <button class="cleanup-btn" onclick="confirmCleanup('new'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                <button class="cleanup-btn" onclick="confirmCleanup('new'); closeCleanupModal();" style="text-align: left; padding: 8px 12px;">
                     <div style="font-weight: bold; margin-bottom: 3px;">CLEAR NEW</div>
                     <div style="font-size: 0.85em; color: #666;">Remove new products, keep historical catalog</div>
                 </button>
-                <button class="cleanup-btn" onclick="confirmCleanup('matches'); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                <button class="cleanup-btn" onclick="confirmCleanup('matches'); closeCleanupModal();" style="text-align: left; padding: 8px 12px;">
                     <div style="font-weight: bold; margin-bottom: 3px;">CLEAR MATCHES</div>
                     <div style="font-size: 0.85em; color: #666;">Delete match results only, keep all products</div>
                 </button>
-                <button class="cleanup-btn" onclick="vacuumDatabase(); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                <button class="cleanup-btn" onclick="vacuumDatabase(); closeCleanupModal();" style="text-align: left; padding: 8px 12px;">
                     <div style="font-weight: bold; margin-bottom: 3px;">VACUUM DB</div>
                     <div style="font-size: 0.85em; color: #666;">Reclaim disk space after deletions (SQLite optimization)</div>
                 </button>
-                <button class="cleanup-btn" onclick="exportBackup(); closeCleanupModal();" style="text-align: left; padding: 12px 15px;">
+                <button class="cleanup-btn" onclick="exportBackup(); closeCleanupModal();" style="text-align: left; padding: 8px 12px;">
                     <div style="font-weight: bold; margin-bottom: 3px;">EXPORT CSV</div>
                     <div style="font-size: 0.85em; color: #666;">Download entire catalog as CSV backup file</div>
                 </button>

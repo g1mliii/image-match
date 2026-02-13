@@ -99,10 +99,14 @@ def install_dependencies():
     print("\n" + "="*80)
     print("Installing Python Dependencies")
     print("="*80)
-    
+
+    # Upgrade pip first
+    print("\n[INFO] Upgrading pip to latest version...")
+    run_cmd("python -m pip install --upgrade pip")
+
     # Use consolidated requirements.txt in project root
     req_file = "../requirements.txt"
-    
+
     if os.path.exists(req_file):
         print(f"\n[INFO] Installing from {req_file}...")
         success, stdout, stderr = run_cmd(f"pip install -r {req_file}")
@@ -208,18 +212,37 @@ def install_pytorch(gpu_type):
             print("[OK] PyTorch installed")
             print("\n[INFO] Installing Intel Extension for PyTorch...")
             print("[INFO] This enables GPU acceleration on Intel Arc/Iris/UHD GPUs...")
-            
-            intel_cmd = "pip install intel-extension-for-pytorch"
-            intel_success, intel_stdout, intel_stderr = run_cmd(intel_cmd)
-            
-            if intel_success:
-                print("[OK] Intel Extension installed - GPU acceleration enabled!")
-                print("[INFO] Expected speedup: 3-5x faster than CPU")
-                return True
-            else:
-                print(f"[WARNING] Intel Extension installation failed: {intel_stderr}")
-                print("[INFO] Will fall back to CPU mode (still works, just slower)")
-                return True  # PyTorch still works, just without Intel GPU
+
+            # Try multiple package names (Intel keeps changing them)
+            intel_packages = [
+                "intel-extension-for-pytorch",  # Current name
+                "intel_extension_for_pytorch",  # Alternative
+            ]
+
+            intel_installed = False
+            for pkg in intel_packages:
+                print(f"[INFO] Trying package: {pkg}")
+                intel_cmd = f"pip install {pkg}"
+                intel_success, intel_stdout, intel_stderr = run_cmd(intel_cmd)
+
+                if intel_success:
+                    print(f"[OK] Intel Extension installed ({pkg}) - GPU acceleration enabled!")
+                    print("[INFO] Expected speedup: 3-5x faster than CPU")
+                    intel_installed = True
+                    break
+
+            if not intel_installed:
+                print("[WARNING] Intel Extension installation failed")
+                print("[INFO] This is common on some Windows configurations")
+                print("[INFO] Your app will work fine in CPU mode:")
+                print("       • CPU: 10-20 images/sec (perfectly usable)")
+                print("       • Still much faster than manual matching!")
+
+            # Install other dependencies (pywebview, Flask, etc.)
+            print("\n[INFO] Installing other dependencies...")
+            install_dependencies()
+
+            return True  # PyTorch still works, just without Intel GPU
         else:
             print(f"[ERROR] PyTorch installation failed: {stderr}")
             return False
@@ -516,10 +539,10 @@ def main():
     print("\n" + "="*80)
     print("Downloading CLIP Model")
     print("="*80)
-    
+
     try:
         print("\n[INFO] Pre-downloading CLIP model to cache...")
-        download_script = os.path.join(os.path.dirname(__file__), "..", "download_clip_model.py")
+        download_script = os.path.join(os.path.dirname(__file__), "..", "scripts", "download_clip_model.py")
         success, stdout, stderr = run_cmd(f"python {download_script}")
         if success:
             print("[OK] CLIP model downloaded and cached")
@@ -537,7 +560,6 @@ def main():
     
     try:
         print("\n[INFO] Testing GPU performance...")
-        import os
         benchmark_path = os.path.join(os.path.dirname(__file__), "benchmark_gpu.py")
         run_cmd(f"python {benchmark_path}")
     except Exception as e:

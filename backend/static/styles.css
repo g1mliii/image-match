@@ -165,6 +165,66 @@ header .btn-link[data-tooltip]:hover::before {
     flex: 1;
 }
 
+.section-collapse-toggle {
+    padding: 6px 12px;
+    border: 2px solid #000;
+    background: #f5f0e6;
+    color: #000;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+}
+
+.section-collapse-toggle:hover {
+    background: #000;
+    color: #fff;
+}
+
+#historicalSection.is-collapsed,
+#newSection.is-collapsed {
+    padding: 18px 20px;
+}
+
+#historicalSection.is-collapsed .section-header,
+#newSection.is-collapsed .section-header {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+#historicalSection.is-collapsed .step,
+#newSection.is-collapsed .step {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+    border-width: 3px;
+}
+
+#historicalSection.is-collapsed .section-header h2,
+#newSection.is-collapsed .section-header h2 {
+    font-size: 24px;
+}
+
+#historicalSection.is-collapsed .mode-toggle,
+#newSection.is-collapsed .mode-toggle,
+#historicalSection.is-collapsed .help-btn,
+#newSection.is-collapsed .help-btn {
+    display: none;
+}
+
+#historicalSection.is-collapsed > :not(.section-header),
+#newSection.is-collapsed > :not(.section-header) {
+    display: none !important;
+}
+
+#historicalSection.is-collapsed .section-collapse-toggle,
+#newSection.is-collapsed .section-collapse-toggle {
+    background: #000;
+    color: #fff;
+}
+
 .actions {
     display: flex;
     gap: 10px;
@@ -2224,9 +2284,17 @@ img.image-loading::after {
 }
 
 .metadata-breakdown {
-    margin-top: 20px;
-    padding: 15px;
+    margin-top: 12px;
+    padding: 10px;
     border: 2px solid #000;
+}
+
+.metadata-breakdown-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
 }
 
 .metadata-breakdown h5 {
@@ -2234,51 +2302,64 @@ img.image-loading::after {
     font-weight: bold;
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-bottom: 15px;
+    margin-bottom: 6px;
     border-bottom: 2px solid #000;
-    padding-bottom: 10px;
+    padding-bottom: 6px;
+}
+
+.metric-selector {
+    padding: 5px 8px;
+    border: 2px solid #000;
+    border-radius: 0;
+    background: #fff;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
 }
 
 .metadata-scores-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
 }
 
 .metadata-score-item {
     border: 1px solid #000;
-    padding: 12px;
+    padding: 8px;
     background: #f5f0e6;
 }
 
 .metadata-score-item .field-name {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: bold;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 .score-details {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 8px;
-    font-size: 12px;
+    margin-bottom: 4px;
+    font-size: 11px;
+    gap: 8px;
 }
 
 .score-details .score-value {
     font-weight: bold;
-    font-size: 14px;
+    font-size: 13px;
 }
 
 .score-details .score-range {
     color: #666;
-    font-size: 11px;
+    font-size: 10px;
+    text-align: right;
 }
 
 .metadata-score-item .score-bar {
-    height: 12px;
+    height: 8px;
     border: 1px solid #000;
     background: #f5f0e6;
     margin: 0;
@@ -2288,4 +2369,370 @@ img.image-loading::after {
     height: 100%;
     background: #000;
     transition: width 0.3s ease;
+}
+
+/* ============================================================================
+   COMPACT UI MODE
+   Reduces vertical footprint across all app windows.
+   ========================================================================= */
+
+.compact-ui {
+    line-height: 1.35;
+}
+
+.compact-ui .container {
+    padding: 14px;
+}
+
+.compact-ui header {
+    padding: 24px 16px;
+    margin-bottom: 20px;
+}
+
+.compact-ui .header-main h1 {
+    font-size: 40px;
+    line-height: 1.05;
+}
+
+.compact-ui .header-main p {
+    font-size: 15px;
+    margin-top: 6px;
+}
+
+.compact-ui .header-actions {
+    gap: 6px;
+}
+
+.compact-ui .gpu-status {
+    padding: 6px 12px;
+}
+
+.compact-ui header .btn-link {
+    padding: 7px 12px;
+}
+
+.compact-ui .section,
+.compact-ui .summary,
+.compact-ui .result-item,
+.compact-ui .advanced,
+.compact-ui .bulk-panel,
+.compact-ui .tab-panel,
+.compact-ui .export-options,
+.compact-ui .preview,
+.compact-ui .help-box,
+.compact-ui .error-state,
+.compact-ui .link-panel,
+.compact-ui .linking-strategy,
+.compact-ui .linking-preview,
+.compact-ui .unmatched-images,
+.compact-ui .available-products {
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.compact-ui .section-header {
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+}
+
+.compact-ui .section-header h2 {
+    font-size: 24px;
+    line-height: 1.1;
+}
+
+.compact-ui .step {
+    width: 38px;
+    height: 38px;
+    font-size: 20px;
+    border-width: 3px;
+}
+
+.compact-ui .upload-box {
+    gap: 14px;
+}
+
+.compact-ui .drop-zone {
+    padding: 30px 16px;
+}
+
+.compact-ui .drop-zone p {
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+.compact-ui .info,
+.compact-ui .file-info,
+.compact-ui .csv-box,
+.compact-ui .weight,
+.compact-ui .stat-item {
+    padding: 12px;
+}
+
+.compact-ui .csv-box.advanced {
+    padding: 16px;
+}
+
+.compact-ui .csv-header,
+.compact-ui .preview-controls,
+.compact-ui .result-header {
+    margin-bottom: 10px;
+}
+
+.compact-ui .file-list {
+    max-height: 220px;
+}
+
+.compact-ui .btn {
+    padding: 8px 14px;
+    font-size: 13px;
+    border-width: 2px;
+}
+
+.compact-ui .btn-small {
+    padding: 4px 8px;
+}
+
+.compact-ui .input,
+.compact-ui .select,
+.compact-ui input[type="text"],
+.compact-ui input[type="number"],
+.compact-ui input[type="password"],
+.compact-ui select,
+.compact-ui textarea {
+    padding: 8px;
+    font-size: 13px;
+}
+
+.compact-ui .controls,
+.compact-ui .weights,
+.compact-ui .bulk-controls {
+    gap: 12px;
+}
+
+.compact-ui .control label,
+.compact-ui .weight label {
+    margin-bottom: 6px;
+}
+
+.compact-ui .control input[type="range"],
+.compact-ui .weight input[type="range"] {
+    height: 8px;
+}
+
+.compact-ui .control input[type="range"]::-webkit-slider-thumb,
+.compact-ui .weight input[type="range"]::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+}
+
+.compact-ui .control input[type="range"]::-moz-range-thumb,
+.compact-ui .weight input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+}
+
+.compact-ui .filters,
+.compact-ui .db-info,
+.compact-ui .filter-bar {
+    padding: 12px;
+    gap: 10px;
+}
+
+.compact-ui .help-text {
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.compact-ui .help-text p,
+.compact-ui .help-text li {
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.compact-ui .summary h3 {
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+
+.compact-ui .summary-stats {
+    gap: 10px;
+}
+
+.compact-ui .stat-value {
+    font-size: 28px;
+}
+
+.compact-ui .result-header {
+    gap: 12px;
+    padding-bottom: 10px;
+}
+
+.compact-ui .result-image {
+    width: 90px;
+    height: 90px;
+}
+
+.compact-ui .result-info h3 {
+    font-size: 17px;
+    margin-bottom: 6px;
+}
+
+.compact-ui .matches-grid {
+    gap: 10px;
+}
+
+.compact-ui .match-card {
+    padding: 8px;
+}
+
+.compact-ui .match-image {
+    height: 84px;
+    margin-bottom: 6px;
+}
+
+.compact-ui .modal-content {
+    padding: 16px;
+}
+
+.compact-ui .progress-steps {
+    margin-bottom: 18px;
+    padding: 12px;
+    gap: 10px;
+}
+
+.compact-ui .progress-step {
+    padding: 8px;
+}
+
+.compact-ui .progress-step .step {
+    font-size: 18px;
+    margin-bottom: 2px;
+}
+
+.compact-ui .preview-list,
+.compact-ui #unmatchedImagesList,
+.compact-ui #availableProductsList {
+    max-height: 280px;
+    padding: 10px;
+}
+
+.compact-ui .preview-item,
+.compact-ui .unmatched-item,
+.compact-ui .available-item,
+.compact-ui .entry {
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+.compact-ui .manual-linking-container {
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.compact-ui .data-table th,
+.compact-ui .data-table td {
+    padding: 6px;
+}
+
+.compact-ui .preview pre {
+    max-height: 260px;
+    padding: 10px;
+}
+
+.compact-ui .actions {
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.compact-ui .stats-grid {
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.compact-ui .metadata-stats-container {
+    margin-top: 12px;
+    padding: 12px;
+}
+
+.compact-ui .metadata-breakdown {
+    margin-top: 12px;
+    padding: 10px;
+}
+
+.compact-ui .metadata-scores-grid {
+    gap: 10px;
+}
+
+.compact-ui .metadata-score-item {
+    padding: 8px;
+}
+
+.compact-ui .category-breakdown {
+    margin-top: 12px;
+    max-height: 170px;
+    padding: 10px;
+}
+
+.compact-ui .category-item {
+    padding: 6px 0;
+}
+
+.compact-ui .cleanup-actions {
+    margin: 10px 0;
+    gap: 6px;
+}
+
+.compact-ui .cleanup-btn {
+    padding: 8px 12px;
+}
+
+.compact-ui .product-card {
+    padding: 8px;
+    gap: 10px;
+}
+
+.compact-ui .product-card-thumbnail {
+    width: 66px;
+    height: 66px;
+}
+
+.compact-ui .tabs .tab {
+    padding: 10px 14px;
+}
+
+.compact-ui .snapshot-card {
+    padding: 8px;
+}
+
+.compact-ui .no-snapshots,
+.compact-ui .empty-state,
+.compact-ui .no-matches {
+    padding: 24px 14px;
+}
+
+@media (max-width: 768px) {
+    .compact-ui .container {
+        padding: 10px;
+    }
+
+    .compact-ui header {
+        padding: 16px 12px;
+        margin-bottom: 14px;
+    }
+
+    .compact-ui .header-main h1 {
+        font-size: 30px;
+    }
+
+    .compact-ui .section,
+    .compact-ui .summary,
+    .compact-ui .result-item {
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+
+    .compact-ui .section-header h2 {
+        font-size: 20px;
+    }
 }

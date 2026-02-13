@@ -960,12 +960,12 @@ def find_matches(
         filtered_count = original_count - len(matches)
         
         if filtered_count > 0:
-            logger.info(f"Filtered out {filtered_count} matches below threshold {threshold}")
+            logger.debug(f"Filtered out {filtered_count} matches below threshold {threshold}")
     
     # Step 10: Apply result limit
     if limit > 0 and len(matches) > limit:
         matches = matches[:limit]
-        logger.info(f"Limited results to top {limit} matches")
+        logger.debug(f"Limited results to top {limit} matches")
     
     # Step 11: Store matches in database (optional)
     if store_matches and matches:
@@ -1951,8 +1951,8 @@ def batch_find_matches(
         max_workers = min(32, (os.cpu_count() or 1) + 4)
     
     logger.info(f"[BATCH-MODE1] ▶ Starting batch visual matching for {len(product_ids)} products")
-    logger.info(f"[BATCH-MODE1] Parallelization: {max_workers} workers (ThreadPoolExecutor)")
-    logger.info(f"[BATCH-MODE1] Catalog preload: {preload_catalog}")
+    logger.debug(f"[BATCH-MODE1] Parallelization: {max_workers} workers (ThreadPoolExecutor)")
+    logger.debug(f"[BATCH-MODE1] Catalog preload: {preload_catalog}")
     
     # PERFORMANCE OPTIMIZATION: Preload catalog features into memory cache
     # This avoids repeated database queries for the same catalog products
@@ -1961,7 +1961,7 @@ def batch_find_matches(
         cache = get_feature_cache()
         
         # Preload all historical products (or specific category if needed)
-        logger.info("Preloading catalog features into cache...")
+        logger.debug("Preloading catalog features into cache...")
         cache.preload_catalog(category=None, is_historical=True)
     
     # PERFORMANCE OPTIMIZATION: Preload FAISS indexes for all categories
@@ -1974,7 +1974,7 @@ def batch_find_matches(
             from faiss_index import faiss_manager as fm
             faiss_manager = fm
             faiss_available = True
-            logger.info("[BATCH-MODE1] ✓ FAISS indexes preloaded (thread-safe for parallel searches)")
+            logger.debug("[BATCH-MODE1] ✓ FAISS indexes preloaded (thread-safe for parallel searches)")
         except ImportError:
             logger.info("[BATCH-MODE1] FAISS not available, using brute force similarity")
         except Exception as e:
@@ -2037,13 +2037,15 @@ def batch_find_matches(
             return (product_id, error_info)
     
     # Process in parallel - DON'T store matches yet, we'll batch insert them all at once
-    logger.info(f"[BATCH-MODE1] ▶ Starting parallel matching with {max_workers} workers")
-    logger.info(f"[BATCH-MODE1] Processing {len(product_ids)} products in parallel...")
-    logger.info(f"[BATCH-MODE1] Matches will be batch inserted after all products are matched (1 DB call)")
+    logger.debug(f"[BATCH-MODE1] ▶ Starting parallel matching with {max_workers} workers")
+    logger.debug(f"[BATCH-MODE1] Processing {len(product_ids)} products in parallel...")
+    logger.debug(f"[BATCH-MODE1] Matches will be batch inserted after all products are matched (1 DB call)")
     
     # Collect all matches for batch insertion
     all_matches_to_insert = []
     INCREMENTAL_BATCH_SIZE = 100  # Insert every 100 matches to avoid memory bloat
+    total_matches_found = 0
+    total_matches_inserted = 0
     # Fetch all query product data upfront for results display
     from database import get_products_by_ids
     query_products_data = get_products_by_ids(product_ids)
@@ -2079,26 +2081,29 @@ def batch_find_matches(
                 
                 # Collect matches for batch insertion
                 if match_result['matches']:
-                    for match in match_result['matches']:
-                        all_matches_to_insert.append((
-                            product_id,
-                            match['product_id'],
-                            match['similarity_score'],
-                            match['color_score'],
-                            match['shape_score'],
-                            match['texture_score']
-                        ))
-                    
-                    # OPTIMIZATION: Insert incrementally to avoid memory bloat
-                    # This starts inserting while other workers are still matching
-                    if len(all_matches_to_insert) >= INCREMENTAL_BATCH_SIZE and store_matches:
-                        try:
-                            from database import bulk_insert_matches
-                            inserted = bulk_insert_matches(all_matches_to_insert)
-                            logger.info(f"[BATCH-MODE1] ▶ Incremental insert: {inserted} matches (batch inserted while matching continues)")
-                            all_matches_to_insert = []  # Clear for next batch
-                        except Exception as e:
-                            logger.warning(f"[BATCH-MODE1] Incremental insert failed: {e}, will retry at end")
+                    total_matches_found += len(match_result['matches'])
+                    if store_matches:
+                        for match in match_result['matches']:
+                            all_matches_to_insert.append((
+                                product_id,
+                                match['product_id'],
+                                match['similarity_score'],
+                                match['color_score'],
+                                match['shape_score'],
+                                match['texture_score']
+                            ))
+                        
+                        # OPTIMIZATION: Insert incrementally to avoid memory bloat
+                        # This starts inserting while other workers are still matching
+                        if len(all_matches_to_insert) >= INCREMENTAL_BATCH_SIZE:
+                            try:
+                                from database import bulk_insert_matches
+                                inserted = bulk_insert_matches(all_matches_to_insert)
+                                total_matches_inserted += inserted
+                                logger.debug(f"[BATCH-MODE1] ▶ Incremental insert: {inserted} matches (batch inserted while matching continues)")
+                                all_matches_to_insert = []  # Clear for next batch
+                            except Exception as e:
+                                logger.warning(f"[BATCH-MODE1] Incremental insert failed: {e}, will retry at end")
                 
                 results.append({
                     'product_id': product_id,
@@ -2149,7 +2154,7 @@ def batch_find_matches(
             # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
             current_percent = int((i / len(product_ids)) * 100)
             if current_percent >= last_logged_percent + 20:
-                logger.info(f"[BATCH-MODE1] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
+                logger.debug(f"[BATCH-MODE1] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
                 last_logged_percent = current_percent
     
     # PERFORMANCE OPTIMIZATION: Batch insert remaining matches in chunks
@@ -2170,6 +2175,7 @@ def batch_find_matches(
                 inserted_count = bulk_insert_matches(all_matches_to_insert)
                 logger.info(f"[BATCH-MODE1] ✓ Final batch inserted {inserted_count} matches")
                 total_inserted = inserted_count
+                total_matches_inserted += inserted_count
             else:
                 # Large batch - chunk into multiple transactions (smaller chunks = faster)
                 logger.info(f"[BATCH-MODE1] ▶ Final batch inserting {len(all_matches_to_insert)} remaining matches in {num_chunks} chunks ({CHUNK_SIZE} per chunk)...")
@@ -2182,11 +2188,12 @@ def batch_find_matches(
 
                     inserted_count = bulk_insert_matches(chunk)
                     total_inserted += inserted_count
+                    total_matches_inserted += inserted_count
 
                     # Clear chunk reference immediately to free memory
                     chunk = None
 
-                    logger.info(f"[BATCH-MODE1] ✓ Final chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
+                    logger.debug(f"[BATCH-MODE1] ✓ Final chunk {chunk_idx + 1}/{num_chunks}: Inserted {inserted_count} matches")
 
                 logger.info(f"[BATCH-MODE1] ✓ Final batch inserted {total_inserted} remaining matches in {num_chunks} transactions")
         except Exception as e:
@@ -2197,12 +2204,14 @@ def batch_find_matches(
         'successful': successful,
         'failed': failed,
         'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0,
-        'total_matches': len(all_matches_to_insert),
-        'batch_insert_used': store_matches and len(all_matches_to_insert) > 0
+        'total_matches': total_matches_found,
+        'batch_insert_used': store_matches and total_matches_inserted > 0
     }
     
     logger.info(f"[BATCH-MODE1] ✓ COMPLETE! {successful}/{len(product_ids)} successful ({summary['success_rate']}% success rate)")
-    logger.info(f"[BATCH-MODE1] Total matches: {len(all_matches_to_insert)} (batch inserted in 1 DB call)")
+    logger.info(f"[BATCH-MODE1] Total matches found: {total_matches_found}")
+    if store_matches:
+        logger.info(f"[BATCH-MODE1] Total matches stored: {total_matches_inserted}")
     logger.info(f"[BATCH-MODE1] All products matched in parallel using {max_workers} workers")
     
     return {
@@ -2231,15 +2240,16 @@ def batch_find_metadata_matches(
         max_workers = min(32, (os.cpu_count() or 1) + 4)
     
     logger.info(f"[BATCH-MODE2] ▶ Starting batch metadata matching for {len(product_ids)} products")
-    logger.info(f"[BATCH-MODE2] Parallelization: {max_workers} workers (ThreadPoolExecutor)")
-    logger.info(f"[BATCH-MODE2] No GPU/CLIP needed - metadata comparison only")
-    logger.info(f"[BATCH-MODE2] Weights: {weights}")
+    logger.debug(f"[BATCH-MODE2] Parallelization: {max_workers} workers (ThreadPoolExecutor)")
+    logger.debug(f"[BATCH-MODE2] No GPU/CLIP needed - metadata comparison only")
+    logger.debug(f"[BATCH-MODE2] Weights: {weights}")
     
     results = []
     errors = []
     successful = 0
     failed = 0
     total_matches_inserted = 0  # Track total for logging (includes incremental + batch)
+    total_matches_generated = 0
 
     # Fetch query products data upfront
     from database import get_products_by_ids
@@ -2298,13 +2308,10 @@ def batch_find_metadata_matches(
             return (product_id, error_info)
     
     # Process in parallel - DON'T store matches yet, we'll batch insert them all at once
-    logger.info(f"[BATCH-MODE2] ▶ Starting parallel metadata matching with {max_workers} workers")
-    logger.info(f"[BATCH-MODE2] Processing {len(product_ids)} products in parallel...")
-    logger.info(f"[BATCH-MODE2] Matches will be batch inserted after all products are matched (1 DB call)")
-    logger.info(f"[BATCH-MODE2] Step 1: Submit all {len(product_ids)} tasks to thread pool")
-
-    # Log weights once at batch level (not per-product)
-    logger.info(f"[BATCH-MODE2] Weights: {weights}")
+    logger.debug(f"[BATCH-MODE2] ▶ Starting parallel metadata matching with {max_workers} workers")
+    logger.debug(f"[BATCH-MODE2] Processing {len(product_ids)} products in parallel...")
+    logger.debug(f"[BATCH-MODE2] Matches will be batch inserted after all products are matched (1 DB call)")
+    logger.debug(f"[BATCH-MODE2] Step 1: Submit all {len(product_ids)} tasks to thread pool")
 
     # Collect all matches for batch insertion
     all_matches_to_insert = []
@@ -2320,7 +2327,7 @@ def batch_find_metadata_matches(
             futures[future] = pid
         
         # Process results as they complete
-        logger.info(f"[BATCH-MODE2] Step 2: Processing results as they complete (as_completed)")
+        logger.debug(f"[BATCH-MODE2] Step 2: Processing results as they complete (as_completed)")
         for i, future in enumerate(as_completed(futures), 1):
             product_id = futures[future]
             
@@ -2331,18 +2338,19 @@ def batch_find_metadata_matches(
                 
                 # MEMORY OPTIMIZATION: Incremental insertion to prevent 50-100MB accumulation in Mode 2
                 if match_result.get('matches'):
-                    # Collect matches for this product
-                    product_matches = []
-                    for match in match_result['matches']:
-                        product_matches.append((
-                            product_id,
-                            match['product_id'],
-                            match['similarity_score'],
-                            0, 0, 0  # color_score, shape_score, texture_score = 0 (N/A for metadata)
-                        ))
+                    total_matches_generated += len(match_result['matches'])
+                    if store_matches:
+                        # Collect matches for this product
+                        product_matches = []
+                        for match in match_result['matches']:
+                            product_matches.append((
+                                product_id,
+                                match['product_id'],
+                                match['similarity_score'],
+                                0, 0, 0  # color_score, shape_score, texture_score = 0 (N/A for metadata)
+                            ))
 
-                    # OPTIMIZATION: Insert incrementally while other workers are still matching
-                    if store_matches and product_matches:
+                        # OPTIMIZATION: Insert incrementally while other workers are still matching
                         try:
                             from database import bulk_insert_matches
                             inserted = bulk_insert_matches(product_matches)
@@ -2351,9 +2359,6 @@ def batch_find_metadata_matches(
                         except Exception as e:
                             logger.warning(f"[BATCH-MODE2] Incremental insert failed for {product_id}: {e}, will retry at end")
                             all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
-                    else:
-                        # If not storing immediately, collect for batch insert at end
-                        all_matches_to_insert.extend(product_matches)
 
                 results.append(match_result) # Fixed: append the match_result dict directly or with wrapper if needed
                 
@@ -2372,12 +2377,12 @@ def batch_find_metadata_matches(
             # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
             current_percent = int((i / len(product_ids)) * 100)
             if current_percent >= last_logged_percent + 20:
-                logger.info(f"[BATCH-MODE2] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
+                logger.debug(f"[BATCH-MODE2] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
                 last_logged_percent = current_percent
     
     # PERFORMANCE OPTIMIZATION: Insert any remaining matches in chunks
     remaining_matches_count = len(all_matches_to_insert)
-    if remaining_matches_count > 0:
+    if remaining_matches_count > 0 and store_matches:
         logger.info(f"[BATCH-MODE2] Step 3: Batch insert {remaining_matches_count} remaining matches (from failed incremental inserts)")
 
     if store_matches and all_matches_to_insert:
@@ -2412,12 +2417,15 @@ def batch_find_metadata_matches(
         'successful': successful,
         'failed': failed,
         'success_rate': round(successful / len(product_ids) * 100, 1) if product_ids else 0,
-        'total_matches': total_matches_inserted, 
+        'total_matches': total_matches_generated,
         'batch_insert_used': store_matches and total_matches_inserted > 0
     }
 
     logger.info(f"[BATCH-MODE2] ✓ COMPLETE! {successful}/{len(product_ids)} successful ({summary['success_rate']}% success rate)")
-    logger.info(f"[BATCH-MODE2] Total matches stored: {total_matches_inserted}")
+    if store_matches:
+        logger.info(f"[BATCH-MODE2] Total matches stored: {total_matches_inserted}")
+    else:
+        logger.debug(f"[BATCH-MODE2] Total matches generated (not stored): {total_matches_generated}")
     
     return {
         'results': results,

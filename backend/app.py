@@ -16,6 +16,10 @@ import io
 import logging
 import time
 import threading
+import secrets
+import ipaddress
+import urllib.request
+import urllib.error
 from typing import Optional, List
 from werkzeug.utils import secure_filename
 from datetime import datetime
@@ -25,7 +29,6 @@ from datetime import datetime
 os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
-from flask_cors import CORS
 
 from database import (
     init_db, insert_product, bulk_insert_products, get_product_by_id, get_features_by_product_id,
@@ -144,6 +147,12 @@ from config import is_debug_mode, DEBUG_MODE
 
 APP_LOCK_FILE = os.path.join(BACKEND_DIR, '.app.lock')
 
+# Reduce noisy INFO logs in normal mode while preserving warnings/errors.
+if not DEBUG_MODE:
+    logging.getLogger('product_matching').setLevel(logging.WARNING)
+    logging.getLogger('hybrid_matching').setLevel(logging.WARNING)
+    logging.getLogger('feature_cache').setLevel(logging.WARNING)
+
 def create_app_lock():
     """Create lock file to detect crashes on next startup"""
     try:
@@ -169,7 +178,6 @@ def detect_crash():
     return os.path.exists(APP_LOCK_FILE)
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
-CORS(app)
 
 # Disable debug mode to prevent Flask from reloading and reloading CLIP model
 # This was causing GPU memory fragmentation with multiple model loads
@@ -184,6 +192,8 @@ app.logger.setLevel(logging.INFO)
 # Configuration
 app.config['UPLOAD_FOLDER'] = get_uploads_dir()
 # No max content length - handle large files gracefully with proper error handling
+MAX_UPLOAD_FILES_PER_OPERATION = 50000
+SUPPORTED_PROCESSING_PROFILES = {'auto', 'balanced', 'fast'}
 
 # Ensure upload directory exists (get_uploads_dir() already does this, but keeping for clarity)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -342,6 +352,22 @@ def cleanup_on_shutdown():
         faiss_manager.clear_all_indexes()
     except Exception as e:
         logger.warning(f"Failed to clear FAISS indexes: {e}")
+
+    try:
+        # Clear feature cache singleton to release preloaded embeddings
+        from feature_cache import clear_all_caches
+        clear_all_caches()
+        logger.info("✓ Feature cache cleared")
+    except Exception as e:
+        logger.warning(f"Failed to clear feature cache: {e}")
+
+    try:
+        # Clear in-process CSV/category caches
+        invalidate_csv_cache()
+        invalidate_catalog_categories_cache()
+        logger.info("✓ CSV and category caches cleared")
+    except Exception as e:
+        logger.warning(f"Failed to clear in-process caches: {e}")
 
     try:
         # Close all database connections
@@ -635,47 +661,447 @@ def get_gpu_status():
             'error': str(e)
         })
 
-@app.route('/api/network/local-ip', methods=['GET'])
-def get_local_ip_endpoint():
-    """Get local IP address for mobile connection"""
+# Mobile security settings
+MOBILE_SESSION_TTL_SECONDS = 15 * 60
+MOBILE_AUTH_WINDOW_SECONDS = 10 * 60
+MOBILE_AUTH_MAX_FAILED_ATTEMPTS = 5
+MOBILE_AUTH_LOCKOUT_SECONDS = 15 * 60
+MOBILE_SESSION_SWEEP_INTERVAL_SECONDS = 60
+MOBILE_AUTH_SWEEP_INTERVAL_SECONDS = 120
+MOBILE_MAX_ACTIVE_SESSIONS = 5000
+MOBILE_MAX_AUTH_TRACKED_IPS = 5000
+MOBILE_MAX_FAILED_ATTEMPTS_TRACKED_PER_IP = 12
+
+_mobile_sessions = {}
+_mobile_sessions_lock = threading.Lock()
+_mobile_auth_failures = {}
+_mobile_auth_failures_lock = threading.Lock()
+_mobile_last_session_sweep_ts = 0.0
+_mobile_last_auth_sweep_ts = 0.0
+
+
+def _is_loopback_ip(value):
+    """Check if an IP address is loopback."""
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except Exception:
+        return False
+
+
+def _get_client_ip():
+    """Resolve request client IP with safe proxy handling for local tunnel proxy."""
+    remote_addr = (request.remote_addr or '').strip()
+    if _is_loopback_ip(remote_addr):
+        # Some local reverse tunnels send the real client IP in this header.
+        cf_ip = (request.headers.get('CF-Connecting-IP') or '').strip()
+        if cf_ip:
+            return cf_ip
+
+        # ngrok and other trusted local reverse proxies typically use XFF.
+        xff = (request.headers.get('X-Forwarded-For') or '').strip()
+        if xff:
+            return xff.split(',')[0].strip()
+
+    return remote_addr or 'unknown'
+
+
+def _cleanup_expired_mobile_sessions_locked(now_ts, force=False):
+    global _mobile_last_session_sweep_ts
+
+    should_sweep = (
+        force
+        or (now_ts - _mobile_last_session_sweep_ts) >= MOBILE_SESSION_SWEEP_INTERVAL_SECONDS
+        or len(_mobile_sessions) > MOBILE_MAX_ACTIVE_SESSIONS
+    )
+    if not should_sweep:
+        return
+
+    _mobile_last_session_sweep_ts = now_ts
+    expired = [token for token, session in _mobile_sessions.items() if session.get('expires_at', 0) <= now_ts]
+    for token in expired:
+        _mobile_sessions.pop(token, None)
+
+    # Hard cap to avoid unbounded growth during prolonged high churn.
+    if len(_mobile_sessions) > MOBILE_MAX_ACTIVE_SESSIONS:
+        overflow = len(_mobile_sessions) - MOBILE_MAX_ACTIVE_SESSIONS
+        oldest_tokens = sorted(
+            _mobile_sessions.items(),
+            key=lambda item: item[1].get('last_seen_at', item[1].get('issued_at', 0))
+        )[:overflow]
+        for token, _ in oldest_tokens:
+            _mobile_sessions.pop(token, None)
+
+
+def _issue_mobile_session_token(client_ip):
+    token = secrets.token_urlsafe(48)
+    now_ts = time.time()
+    with _mobile_sessions_lock:
+        _cleanup_expired_mobile_sessions_locked(now_ts)
+        _mobile_sessions[token] = {
+            'client_ip': client_ip,
+            'issued_at': now_ts,
+            'last_seen_at': now_ts,
+            'expires_at': now_ts + MOBILE_SESSION_TTL_SECONDS
+        }
+    return token
+
+
+def _validate_mobile_session_token(session_token, client_ip):
+    now_ts = time.time()
+    with _mobile_sessions_lock:
+        _cleanup_expired_mobile_sessions_locked(now_ts)
+        session = _mobile_sessions.get(session_token)
+        if session is None:
+            return False, 'Invalid or expired session token'
+
+        # Bind session to client IP to reduce token replay risk.
+        session_ip = session.get('client_ip')
+        if session_ip and client_ip and session_ip != client_ip:
+            _mobile_sessions.pop(session_token, None)
+            return False, 'Session token is not valid for this client'
+
+        # Sliding expiration on active use.
+        session['last_seen_at'] = now_ts
+        session['expires_at'] = now_ts + MOBILE_SESSION_TTL_SECONDS
+        return True, None
+
+
+def _cleanup_mobile_auth_failures_locked(now_ts, force=False):
+    global _mobile_last_auth_sweep_ts
+
+    should_sweep = (
+        force
+        or (now_ts - _mobile_last_auth_sweep_ts) >= MOBILE_AUTH_SWEEP_INTERVAL_SECONDS
+        or len(_mobile_auth_failures) > MOBILE_MAX_AUTH_TRACKED_IPS
+    )
+    if not should_sweep:
+        return
+
+    _mobile_last_auth_sweep_ts = now_ts
+
+    stale_clients = []
+    for client_ip, state in _mobile_auth_failures.items():
+        attempts = [
+            ts for ts in state.get('failed_attempts', [])
+            if now_ts - ts <= MOBILE_AUTH_WINDOW_SECONDS
+        ]
+        state['failed_attempts'] = attempts[-MOBILE_MAX_FAILED_ATTEMPTS_TRACKED_PER_IP:]
+
+        lockout_until = state.get('lockout_until', 0)
+        if lockout_until <= now_ts and not state['failed_attempts']:
+            stale_clients.append(client_ip)
+
+    for client_ip in stale_clients:
+        _mobile_auth_failures.pop(client_ip, None)
+
+    # Hard cap to avoid unbounded growth with many unique IPs.
+    if len(_mobile_auth_failures) > MOBILE_MAX_AUTH_TRACKED_IPS:
+        overflow = len(_mobile_auth_failures) - MOBILE_MAX_AUTH_TRACKED_IPS
+        oldest_clients = sorted(
+            _mobile_auth_failures.items(),
+            key=lambda item: item[1].get('last_seen_at', 0)
+        )[:overflow]
+        for client_ip, _ in oldest_clients:
+            _mobile_auth_failures.pop(client_ip, None)
+
+
+def _check_mobile_auth_lockout_seconds(client_ip):
+    now_ts = time.time()
+    with _mobile_auth_failures_lock:
+        _cleanup_mobile_auth_failures_locked(now_ts)
+        state = _mobile_auth_failures.get(client_ip)
+        if state is None:
+            return 0
+        state['last_seen_at'] = now_ts
+
+        lockout_until = state.get('lockout_until', 0)
+        if lockout_until > now_ts:
+            return max(1, int(lockout_until - now_ts))
+
+        failed_attempts = [
+            ts for ts in state.get('failed_attempts', [])
+            if now_ts - ts <= MOBILE_AUTH_WINDOW_SECONDS
+        ]
+        if failed_attempts:
+            state['failed_attempts'] = failed_attempts[-MOBILE_MAX_FAILED_ATTEMPTS_TRACKED_PER_IP:]
+        else:
+            _mobile_auth_failures.pop(client_ip, None)
+
+        return 0
+
+
+def _record_mobile_auth_failure(client_ip):
+    now_ts = time.time()
+    with _mobile_auth_failures_lock:
+        _cleanup_mobile_auth_failures_locked(now_ts)
+        state = _mobile_auth_failures.setdefault(client_ip, {'failed_attempts': [], 'lockout_until': 0, 'last_seen_at': now_ts})
+        state['last_seen_at'] = now_ts
+        attempts = [ts for ts in state.get('failed_attempts', []) if now_ts - ts <= MOBILE_AUTH_WINDOW_SECONDS]
+        attempts.append(now_ts)
+        state['failed_attempts'] = attempts[-MOBILE_MAX_FAILED_ATTEMPTS_TRACKED_PER_IP:]
+
+        if len(attempts) >= MOBILE_AUTH_MAX_FAILED_ATTEMPTS:
+            state['lockout_until'] = now_ts + MOBILE_AUTH_LOCKOUT_SECONDS
+            return MOBILE_AUTH_LOCKOUT_SECONDS
+
+    return 0
+
+
+def _clear_mobile_auth_failures(client_ip):
+    with _mobile_auth_failures_lock:
+        _mobile_auth_failures.pop(client_ip, None)
+
+
+def _revoke_all_mobile_sessions():
+    with _mobile_sessions_lock:
+        _mobile_sessions.clear()
+
+
+def _require_localhost_request():
+    """Restrict sensitive endpoints to same-machine desktop app access."""
+    remote_addr = (request.remote_addr or '').strip()
+    if _is_loopback_ip(remote_addr):
+        return None
+
+    logger.warning(f"Blocked non-local request for local-only endpoint from {remote_addr}")
+    return create_error_response(
+        'FORBIDDEN',
+        'This endpoint is only available from the desktop app on this machine',
+        status_code=403
+    )
+
+
+def _require_mobile_session():
+    """Validate mobile session token from request headers."""
+    client_ip = _get_client_ip()
+    session_token = (request.headers.get('X-Mobile-Session') or '').strip()
+
+    if not session_token:
+        logger.warning(f"Mobile request missing session token from {client_ip}")
+        return None, create_error_response('MISSING_AUTH', 'Session token required', status_code=401)
+
+    is_valid, error_message = _validate_mobile_session_token(session_token, client_ip)
+    if not is_valid:
+        logger.warning(f"Mobile request with invalid session token from {client_ip}")
+        return None, create_error_response('UNAUTHORIZED', error_message, status_code=401)
+
+    return client_ip, None
+
+
+def _get_local_ip():
     import socket
+    try:
+        # Connect to a public DNS server to find local IP
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        return ip
+    except Exception as e:
+        logger.debug(f"Failed to get local IP: {e}")
+        return "127.0.0.1"
 
-    def get_local_ip():
-        try:
-            # Connect to a public DNS server to find local IP
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception as e:
-            logger.debug(f"Failed to get local IP: {e}")
-            return "127.0.0.1"
 
-    primary_ip = get_local_ip()
+def _build_mobile_connection_info(include_password=False):
+    from config import get_mobile_password, get_mobile_remote_url
+
+    primary_ip = _get_local_ip()
     port = request.environ.get('SERVER_PORT', 5000)
+    localhost_url = f'http://127.0.0.1:{port}/mobile'
+    lan_url = f'http://{primary_ip}:{port}/mobile'
+    remote_url = get_mobile_remote_url()
 
-    return jsonify({
+    payload = {
         'primary_ip': primary_ip,
         'port': port,
-        'mobile_url': f'http://{primary_ip}:{port}/mobile'
-    })
+        'localhost_url': localhost_url,
+        'mobile_url': lan_url,
+        'lan_url': lan_url,
+        'remote_url': remote_url,
+        'remote_enabled': bool(remote_url)
+    }
+
+    if include_password:
+        payload['password'] = get_mobile_password()
+
+    return payload
+
+
+def _discover_ngrok_public_url():
+    """Discover active ngrok HTTPS public URL from the local ngrok agent API."""
+    api_url = (os.environ.get('NGROK_API_URL') or 'http://127.0.0.1:4040/api/tunnels').strip()
+
+    try:
+        request_obj = urllib.request.Request(
+            api_url,
+            headers={'Accept': 'application/json'}
+        )
+        with urllib.request.urlopen(request_obj, timeout=2.5) as response:
+            if response.status != 200:
+                return None, f"ngrok API returned HTTP {response.status}"
+            payload = json.loads(response.read().decode('utf-8', errors='replace'))
+    except urllib.error.URLError:
+        return None, (
+            f"Could not reach ngrok API at {api_url}. "
+            "Start ngrok first (example: ngrok http http://127.0.0.1:8000)."
+        )
+    except Exception as e:
+        return None, f"Failed reading ngrok API: {e}"
+
+    tunnels = payload.get('tunnels', [])
+    if not isinstance(tunnels, list) or not tunnels:
+        return None, "No active ngrok tunnels found."
+
+    https_url = None
+    for tunnel in tunnels:
+        public_url = str((tunnel or {}).get('public_url', '')).strip()
+        if public_url.startswith('https://'):
+            https_url = public_url
+            break
+
+    if not https_url:
+        return None, "No HTTPS ngrok tunnel found. Start ngrok with HTTPS enabled."
+
+    return https_url.rstrip('/'), None
+
+
+@app.route('/api/network/local-ip', methods=['GET'])
+def get_local_ip_endpoint():
+    """Get local/LAN and optional secure remote mobile URLs."""
+    return jsonify(_build_mobile_connection_info(include_password=False))
+
+
+@app.route('/api/mobile/connection-info', methods=['GET'])
+def get_mobile_connection_info():
+    """Local-only endpoint for desktop app modal (includes current PIN)."""
+    local_only_error = _require_localhost_request()
+    if local_only_error:
+        return local_only_error
+
+    try:
+        return jsonify(_build_mobile_connection_info(include_password=True)), 200
+    except Exception as e:
+        logger.error(f"Error loading mobile connection info: {e}", exc_info=True)
+        return create_error_response('CONNECTION_INFO_ERROR', 'Failed to load connection info', status_code=500)
+
+
+@app.route('/api/mobile/remote-url', methods=['GET', 'POST'])
+def mobile_remote_url_management():
+    """Local-only management for secure remote mobile URL."""
+    local_only_error = _require_localhost_request()
+    if local_only_error:
+        return local_only_error
+
+    from config import get_mobile_remote_url, save_mobile_remote_url
+
+    env_remote_url = (os.environ.get('MOBILE_REMOTE_URL') or '').strip()
+    source = 'env' if env_remote_url else 'config'
+
+    if request.method == 'GET':
+        return jsonify({
+            'remote_url': get_mobile_remote_url(),
+            'source': source,
+            'editable': not bool(env_remote_url)
+        }), 200
+
+    if env_remote_url:
+        return create_error_response(
+            'REMOTE_URL_LOCKED',
+            'Remote URL is managed by MOBILE_REMOTE_URL environment variable',
+            status_code=409
+        )
+
+    try:
+        data = request.get_json() or {}
+        remote_url = str(data.get('remote_url', '')).strip()
+        save_mobile_remote_url(remote_url)
+        return jsonify({
+            'success': True,
+            'remote_url': get_mobile_remote_url()
+        }), 200
+    except ValueError as e:
+        return create_error_response('INVALID_REMOTE_URL', str(e), status_code=400)
+    except Exception as e:
+        logger.error(f"Error saving mobile remote URL: {e}", exc_info=True)
+        return create_error_response('REMOTE_URL_ERROR', 'Failed to save remote URL', status_code=500)
+
+
+@app.route('/api/mobile/remote-url/auto-ngrok', methods=['POST'])
+def mobile_remote_url_auto_ngrok():
+    """Local-only: auto-detect ngrok HTTPS URL and save as mobile remote URL."""
+    local_only_error = _require_localhost_request()
+    if local_only_error:
+        return local_only_error
+
+    from config import get_mobile_remote_url, save_mobile_remote_url
+
+    env_remote_url = (os.environ.get('MOBILE_REMOTE_URL') or '').strip()
+    if env_remote_url:
+        return create_error_response(
+            'REMOTE_URL_LOCKED',
+            'Remote URL is managed by MOBILE_REMOTE_URL environment variable',
+            status_code=409
+        )
+
+    ngrok_public_url, discover_error = _discover_ngrok_public_url()
+    if not ngrok_public_url:
+        return create_error_response(
+            'NGROK_DISCOVERY_FAILED',
+            discover_error or 'Unable to detect ngrok URL',
+            suggestion='Start ngrok and try AUTO NGROK URL again',
+            status_code=503
+        )
+
+    try:
+        save_mobile_remote_url(ngrok_public_url)
+        return jsonify({
+            'success': True,
+            'remote_url': get_mobile_remote_url(),
+            'detected_public_url': ngrok_public_url
+        }), 200
+    except ValueError as e:
+        return create_error_response('INVALID_REMOTE_URL', str(e), status_code=400)
+    except Exception as e:
+        logger.error(f"Error auto-saving ngrok remote URL: {e}", exc_info=True)
+        return create_error_response('REMOTE_URL_ERROR', 'Failed to save ngrok remote URL', status_code=500)
 
 @app.route('/api/mobile/auth', methods=['POST'])
 def mobile_auth():
     try:
+        client_ip = _get_client_ip()
+        lockout_seconds = _check_mobile_auth_lockout_seconds(client_ip)
+        if lockout_seconds > 0:
+            logger.warning(f"Mobile auth blocked by rate limit from {client_ip}")
+            return create_error_response(
+                'RATE_LIMITED',
+                'Too many failed attempts. Try again later.',
+                details={'retry_after_seconds': lockout_seconds},
+                status_code=429
+            )
+
         data = request.get_json() or {}
         password = data.get('password', '').strip()
 
         if not password:
-            logger.warning(f"Mobile auth failed: missing password from {request.remote_addr}")
+            logger.warning(f"Mobile auth failed: missing password from {client_ip}")
             return create_error_response('MISSING_PASSWORD', 'Password required', status_code=400)
 
         # Validate password (constant-time comparison)
         from config import validate_mobile_password
         if not validate_mobile_password(password):
-            logger.warning(f"Mobile auth failed: invalid password from {request.remote_addr}")
+            new_lockout = _record_mobile_auth_failure(client_ip)
+            logger.warning(f"Mobile auth failed: invalid password from {client_ip}")
+            if new_lockout > 0:
+                return create_error_response(
+                    'RATE_LIMITED',
+                    'Too many failed attempts. Try again later.',
+                    details={'retry_after_seconds': new_lockout},
+                    status_code=429
+                )
             return create_error_response('INVALID_PASSWORD', 'Incorrect password', status_code=401)
+
+        _clear_mobile_auth_failures(client_ip)
+        session_token = _issue_mobile_session_token(client_ip)
 
         # Get available catalogs efficiently
         from snapshot_manager import list_snapshots, get_loaded_snapshot_info
@@ -733,16 +1159,17 @@ def mobile_auth():
                 if is_loaded:
                     loaded_catalogs.append(catalog.get('name', 'Unnamed'))
 
-            logger.info(f"📱 Mobile auth successful from {request.remote_addr}")
-            logger.info(f"📱 Currently loaded file: '{loaded_file}'")
-            logger.info(f"📱 Returned {len(catalogs_response)} catalogs, {len(loaded_catalogs)} marked as loaded")
+            logger.debug(f"Mobile auth successful from {client_ip}")
+            logger.debug(f"📱 Currently loaded file: '{loaded_file}'")
+            logger.debug(f"📱 Returned {len(catalogs_response)} catalogs, {len(loaded_catalogs)} marked as loaded")
             if loaded_catalogs:
-                logger.info(f"📱 Loaded catalogs: {loaded_catalogs}")
-                # Debug: Show catalog IDs
-                logger.info(f"📱 Catalog IDs: {[c['id'] for c in catalogs_response]}")
+                logger.debug(f"📱 Loaded catalogs: {loaded_catalogs}")
+                logger.debug(f"📱 Catalog IDs: {[c['id'] for c in catalogs_response]}")
 
             return jsonify({
                 'valid': True,
+                'session_token': session_token,
+                'expires_in_seconds': MOBILE_SESSION_TTL_SECONDS,
                 'catalogs': catalogs_response,
                 'modes': ['mode1', 'mode3']
             }), 200
@@ -758,16 +1185,9 @@ def mobile_auth():
 @app.route('/api/mobile/config', methods=['GET'])
 def mobile_config():
     try:
-        password = request.headers.get('X-Mobile-Password', '').strip()
-
-        if not password:
-            logger.warning(f"Mobile config failed: missing password from {request.remote_addr}")
-            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
-
-        from config import validate_mobile_password
-        if not validate_mobile_password(password):
-            logger.warning(f"Mobile config failed: invalid password from {request.remote_addr}")
-            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+        _, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
 
         from snapshot_manager import get_loaded_snapshot_info
 
@@ -795,25 +1215,18 @@ def mobile_config():
 def get_catalog_schema():
     
     try:
-        password = request.headers.get('X-Mobile-Password', '').strip()
-
-        if not password:
-            logger.warning(f"Mobile catalog-schema failed: missing password from {request.remote_addr}")
-            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
-
-        from config import validate_mobile_password
-        if not validate_mobile_password(password):
-            logger.warning(f"Mobile catalog-schema failed: invalid password from {request.remote_addr}")
-            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+        client_ip, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
 
         catalog_id = request.args.get('catalog_id', '').strip()
         if not catalog_id:
-            logger.warning(f"Mobile catalog-schema: missing catalog_id from {request.remote_addr}")
+            logger.warning(f"Mobile catalog-schema: missing catalog_id from {client_ip}")
             return create_error_response('MISSING_CATALOG', 'catalog_id required', status_code=400)
 
         # Validate catalog_id is safe (prevent path traversal)
         if '..' in catalog_id or '/' in catalog_id or '\\' in catalog_id:
-            logger.warning(f"Mobile catalog-schema: suspicious catalog_id from {request.remote_addr}")
+            logger.warning(f"Mobile catalog-schema: suspicious catalog_id from {client_ip}")
             return create_error_response('INVALID_CATALOG', 'Invalid catalog_id', status_code=400)
 
         from snapshot_manager import get_snapshot_connection
@@ -854,12 +1267,12 @@ def get_catalog_schema():
                             'display_name': row[2] or row[0]
                         })
                 else:
-                    logger.warning(f"Mobile catalog-schema: ⚠️ Catalog {catalog_id} is missing metadata_schema table (old/incompatible version)")
+                    logger.debug(f"Mobile catalog-schema: Catalog {catalog_id} is missing metadata_schema table (old/incompatible version)")
 
             if len(metadata_fields) == 0:
-                logger.info(f"Mobile catalog-schema: ⚠️ No metadata fields found for {catalog_id}. Only base fields (category, product_name, sku) will be available.")
+                logger.debug(f"Mobile catalog-schema: no metadata fields found for {catalog_id}. Only base fields available.")
             else:
-                logger.info(f"Mobile catalog-schema: ✓ Returned {len(metadata_fields)} metadata fields for {catalog_id}: {[f['column_name'] for f in metadata_fields]}")
+                logger.debug(f"Mobile catalog-schema: returned {len(metadata_fields)} metadata fields for {catalog_id}: {[f['column_name'] for f in metadata_fields]}")
 
             return jsonify({
                 'base_fields': [
@@ -886,20 +1299,15 @@ def get_catalog_schema():
 def clear_catalog_categories_cache():
     
     try:
-        password = request.headers.get('X-Mobile-Password', '').strip()
-
-        if not password:
-            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
-
-        from config import validate_mobile_password
-        if not validate_mobile_password(password):
-            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+        _, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
 
         catalog_id = request.args.get('catalog_id', None)
         invalidate_catalog_categories_cache(catalog_id)
 
         message = f'Cleared category cache for {catalog_id}' if catalog_id else 'Cleared all category caches'
-        logger.info(f"[CACHE] {message}")
+        logger.debug(f"[CACHE] {message}")
 
         return jsonify({
             'status': 'success',
@@ -915,25 +1323,18 @@ def clear_catalog_categories_cache():
 def get_catalog_categories():
     
     try:
-        password = request.headers.get('X-Mobile-Password', '').strip()
-
-        if not password:
-            logger.warning(f"Mobile catalog-categories failed: missing password from {request.remote_addr}")
-            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
-
-        from config import validate_mobile_password
-        if not validate_mobile_password(password):
-            logger.warning(f"Mobile catalog-categories failed: invalid password from {request.remote_addr}")
-            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+        client_ip, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
 
         catalog_id = request.args.get('catalog_id', '').strip()
         if not catalog_id:
-            logger.warning(f"Mobile catalog-categories: missing catalog_id from {request.remote_addr}")
+            logger.warning(f"Mobile catalog-categories: missing catalog_id from {client_ip}")
             return create_error_response('MISSING_CATALOG', 'catalog_id required', status_code=400)
 
         # Validate catalog_id is safe (prevent path traversal)
         if '..' in catalog_id or '/' in catalog_id or '\\' in catalog_id:
-            logger.warning(f"Mobile catalog-categories: suspicious catalog_id from {request.remote_addr}")
+            logger.warning(f"Mobile catalog-categories: suspicious catalog_id from {client_ip}")
             return create_error_response('INVALID_CATALOG', 'Invalid catalog_id', status_code=400)
 
         from snapshot_manager import get_snapshot_connection
@@ -1005,24 +1406,35 @@ def mobile_log():
         }
     """
     try:
-        password = request.headers.get('X-Mobile-Password', '').strip()
+        _, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
 
-        # Allow logging without auth for debugging
-        data = request.get_json()
-        level = data.get('level', 'info').lower()
-        message = data.get('message', '')
+        data = request.get_json(silent=True) or {}
+        level = str(data.get('level', 'info')).lower()
+        message = str(data.get('message', ''))
         extra_data = data.get('data', {})
+
+        # Guardrails: prevent oversized client log payloads
+        if len(message) > 500:
+            message = message[:500] + '...'
 
         log_message = f"📱 [MOBILE] {message}"
         if extra_data:
-            log_message += f" | Data: {extra_data}"
+            extra_preview = str(extra_data)
+            if len(extra_preview) > 300:
+                extra_preview = extra_preview[:300] + '...'
+            log_message += f" | Data: {extra_preview}"
 
         if level == 'error':
             logger.error(log_message)
         elif level == 'warning':
             logger.warning(log_message)
+        elif level == 'debug':
+            logger.debug(log_message)
         else:
-            logger.info(log_message)
+            # Keep client info logs out of normal server logs
+            logger.debug(log_message)
 
         return jsonify({'logged': True}), 200
     except Exception as e:
@@ -1033,6 +1445,10 @@ def mobile_log():
 def mobile_password_management():
     
     try:
+        local_only_error = _require_localhost_request()
+        if local_only_error:
+            return local_only_error
+
         from config import get_mobile_password, save_mobile_password
 
         if request.method == 'GET':
@@ -1046,7 +1462,22 @@ def mobile_password_management():
         # POST: Update password
         try:
             data = request.get_json() or {}
-            new_password = data.get('new_password', '').strip()
+
+            # Backward-compatible generate mode used by desktop UI
+            action = str(data.get('action', '')).strip().lower()
+            if action == 'generate':
+                new_password = f"{secrets.randbelow(1_000_000):06d}"
+                save_mobile_password(new_password)
+                _revoke_all_mobile_sessions()
+                logger.debug(f"Mobile password generated from {request.remote_addr}")
+                return jsonify({
+                    'success': True,
+                    'password': new_password,
+                    'message': 'Mobile password generated'
+                }), 200
+
+            # Manual update mode (expects 6-digit password)
+            new_password = str(data.get('new_password', data.get('password', ''))).strip()
 
             # Validate password format
             if not new_password:
@@ -1062,7 +1493,8 @@ def mobile_password_management():
                 return create_error_response('INVALID_PASSWORD', 'Must contain only digits (0-9)', status_code=400)
 
             save_mobile_password(new_password)
-            logger.info(f"Mobile password updated from {request.remote_addr}")
+            _revoke_all_mobile_sessions()
+            logger.debug(f"Mobile password updated from {request.remote_addr}")
 
             return jsonify({
                 'success': True,
@@ -1082,17 +1514,9 @@ def mobile_password_management():
 def mobile_upload_and_match():
     
     try:
-        # Validate mobile password
-        password = request.headers.get('X-Mobile-Password', '').strip()
-
-        if not password:
-            logger.warning(f"[MOBILE] Auth failed: missing password from {request.remote_addr}")
-            return create_error_response('MISSING_AUTH', 'Password required', status_code=401)
-
-        from config import validate_mobile_password
-        if not validate_mobile_password(password):
-            logger.warning(f"[MOBILE] Auth failed: invalid password from {request.remote_addr}")
-            return create_error_response('UNAUTHORIZED', 'Invalid password', status_code=401)
+        client_ip, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
 
         # Validate required form data
         if 'image' not in request.files:
@@ -1108,7 +1532,7 @@ def mobile_upload_and_match():
 
         # Validate catalog_id is safe
         if '..' in catalog_id or '/' in catalog_id or '\\' in catalog_id:
-            logger.warning(f"[MOBILE] Suspicious catalog_id from {request.remote_addr}")
+            logger.warning(f"[MOBILE] Suspicious catalog_id from {client_ip}")
             return create_error_response('INVALID_CATALOG', 'Invalid catalog_id', status_code=400)
 
         from snapshot_manager import get_snapshot_connection
@@ -1123,39 +1547,39 @@ def mobile_upload_and_match():
             import uuid
 
             # STEP 1: Load catalog (use_existing mode - same as desktop)
-            logger.info(f"[MOBILE] Step 1: Loading catalog {catalog_id}")
-            from snapshot_manager import load_snapshot_to_main_db
+            logger.debug(f"[MOBILE] Step 1: Loading catalog {catalog_id}")
+            from snapshot_manager import load_snapshot_to_main_db, get_loaded_snapshot_info
 
-            load_result = load_snapshot_to_main_db(catalog_id)
-            if load_result.get('error'):
-                logger.error(f"[MOBILE] Failed to load catalog: {load_result['error']}")
-                return create_error_response('LOAD_ERROR', 'Failed to load catalog', status_code=500)
-
-            logger.info(f"[MOBILE] Catalog loaded: {load_result.get('product_count')} products")
+            loaded_info = get_loaded_snapshot_info()
+            currently_loaded = loaded_info.get('snapshot_file') if loaded_info.get('loaded') else None
+            if currently_loaded == catalog_id:
+                logger.debug(f"[MOBILE] Catalog {catalog_id} already loaded, skipping reload")
+            else:
+                load_result = load_snapshot_to_main_db(catalog_id)
+                if load_result.get('error'):
+                    logger.error(f"[MOBILE] Failed to load catalog: {load_result['error']}")
+                    return create_error_response('LOAD_ERROR', 'Failed to load catalog', status_code=500)
+                logger.debug(f"[MOBILE] Catalog loaded: {load_result.get('product_count')} products")
 
             # STEP 2: Load historical products (skip batch-upload, use_existing mode)
-            logger.info(f"[MOBILE] Step 2: Loading historical products (use_existing)")
+            logger.debug(f"[MOBILE] Step 2: Loading historical products (use_existing)")
             # In use_existing mode, backend just loads existing products from DB, no upload
             # Frontend state will be updated when batch-match response comes back
 
             # STEP 3: Clear new section (replace mode) - silent operation
-            logger.info(f"[MOBILE] Step 3: Clearing new section (replace mode)")
+            logger.debug(f"[MOBILE] Step 3: Clearing new section (replace mode)")
             try:
-                from database import get_db_connection
+                from database import clear_products_by_type
 
-                with get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    # Delete all new products (is_historical = 0)
-                    cursor.execute('DELETE FROM products WHERE is_historical = 0')
-                    deleted_count = cursor.rowcount
-                    conn.commit()
-                    logger.info(f"[MOBILE] Cleared {deleted_count} new products")
+                cleanup_result = clear_products_by_type('new')
+                deleted_count = cleanup_result.get('products_deleted', 0)
+                logger.debug(f"[MOBILE] Cleared {deleted_count} new products")
             except Exception as e:
                 logger.warning(f"[MOBILE] Cleanup error (non-fatal): {e}")
                 # Continue anyway - products may be empty already
 
             # STEP 4: Batch upload new product
-            logger.info(f"[MOBILE] Step 4: Uploading new product via batch-upload")
+            logger.debug(f"[MOBILE] Step 4: Uploading new product via batch-upload")
 
             file = request.files['image']
             if file.filename == '':
@@ -1191,7 +1615,7 @@ def mobile_upload_and_match():
 
             try:
                 file.save(filepath)
-                logger.info(f"[MOBILE] Image saved: {filepath}")
+                logger.debug(f"[MOBILE] Image saved: {filepath}")
             except Exception as e:
                 logger.error(f"[MOBILE] Failed to save image: {e}")
                 return create_error_response('SAVE_ERROR', 'Failed to save image', status_code=500)
@@ -1215,7 +1639,7 @@ def mobile_upload_and_match():
 
                     if metadata_dict:
                         metadata = json.dumps(metadata_dict)
-                        logger.info(f"[MOBILE] Mode 3 metadata collected: {list(metadata_dict.keys())}")
+                        logger.debug(f"[MOBILE] Mode 3 metadata collected: {list(metadata_dict.keys())}")
 
                 product_id = insert_product(
                     image_path=filepath,
@@ -1225,7 +1649,7 @@ def mobile_upload_and_match():
                     is_historical=False,
                     metadata=metadata
                 )
-                logger.info(f"[MOBILE] Product inserted: ID {product_id}")
+                logger.debug(f"[MOBILE] Product inserted: ID {product_id}")
 
                 # Extract features
                 try:
@@ -1238,7 +1662,7 @@ def mobile_upload_and_match():
                         embedding_type=embedding_type,
                         embedding_version=embedding_version
                     )
-                    logger.info(f"[MOBILE] Features extracted for product {product_id}")
+                    logger.debug(f"[MOBILE] Features extracted for product {product_id}")
                 except Exception as e:
                     logger.warning(f"[MOBILE] Feature extraction failed (non-fatal): {e}")
 
@@ -1251,7 +1675,7 @@ def mobile_upload_and_match():
                 return create_error_response('UPLOAD_ERROR', 'Failed to upload product', status_code=500)
 
             # STEP 5: Batch match (same as desktop REPLACE & PROCESS)
-            logger.info(f"[MOBILE] Step 5: Matching product {product_id} (mode {mode})")
+            logger.debug(f"[MOBILE] Step 5: Matching product {product_id} (mode {mode})")
 
             try:
                 from product_matching import batch_find_matches
@@ -1275,7 +1699,7 @@ def mobile_upload_and_match():
                     # Extract matches from batch result format
                     if batch_result['results'] and batch_result['results'][0]['status'] == 'success':
                         matches = batch_result['results'][0]['matches']
-                    logger.info(f"[MOBILE] Mode 1 visual matching: {len(matches)} results")
+                    logger.debug(f"[MOBILE] Mode 1 visual matching: {len(matches)} results")
                 elif mode == 'mode3':
                     # Mode 3: Hybrid matching (visual + metadata combined)
                     # Uses metadata schema created during CSV upload (part 1)
@@ -1302,10 +1726,10 @@ def mobile_upload_and_match():
                         # Extract matches from batch result format
                         if batch_result['results'] and batch_result['results'][0]['status'] == 'success':
                             matches = batch_result['results'][0]['matches']
-                        logger.info(f"[MOBILE] Mode 3 hybrid matching: {len(matches)} results")
+                        logger.debug(f"[MOBILE] Mode 3 hybrid matching: {len(matches)} results")
                     else:
                         # No metadata schema - fall back to visual (batch version)
-                        logger.info("[MOBILE] No metadata schema found - falling back to visual matching")
+                        logger.debug("[MOBILE] No metadata schema found - falling back to visual matching")
                         batch_result = batch_find_matches(
                             product_ids=[product_id],
                             threshold=0,
@@ -1324,18 +1748,176 @@ def mobile_upload_and_match():
                 logger.warning(f"[MOBILE] Matching error: {e}")
                 matches = []
 
+            def _coerce_json_dict(raw_value):
+                if isinstance(raw_value, dict):
+                    return raw_value
+                if isinstance(raw_value, str):
+                    try:
+                        parsed = json.loads(raw_value)
+                        return parsed if isinstance(parsed, dict) else {}
+                    except Exception:
+                        return {}
+                return {}
+
+            def _sanitize_scalar(value, max_len=120):
+                if value is None:
+                    return None
+                if isinstance(value, (int, float, bool)):
+                    return value
+                if isinstance(value, str):
+                    return value[:max_len]
+                return str(value)[:max_len]
+
+            def _sanitize_mobile_metadata_values(raw_values, metadata_scores_dict, max_keys=12):
+                values = _coerce_json_dict(raw_values)
+                if not values:
+                    return {}
+
+                sensitive_keys = {'image_path', 'created_at', 'updated_at', 'id', 'product_id', 'is_historical'}
+                prioritized_keys = []
+                if isinstance(metadata_scores_dict, dict):
+                    prioritized_keys.extend([k for k in metadata_scores_dict.keys() if isinstance(k, str)])
+
+                # Keep only keys relevant to score chips (plus cap for payload safety).
+                sanitized = {}
+                for key in prioritized_keys:
+                    if key in sensitive_keys or key not in values:
+                        continue
+                    clean_value = _sanitize_scalar(values.get(key))
+                    if clean_value is None:
+                        continue
+                    sanitized[key] = clean_value
+                    if len(sanitized) >= max_keys:
+                        break
+
+                return sanitized
+
+            def _sanitize_mobile_metadata_object(raw_meta, max_keys=20):
+                values = _coerce_json_dict(raw_meta)
+                if not values:
+                    return {}
+
+                sensitive_keys = {'image_path', 'created_at', 'updated_at', 'id', 'product_id', 'is_historical'}
+                sanitized = {}
+                for key, value in values.items():
+                    if key in sensitive_keys:
+                        continue
+                    clean_value = _sanitize_scalar(value)
+                    if clean_value is None:
+                        continue
+                    sanitized[str(key)] = clean_value
+                    if len(sanitized) >= max_keys:
+                        break
+                return sanitized
+
             # Format matches
-            matches_response = []
+            detailed_matches_response = []
+            legacy_matches_response = []
             for match in matches[:5]:
-                matches_response.append({
-                    'id': match.get('product_id') or match.get('id'),
+                match_id = match.get('product_id') or match.get('id')
+                similarity_score = match.get('score', match.get('similarity_score', 0))
+
+                metadata_scores = _coerce_json_dict(match.get('metadata_scores'))
+                metadata_values = _sanitize_mobile_metadata_values(
+                    match.get('metadata_values'),
+                    metadata_scores
+                )
+
+                image_path = match.get('image_path') or ''
+                filename = os.path.basename(image_path) if image_path else None
+
+                image_url = None
+                try:
+                    if match_id is not None:
+                        image_url = f"/api/products/{int(match_id)}/image"
+                except Exception:
+                    image_url = None
+
+                detailed_matches_response.append({
+                    'id': match_id,
                     'name': match.get('product_name') or match.get('name') or 'Unknown',
                     'category': match.get('category') or 'N/A',
-                    'score': match.get('score', 0),
+                    'score': similarity_score,
+                    'similarity_score': similarity_score,
+                    'sku': match.get('sku'),
+                    'filename': filename,
+                    'image_url': image_url,
+                    'color_score': match.get('color_score'),
+                    'shape_score': match.get('shape_score'),
+                    'texture_score': match.get('texture_score'),
+                    'visual_score': match.get('visual_score'),
+                    'metadata_score': match.get('metadata_score'),
+                    'sku_score': match.get('sku_score'),
+                    'name_score': match.get('name_score'),
+                    'category_score': match.get('category_score'),
+                    'price_score': match.get('price_score'),
+                    'performance_score': match.get('performance_score'),
+                    'metadata_scores': metadata_scores,
+                    'metadata_values': metadata_values,
+                    'is_potential_duplicate': bool(match.get('is_potential_duplicate'))
+                })
+                legacy_matches_response.append({
+                    'id': match_id,
+                    'name': match.get('product_name') or match.get('name') or 'Unknown',
+                    'category': match.get('category') or 'N/A',
+                    'score': similarity_score,
                     'sku': match.get('sku')
                 })
 
-            logger.info(f"[MOBILE] Complete: Product {product_id}, {len(matches_response)} matches")
+            # Build single result group for mobile UI (desktop-style rendering)
+            uploaded_product = None
+            try:
+                uploaded_product = get_product_by_id(product_id)
+            except Exception as e:
+                logger.debug(f"[MOBILE] Could not load uploaded product details: {e}")
+
+            def _field(row, key, default=None):
+                if row is None:
+                    return default
+                try:
+                    value = row[key]
+                except Exception:
+                    if isinstance(row, dict):
+                        value = row.get(key, default)
+                    else:
+                        value = default
+                return default if value is None else value
+
+            uploaded_name = _field(uploaded_product, 'product_name') or product_name or secure_filename(file.filename).rsplit('.', 1)[0]
+            uploaded_category = _field(uploaded_product, 'category') or category or 'Uncategorized'
+            uploaded_sku = _field(uploaded_product, 'sku') or sku
+
+            uploaded_metadata = _sanitize_mobile_metadata_object(_field(uploaded_product, 'metadata'))
+
+            similarity_values = []
+            for item in detailed_matches_response:
+                try:
+                    similarity_values.append(float(item.get('similarity_score') or 0))
+                except Exception:
+                    similarity_values.append(0.0)
+
+            top_score = max(similarity_values) if similarity_values else 0.0
+            avg_score = (sum(similarity_values) / len(similarity_values)) if similarity_values else 0.0
+
+            mobile_result_group = {
+                'mode': mode,
+                'query_product': {
+                    'id': product_id,
+                    'name': uploaded_name or f'Uploaded Product {product_id}',
+                    'category': uploaded_category,
+                    'sku': uploaded_sku,
+                    'image_url': f"/api/products/{product_id}/image",
+                    'metadata': uploaded_metadata
+                },
+                'summary': {
+                    'total_matches': len(detailed_matches_response),
+                    'top_score': round(top_score, 1),
+                    'average_score': round(avg_score, 1)
+                },
+                'matches': detailed_matches_response
+            }
+
+            logger.debug(f"[MOBILE] Complete: Product {product_id}, {len(detailed_matches_response)} matches")
 
             # Invalidate CSV cache since catalog was loaded and products modified
             invalidate_csv_cache()
@@ -1347,8 +1929,11 @@ def mobile_upload_and_match():
                 'mode': mode,
                 'catalog_id': catalog_id,
                 'upload_status': 'success',
-                'matches': matches_response,
-                'match_count': len(matches_response)
+                'mobile_result': mobile_result_group,
+                'result_groups': [mobile_result_group],
+                'result_group_count': 1,
+                'matches': legacy_matches_response,
+                'match_count': len(legacy_matches_response)
             }), 200
 
         except Exception as e:
@@ -1369,16 +1954,20 @@ def mobile_results_ready():
     Called by mobile-upload after successful match completion.
     Sets a flag that main app polls to know when to fetch results.
 
-    No auth required (runs on same backend).
+    Requires mobile session token from authenticated mobile page.
     """
     global _mobile_results_flag
 
     try:
+        _, auth_error = _require_mobile_session()
+        if auth_error:
+            return auth_error
+
         import time
         _mobile_results_flag['ready'] = True
         _mobile_results_flag['timestamp'] = time.time()
 
-        logger.info("[MOBILE] Results ready flag set - notifying main app")
+        logger.debug("[MOBILE] Results ready flag set - notifying main app")
 
         return jsonify({
             'success': True,
@@ -1397,9 +1986,13 @@ def check_mobile_results_flag():
     global _mobile_results_flag
 
     try:
+        local_only_error = _require_localhost_request()
+        if local_only_error:
+            return local_only_error
+
         flag_ready = _mobile_results_flag['ready']
         if flag_ready:
-            logger.info(f"[MOBILE] Check flag: ready={flag_ready} (will trigger results polling)")
+            logger.debug(f"[MOBILE] Check flag: ready={flag_ready} (will trigger results polling)")
         return jsonify({
             'ready': flag_ready,
             'timestamp': _mobile_results_flag['timestamp']
@@ -1417,10 +2010,14 @@ def clear_mobile_results_flag():
     global _mobile_results_flag
 
     try:
+        local_only_error = _require_localhost_request()
+        if local_only_error:
+            return local_only_error
+
         _mobile_results_flag['ready'] = False
         _mobile_results_flag['timestamp'] = None
 
-        logger.info("[MOBILE] Results flag cleared")
+        logger.debug("[MOBILE] Results flag cleared")
 
         return jsonify({
             'success': True,
@@ -1893,7 +2490,7 @@ def save_metadata_schema_endpoint():
         success = save_metadata_schema(columns)
 
         if success:
-            logger.info(f"Saved metadata schema with {len(columns)} columns")
+            logger.debug(f"Saved metadata schema with {len(columns)} columns")
             return jsonify({
                 'success': True,
                 'message': f'Saved {len(columns)} column definitions',
@@ -1930,7 +2527,7 @@ def clear_metadata_schema_endpoint():
         success = clear_metadata_schema()
 
         if success:
-            logger.info("Cleared metadata schema")
+            logger.debug("Cleared metadata schema")
             return jsonify({
                 'success': True,
                 'message': 'Metadata schema cleared'
@@ -2261,7 +2858,7 @@ def batch_upload_products():
             # New approach: file paths provided, images already on disk
             try:
                 file_paths = json.loads(file_paths_json)
-                logger.info(f"[BATCH-UPLOAD] METHOD: NEW (File Paths) - Processing {len(file_paths)} images")
+                logger.debug(f"[BATCH-UPLOAD] METHOD: NEW (File Paths) - Processing {len(file_paths)} images")
                 saved_files = file_paths  # Use paths directly, no saving needed
                 files = None  # No uploaded files
             except json.JSONDecodeError as e:
@@ -2274,7 +2871,7 @@ def batch_upload_products():
         else:
             # Legacy approach: files are uploaded, need to save them
             files = request.files.getlist('images')
-            logger.info(f"[BATCH-UPLOAD] METHOD: LEGACY (Direct Upload) - Processing {len(files) if files else 0} files")
+            logger.debug(f"[BATCH-UPLOAD] METHOD: LEGACY (Direct Upload) - Processing {len(files) if files else 0} files")
             saved_files = None  # Will be populated below
 
             if not files or len(files) == 0:
@@ -2287,7 +2884,42 @@ def batch_upload_products():
         
         # Determine total files count based on approach
         file_count = len(file_paths) if file_paths_json else len(files)
-        logger.info(f"[BATCH-UPLOAD] Processing {file_count} images ({('file paths' if file_paths_json else 'uploaded files')})")
+        logger.debug(f"[BATCH-UPLOAD] Processing {file_count} images ({('file paths' if file_paths_json else 'uploaded files')})")
+
+        # Optional operation context for auto performance profile
+        operation_total_files_raw = request.form.get('operation_total_files')
+        operation_total_files = None
+        if operation_total_files_raw is not None and str(operation_total_files_raw).strip() != '':
+            try:
+                operation_total_files = int(operation_total_files_raw)
+            except (TypeError, ValueError):
+                return create_error_response(
+                    'INVALID_OPERATION_TOTAL',
+                    f'operation_total_files must be an integer, got: {operation_total_files_raw}',
+                    'Send operation_total_files as an integer string',
+                    status_code=400
+                )
+
+        processing_profile = (request.form.get('processing_profile', 'auto') or 'auto').strip().lower()
+        if processing_profile not in SUPPORTED_PROCESSING_PROFILES:
+            return create_error_response(
+                'INVALID_PROCESSING_PROFILE',
+                f"Unsupported processing_profile '{processing_profile}'",
+                f"Use one of: {', '.join(sorted(SUPPORTED_PROCESSING_PROFILES))}",
+                status_code=400
+            )
+
+        rebuild_faiss_raw = request.form.get('rebuild_faiss', 'true')
+        rebuild_faiss = str(rebuild_faiss_raw).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        effective_total_files = operation_total_files if operation_total_files is not None else file_count
+        if effective_total_files > MAX_UPLOAD_FILES_PER_OPERATION:
+            return create_error_response(
+                'TOO_MANY_FILES',
+                f'Upload contains {effective_total_files:,} files, which exceeds the maximum of {MAX_UPLOAD_FILES_PER_OPERATION:,}',
+                f'Split uploads into multiple operations of at most {MAX_UPLOAD_FILES_PER_OPERATION:,} files',
+                status_code=400
+            )
 
         # Get optional metadata arrays
         categories = request.form.get('categories', None)
@@ -2305,9 +2937,9 @@ def batch_upload_products():
 
             # Log categories for debugging
             unique_categories = set(c for c in categories if c is not None)
-            logger.info(f"[BATCH-UPLOAD] Categories received: {len(unique_categories)} unique categories from {len(categories)} products")
+            logger.debug(f"[BATCH-UPLOAD] Categories received: {len(unique_categories)} unique categories from {len(categories)} products")
             if unique_categories:
-                logger.info(f"[BATCH-UPLOAD] Unique categories: {sorted(unique_categories)}")
+                logger.debug(f"[BATCH-UPLOAD] Unique categories: {sorted(unique_categories)}")
         except json.JSONDecodeError as e:
             return create_error_response(
                 'INVALID_JSON',
@@ -2356,7 +2988,7 @@ def batch_upload_products():
         # Step 1: If using file paths (new approach), validate them directly. Otherwise, save uploaded files.
         if file_paths_json:
             # MEMORY OPTIMIZED: File paths provided, validate directly without saving
-            logger.info("[BATCH-UPLOAD] Step 1: Validating file paths (MEMORY OPTIMIZED - no uploads)")
+            logger.debug("[BATCH-UPLOAD] Step 1: Validating file paths (MEMORY OPTIMIZED - no uploads)")
 
             valid_files = []
             file_indices = []
@@ -2386,10 +3018,10 @@ def batch_upload_products():
                     continue
 
             saved_files = valid_files
-            logger.info(f"[BATCH-UPLOAD] Step 1: Validated {len(saved_files)} files (skipped {len(skipped_files)})")
+            logger.debug(f"[BATCH-UPLOAD] Step 1: Validated {len(saved_files)} files (skipped {len(skipped_files)})")
         else:
             # LEGACY: Files uploaded, need to save them and validate
-            logger.info("[BATCH-UPLOAD] Step 1: Saving and validating uploaded files")
+            logger.debug("[BATCH-UPLOAD] Step 1: Saving and validating uploaded files")
 
             def process_files_batch(files_to_process, file_indices_to_process, attempt=1):
                 """Process a batch of files, return (saved_files, file_indices, skipped_files)"""
@@ -2443,10 +3075,10 @@ def batch_upload_products():
             saved_files, file_indices, skipped_files = process_files_batch(files, list(range(len(files))), attempt=1)
 
             if len(skipped_files) > 0:
-                logger.info(f"[BATCH-UPLOAD] Attempt 1: Skipped {len(skipped_files)} files, processing {len(saved_files)} valid files")
+                logger.debug(f"[BATCH-UPLOAD] Attempt 1: Skipped {len(skipped_files)} files, processing {len(saved_files)} valid files")
 
                 # Retry skipped files once
-                logger.info(f"[BATCH-UPLOAD] Retrying {len(skipped_files)} skipped files (Attempt 2)")
+                logger.debug(f"[BATCH-UPLOAD] Retrying {len(skipped_files)} skipped files (Attempt 2)")
                 retry_files = [files[s['index']] for s in skipped_files]
                 retry_indices = [s['index'] for s in skipped_files]
 
@@ -2460,9 +3092,9 @@ def batch_upload_products():
                 skipped_files = retry_skipped
 
                 if len(retry_saved) > 0:
-                    logger.info(f"[BATCH-UPLOAD] Retry successful: {len(retry_saved)} files recovered, {len(retry_skipped)} still skipped")
+                    logger.debug(f"[BATCH-UPLOAD] Retry successful: {len(retry_saved)} files recovered, {len(retry_skipped)} still skipped")
                 else:
-                    logger.info(f"[BATCH-UPLOAD] Retry failed: All {len(retry_skipped)} files still invalid")
+                    logger.debug(f"[BATCH-UPLOAD] Retry failed: All {len(retry_skipped)} files still invalid")
 
         if len(saved_files) == 0:
             return create_error_response(
@@ -2472,10 +3104,10 @@ def batch_upload_products():
                 status_code=400
             )
 
-        logger.info(f"[BATCH-UPLOAD] {len(saved_files)} files saved and validated")
+        logger.debug(f"[BATCH-UPLOAD] {len(saved_files)} files saved and validated")
 
         # Step 2: Insert products into database (THREAD-SAFE: Bulk insert in single transaction)
-        logger.info("[BATCH-UPLOAD] Step 2: Inserting products into database (bulk insert)")
+        logger.debug("[BATCH-UPLOAD] Step 2: Inserting products into database (bulk insert)")
 
         # THREAD SAFETY & PERFORMANCE:
         # Use bulk_insert_products() instead of parallel insert_product() calls
@@ -2529,11 +3161,11 @@ def batch_upload_products():
         try:
             product_ids = bulk_insert_products(products_to_insert)
             inserted_count = len(product_ids)
-            logger.info(f"[BATCH-UPLOAD] ✓ Bulk inserted {inserted_count}/{len(saved_files)} products (single transaction)")
+            logger.debug(f"[BATCH-UPLOAD] ✓ Bulk inserted {inserted_count}/{len(saved_files)} products (single transaction)")
         except Exception as e:
             logger.error(f"[BATCH-UPLOAD] Bulk insert failed: {e}")
             # Fallback: insert one by one (slower but more resilient)
-            logger.info("[BATCH-UPLOAD] Falling back to sequential insert...")
+            logger.debug("[BATCH-UPLOAD] Falling back to sequential insert...")
             product_ids = []
             for i, (filepath, category, product_name, sku, is_hist, meta) in enumerate(products_to_insert):
                 try:
@@ -2551,10 +3183,10 @@ def batch_upload_products():
                     logger.error(f"[BATCH-UPLOAD] Failed to insert product {i+1}: {e2}")
                     product_ids.append(None)
             inserted_count = sum(1 for pid in product_ids if pid is not None)
-            logger.info(f"[BATCH-UPLOAD] Fallback complete: {inserted_count}/{len(saved_files)} products inserted")
+            logger.debug(f"[BATCH-UPLOAD] Fallback complete: {inserted_count}/{len(saved_files)} products inserted")
         
         # Step 3: Extract features in batch (GPU-optimized parallel processing)
-        logger.info("[BATCH-UPLOAD] Step 3: Extracting features in batch (GPU-optimized)")
+        logger.debug("[BATCH-UPLOAD] Step 3: Extracting features in batch (GPU-optimized)")
         
         from feature_extraction_service import batch_extract_features_unified
         
@@ -2562,18 +3194,28 @@ def batch_upload_products():
         valid_indices = [i for i, pid in enumerate(product_ids) if pid is not None]
         valid_filepaths = [saved_files[i] for i in valid_indices]
         
+        total_inserted = 0
+        features_failed_count = 0
+        feature_extraction_profile = {
+            'requested_profile': processing_profile,
+            'profile_used': processing_profile
+        }
+
         if valid_filepaths:
-            feature_results = batch_extract_features_unified(valid_filepaths)
+            feature_results, feature_extraction_profile = batch_extract_features_unified(
+                valid_filepaths,
+                processing_profile=processing_profile,
+                operation_total_files=effective_total_files
+            )
             
             # Step 4: Store features in database - INCREMENTAL BATCH INSERT
-            logger.info("[BATCH-UPLOAD] Step 4: Storing features in database (incremental batch insert)")
+            logger.debug("[BATCH-UPLOAD] Step 4: Storing features in database (incremental batch insert)")
             
             from database import serialize_numpy_array, bulk_insert_features
             
             # Collect features for batch insert (incremental to avoid memory bloat)
             features_to_insert = []
             INCREMENTAL_BATCH_SIZE = 32  # Insert every 32 features (matches GPU batch size)
-            total_inserted = 0
             
             for idx, (filepath, features_dict, embedding_type, embedding_version, error_msg) in enumerate(feature_results):
                 original_idx = valid_indices[idx]
@@ -2610,6 +3252,7 @@ def batch_upload_products():
                     except Exception as e:
                         logger.error(f"[BATCH-UPLOAD] Failed to serialize features for product {product_id}: {e}")
                 else:
+                    features_failed_count += 1
                     logger.warning(f"[BATCH-UPLOAD] Feature extraction failed for product {product_id}: {error_msg}")
             
             # Batch insert remaining features
@@ -2617,29 +3260,39 @@ def batch_upload_products():
                 try:
                     inserted_count = bulk_insert_features(features_to_insert)
                     total_inserted += inserted_count
-                    logger.info(f"[BATCH-UPLOAD] ✓ Final batch inserted {inserted_count} remaining feature records (total: {total_inserted})")
+                    logger.debug(f"[BATCH-UPLOAD] ✓ Final batch inserted {inserted_count} remaining feature records (total: {total_inserted})")
                 except Exception as e:
                     logger.error(f"[BATCH-UPLOAD] Failed to batch insert remaining features: {e}")
         
-        # Step 5: Rebuild FAISS indexes in background (don't block response)
-        # Always rebuild FAISS indexes when new products are added (both historical and new)
-        logger.info("[BATCH-UPLOAD] Step 5: Scheduling FAISS index rebuild (background)")
-        
-        def rebuild_indexes_background():
-            """Rebuild FAISS indexes in background thread"""
-            try:
-                logger.info("[BATCH-UPLOAD-BG] Starting background FAISS index rebuild...")
-                from database import rebuild_all_faiss_indexes
-                rebuild_all_faiss_indexes()
-                logger.info("[BATCH-UPLOAD-BG] ✓ FAISS indexes rebuilt successfully")
-            except Exception as e:
-                logger.warning(f"[BATCH-UPLOAD-BG] Failed to rebuild FAISS indexes: {e}")
-        
-        # Start background thread (don't wait for it)
-        import threading
-        bg_thread = threading.Thread(target=rebuild_indexes_background, daemon=True)
-        bg_thread.start()
-        logger.info("[BATCH-UPLOAD] FAISS index rebuild scheduled in background")
+        # Step 5: FAISS index handling
+        if inserted_count > 0:
+            if rebuild_faiss:
+                logger.debug("[BATCH-UPLOAD] Step 5: Scheduling FAISS index rebuild (background)")
+
+                def rebuild_indexes_background():
+                    """Rebuild FAISS indexes in background thread"""
+                    try:
+                        logger.debug("[BATCH-UPLOAD-BG] Starting background FAISS index rebuild...")
+                        from database import rebuild_all_faiss_indexes
+                        rebuild_all_faiss_indexes()
+                        logger.debug("[BATCH-UPLOAD-BG] ✓ FAISS indexes rebuilt successfully")
+                    except Exception as e:
+                        logger.warning(f"[BATCH-UPLOAD-BG] Failed to rebuild FAISS indexes: {e}")
+
+                # Start background thread (don't wait for it)
+                import threading
+                bg_thread = threading.Thread(target=rebuild_indexes_background, daemon=True)
+                bg_thread.start()
+                logger.debug("[BATCH-UPLOAD] FAISS index rebuild scheduled in background")
+            else:
+                # Safety: invalidate stale in-memory indexes so matching remains correct.
+                # Matching will fall back to brute force until a rebuild is requested.
+                try:
+                    from faiss_index import faiss_manager
+                    faiss_manager.invalidate()
+                    logger.debug("[BATCH-UPLOAD] Deferred FAISS rebuild for this batch (indexes invalidated)")
+                except Exception as e:
+                    logger.warning(f"[BATCH-UPLOAD] Failed to invalidate FAISS indexes during deferred rebuild: {e}")
         
         # Prepare response
         results = []
@@ -2693,10 +3346,16 @@ def batch_upload_products():
             'successful': success_count,
             'failed': failed_count,
             'skipped': skipped_count,
-            'results': results
+            'results': results,
+            'features_extracted': total_inserted,
+            'features_failed': features_failed_count,
+            'processing_profile_requested': processing_profile,
+            'processing_profile_used': feature_extraction_profile.get('profile_used', processing_profile),
+            'processing_profile_reason': feature_extraction_profile.get('reason'),
+            'processing_clip_model': feature_extraction_profile.get('clip_model_name')
         }
         
-        logger.info(f"[BATCH-UPLOAD] Returning JSON response: status={response_data['status']}, total={response_data['total']}, successful={response_data['successful']}, failed={response_data['failed']}, skipped={response_data['skipped']}, results_count={len(response_data['results'])}")
+        logger.debug(f"[BATCH-UPLOAD] Returning JSON response: status={response_data['status']}, total={response_data['total']}, successful={response_data['successful']}, failed={response_data['failed']}, skipped={response_data['skipped']}, results_count={len(response_data['results'])}")
 
         # Invalidate CSV cache since products were added
         invalidate_csv_cache()
@@ -3278,7 +3937,7 @@ def get_match_results():
     try:
         from database import get_db_connection, get_product_by_id
 
-        logger.info("[MATCH-RESULTS] Fetching stored match results for NEW section")
+        logger.debug("[MATCH-RESULTS] Fetching stored match results for NEW section")
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -3351,7 +4010,7 @@ def get_match_results():
                             'status': 'success'
                         })
 
-            logger.info(f"[MATCH-RESULTS] Found {len(results)} products with stored matches")
+            logger.debug(f"[MATCH-RESULTS] Found {len(results)} products with stored matches")
 
             return jsonify({
                 'success': True,
@@ -5957,12 +6616,27 @@ def save_current_as_snapshot():
         
         description = data.get('description', '')
         tags = data.get('tags', [])
+        skip_if_empty_raw = data.get('skip_if_empty', False)
+        skip_if_empty = (
+            skip_if_empty_raw
+            if isinstance(skip_if_empty_raw, bool)
+            else str(skip_if_empty_raw).strip().lower() in ('1', 'true', 'yes', 'on')
+        )
 
         # Check if this is a session save (temporary, expires in 1 hour)
         session_only = 'session' in [tag.lower() for tag in tags] if tags else False
 
-        logger.info(f"[SNAPSHOT-API] Saving snapshot '{name}' - Type: {'Session' if session_only else 'Persistent'}, Tags: {tags}")
-        result = save_main_db_as_snapshot(name, description, tags, session_only=session_only)
+        logger.info(
+            f"[SNAPSHOT-API] Saving snapshot '{name}' - Type: {'Session' if session_only else 'Persistent'}, "
+            f"Tags: {tags}, SkipIfEmpty: {skip_if_empty}"
+        )
+        result = save_main_db_as_snapshot(
+            name,
+            description,
+            tags,
+            session_only=session_only,
+            skip_if_empty=skip_if_empty
+        )
         
         if result.get('error'):
             return create_error_response(
@@ -6305,6 +6979,9 @@ def trigger_memory_cleanup():
         
         cleanup_stats = {
             'clip_model_cleared': False,
+            'feature_cache_cleared': False,
+            'csv_cache_cleared': False,
+            'category_cache_cleared': False,
             'garbage_collected': 0,
             'cuda_cache_cleared': False
         }
@@ -6317,6 +6994,28 @@ def trigger_memory_cleanup():
             logger.info("CLIP model cache cleared via API")
         except Exception as e:
             logger.warning(f"Failed to clear CLIP model cache: {e}")
+
+        # Clear feature cache singleton
+        try:
+            from feature_cache import clear_all_caches
+            clear_all_caches()
+            cleanup_stats['feature_cache_cleared'] = True
+            logger.info("Feature cache cleared via API")
+        except Exception as e:
+            logger.warning(f"Failed to clear feature cache: {e}")
+
+        # Clear in-process CSV/category caches
+        try:
+            invalidate_csv_cache()
+            cleanup_stats['csv_cache_cleared'] = True
+        except Exception as e:
+            logger.warning(f"Failed to clear CSV cache: {e}")
+
+        try:
+            invalidate_catalog_categories_cache()
+            cleanup_stats['category_cache_cleared'] = True
+        except Exception as e:
+            logger.warning(f"Failed to clear catalog category cache: {e}")
         
         # Force garbage collection
         try:
@@ -6415,4 +7114,4 @@ def get_memory_stats():
 
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=True)
+    app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)

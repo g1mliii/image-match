@@ -43,9 +43,142 @@ let historyStack = [];
 let historyIndex = -1;
 const MAX_HISTORY = 50;
 const PATH_SEPARATOR_REGEX = /[\\/]/;
+const IMAGE_EXTENSION_REGEX = /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i;
+const MAX_UPLOAD_FILES = 50000;
+const LARGE_FOLDER_CHUNK_THRESHOLD = 5000;
+const CATEGORY_COUNT_CHUNK_SIZE = 2000;
+const MAX_FAILED_ITEM_DETAILS = 200;
+const STREAM_UPLOAD_BATCH_SIZE = 100;
+const AUTO_FAST_FILE_THRESHOLD = 5000;
+const AUTO_FAST_CPU_CORES_THRESHOLD = 4;
+const CLIENT_DEBUG_LOGS = false;
+
+function debugLog(...args) {
+    if (CLIENT_DEBUG_LOGS) {
+        console.log(...args);
+    }
+}
+
+function debugWarn(...args) {
+    if (CLIENT_DEBUG_LOGS) {
+        console.warn(...args);
+    }
+}
 
 // Excluded metadata keys for component display
 const EXCLUDED_METADATA_KEYS = new Set(['sku', 'name', 'category', 'price', 'product_name', 'performance']);
+
+function isImageLikeFile(file) {
+    if (!file) return false;
+    if (typeof file.type === 'string' && file.type.toLowerCase().startsWith('image/')) {
+        return true;
+    }
+    return IMAGE_EXTENSION_REGEX.test(String(file.name || ''));
+}
+
+function showUploadLoadingState(infoElementId, message) {
+    const info = document.getElementById(infoElementId);
+    if (!info) return;
+    info.innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+            <span class="btn-spinner" style="display: inline-block; margin-right: 8px;"></span>
+            ${escapeHtml(message)}
+        </div>
+    `;
+    info.classList.add('show');
+}
+
+async function countCategoriesWithYield(filesWithCategories) {
+    const categoryCount = {};
+
+    if (filesWithCategories.length <= LARGE_FOLDER_CHUNK_THRESHOLD) {
+        filesWithCategories.forEach(({ category }) => {
+            if (category) {
+                categoryCount[category] = (categoryCount[category] || 0) + 1;
+            }
+        });
+        return categoryCount;
+    }
+
+    for (let i = 0; i < filesWithCategories.length; i += CATEGORY_COUNT_CHUNK_SIZE) {
+        const end = Math.min(i + CATEGORY_COUNT_CHUNK_SIZE, filesWithCategories.length);
+        for (let j = i; j < end; j++) {
+            const category = filesWithCategories[j]?.category;
+            if (category) {
+                categoryCount[category] = (categoryCount[category] || 0) + 1;
+            }
+        }
+
+        if (i + CATEGORY_COUNT_CHUNK_SIZE < filesWithCategories.length) {
+            await sleep(0);
+        }
+    }
+
+    return categoryCount;
+}
+
+function getAutoProcessingProfile(totalFiles) {
+    const cores = navigator.hardwareConcurrency || 0;
+    const isSlowCpu = cores > 0 && cores <= AUTO_FAST_CPU_CORES_THRESHOLD;
+    if (totalFiles >= AUTO_FAST_FILE_THRESHOLD || isSlowCpu) {
+        return 'fast';
+    }
+    return 'auto';
+}
+
+function appendBatchUploadPayload(formData, filesWithCategories, categoryMap, isHistorical, totalOperationFiles, rebuildFaiss = true) {
+    const useFilePaths = filesWithCategories.every(({ file }) =>
+        file && typeof file.path === 'string' && file.path.trim().length > 0
+    );
+
+    const filePaths = [];
+    const categories = [];
+    const productNames = [];
+    const skus = [];
+    const metadataList = [];
+
+    filesWithCategories.forEach(({ file, category }, idx) => {
+        const metadata = categoryMap[file.name] || {};
+        const finalCategory = metadata.category || category;
+
+        categories.push(finalCategory || null);
+        productNames.push(metadata.name || file.name || `image_${idx}`);
+        skus.push(metadata.sku || null);
+
+        const dynamicMeta = { ...metadata };
+        delete dynamicMeta.category;
+        delete dynamicMeta.sku;
+        delete dynamicMeta.name;
+        metadataList.push(JSON.stringify(dynamicMeta));
+
+        if (useFilePaths) {
+            filePaths.push(file.path);
+        } else {
+            formData.append('images', file, file.name || `image_${idx}`);
+        }
+    });
+
+    if (useFilePaths) {
+        formData.append('file_paths', JSON.stringify(filePaths));
+    }
+
+    formData.append('categories', JSON.stringify(categories));
+    formData.append('product_names', JSON.stringify(productNames));
+    formData.append('skus', JSON.stringify(skus));
+    formData.append('metadata', JSON.stringify(metadataList));
+    formData.append('is_historical', isHistorical ? 'true' : 'false');
+    formData.append('operation_total_files', String(totalOperationFiles));
+    formData.append('processing_profile', getAutoProcessingProfile(totalOperationFiles));
+    formData.append('rebuild_faiss', rebuildFaiss ? 'true' : 'false');
+
+    return useFilePaths ? 'file_paths' : 'direct_upload';
+}
+
+function recordFailedItem(failedItems, item) {
+    if (failedItems.length < MAX_FAILED_ITEM_DETAILS) {
+        failedItems.push(item);
+    }
+}
 
 const IconManager = {
     // Track state
@@ -451,6 +584,23 @@ let blobUrlCleanupInterval = null;
 let lastAutoBackupTime = 0;
 const AUTO_BACKUP_DEBOUNCE_MS = 5 * 60 * 1000; // 5 minute window for batch replace operations
 
+function cleanupDynamicFilterDropdownListeners(rootContainer = null) {
+    const container = rootContainer || document.getElementById('dynamicFiltersContainer');
+    if (!container) return 0;
+
+    let removedCount = 0;
+    const dropdownContainers = container.querySelectorAll('.searchable-dropdown-container');
+    dropdownContainers.forEach((dropdownContainer) => {
+        if (dropdownContainer._closeDropdown) {
+            document.removeEventListener('click', dropdownContainer._closeDropdown);
+            delete dropdownContainer._closeDropdown;
+            removedCount++;
+        }
+    });
+
+    return removedCount;
+}
+
 function clearOperationData() {
     historicalProducts = [];
     newProducts = [];
@@ -467,14 +617,8 @@ function clearOperationData() {
 
     const dynamicFiltersContainer = document.getElementById('dynamicFiltersContainer');
     if (dynamicFiltersContainer) {
-        // Remove dropdown click listeners
-        const dropdownContainers = dynamicFiltersContainer.querySelectorAll('.searchable-dropdown-container');
-        dropdownContainers.forEach(container => {
-            if (container._closeDropdown) {
-                document.removeEventListener('click', container._closeDropdown);
-                delete container._closeDropdown;
-            }
-        });
+        // Remove document-level listeners attached by searchable dropdowns
+        cleanupDynamicFilterDropdownListeners(dynamicFiltersContainer);
         // Remove the entire container
         dynamicFiltersContainer.remove();
     }
@@ -843,6 +987,66 @@ function updateCsvWarning(section) {
     }
 }
 
+function updateSectionCollapseToggle(sectionId, isCollapsed) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+
+    const toggleBtn = section.querySelector('.section-collapse-toggle');
+    if (!toggleBtn) return;
+
+    toggleBtn.textContent = isCollapsed ? 'EXPAND' : 'COLLAPSE';
+    toggleBtn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    toggleBtn.title = isCollapsed ? 'Expand section' : 'Collapse section';
+}
+
+function setSectionCollapsed(sectionId, shouldCollapse) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+
+    section.classList.toggle('is-collapsed', shouldCollapse);
+    section.setAttribute('data-collapsed', shouldCollapse ? 'true' : 'false');
+    updateSectionCollapseToggle(sectionId, shouldCollapse);
+}
+
+function toggleSectionCollapse(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+    const isCollapsed = section.classList.contains('is-collapsed');
+    setSectionCollapsed(sectionId, !isCollapsed);
+}
+
+function showNewSectionAfterHistoricalStep() {
+    const newSection = document.getElementById('newSection');
+    debugLog('[DEBUG] Attempting to show newSection:', newSection);
+
+    if (!newSection) {
+        console.error('[ERROR] newSection element not found in DOM!');
+        return;
+    }
+
+    newSection.style.display = 'block';
+    newSection.style.visibility = 'visible';
+    setSectionCollapsed('historicalSection', true);
+    setSectionCollapsed('newSection', false);
+    debugLog('[DEBUG] newSection display set to block, current style:', newSection.style.display);
+
+    // Re-apply mode settings to ensure UI is synced after section becomes visible
+    setMode('new', newMode);
+
+    setTimeout(() => {
+        newSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
+}
+
+function showResultsSectionWithCollapse() {
+    const resultsSection = document.getElementById('resultsSection');
+    if (!resultsSection) return;
+
+    resultsSection.style.display = 'block';
+    setSectionCollapsed('newSection', true);
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initHistoricalUpload();
@@ -852,6 +1056,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initTooltips();
     initGPUStatus();
     initCatalogOptions();
+    setSectionCollapsed('historicalSection', false);
+    setSectionCollapsed('newSection', false);
 
     // Check for crash recovery
     checkForCrashRecovery();
@@ -910,7 +1116,10 @@ async function selectFolderNative(handleFilesCallback) {
                     file.webkitRelativePath = info.relativePath;
                     return file;
                 });
-                handleFilesCallback(files);
+                Promise.resolve(handleFilesCallback(files)).catch((err) => {
+                    console.error('Error handling native-selected files:', err);
+                    showToast('Failed to process selected files', 'error');
+                });
             }
         } catch (e) {
             console.error('Native folder selection error:', e);
@@ -933,14 +1142,20 @@ function initHistoricalUpload() {
     addTrackedListener(browseBtn, 'click', async (e) => {
         e.stopPropagation();
         // Try native folder selection first (for pywebview)
-        const handled = await selectFolderNative(handleHistoricalFiles);
+        const handled = await selectFolderNative((files) => {
+            showUploadLoadingState('historicalInfo', `Processing ${files.length.toLocaleString()} selected files...`);
+            return handleHistoricalFiles(files);
+        });
         if (!handled) {
             input.click();
         }
     }, 'historical');
 
     addTrackedListener(dropZone, 'click', async () => {
-        const handled = await selectFolderNative(handleHistoricalFiles);
+        const handled = await selectFolderNative((files) => {
+            showUploadLoadingState('historicalInfo', `Processing ${files.length.toLocaleString()} selected files...`);
+            return handleHistoricalFiles(files);
+        });
         if (!handled) {
             input.click();
         }
@@ -965,11 +1180,19 @@ function initHistoricalUpload() {
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('drop-success');
         setTimeout(() => dropZone.classList.remove('drop-success'), 500);
-        handleHistoricalFiles(Array.from(e.dataTransfer.files));
+        const files = Array.from(e.dataTransfer.files);
+        showUploadLoadingState('historicalInfo', `Processing ${files.length.toLocaleString()} dropped files...`);
+        setTimeout(() => {
+            void handleHistoricalFiles(files);
+        }, 0);
     }, 'historical');
 
     addTrackedListener(input, 'change', (e) => {
-        handleHistoricalFiles(Array.from(e.target.files));
+        const files = Array.from(e.target.files);
+        showUploadLoadingState('historicalInfo', `Processing ${files.length.toLocaleString()} selected files...`);
+        setTimeout(() => {
+            void handleHistoricalFiles(files);
+        }, 0);
     }, 'historical');
 
     addTrackedListener(csvInput, 'change', async (e) => {
@@ -1003,11 +1226,16 @@ function initHistoricalUpload() {
     // processBtn.addEventListener('click', processHistoricalCatalog);
 }
 
-function handleHistoricalFiles(files) {
-    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+async function handleHistoricalFiles(files) {
+    const imageFiles = files.filter(isImageLikeFile);
 
     if (imageFiles.length === 0) {
         showToast('No image files found in folder', 'error');
+        return;
+    }
+
+    if (imageFiles.length > MAX_UPLOAD_FILES) {
+        showToast(`Too many files selected (${imageFiles.length.toLocaleString()}). Maximum supported is ${MAX_UPLOAD_FILES.toLocaleString()}.`, 'error');
         return;
     }
 
@@ -1019,13 +1247,8 @@ function handleHistoricalFiles(files) {
 
     historicalFiles = filesWithCategories;
 
-    // Count categories
-    const categoryCount = {};
-    filesWithCategories.forEach(({ category }) => {
-        if (category) {
-            categoryCount[category] = (categoryCount[category] || 0) + 1;
-        }
-    });
+    // Count categories (yield for very large folders so UI stays responsive)
+    const categoryCount = await countCategoriesWithYield(filesWithCategories);
 
     const categorySummary = Object.keys(categoryCount).length > 0
         ? `<div style="margin-top: 10px;"><strong>Categories found:</strong> ${Object.entries(categoryCount).map(([cat, count]) => `${cat} (${count})`).join(', ')}</div>`
@@ -1150,6 +1373,10 @@ async function processHistoricalCatalog() {
     let successCount = 0;
     let failedCount = 0;
     const failedItems = [];
+    let totalFeaturesExtracted = 0;
+    let totalFeaturesFailed = 0;
+    const uploadTransportsUsed = new Set();
+    const extractionProfilesUsed = new Set();
 
     // Separate Mode 1/3 (images) from Mode 2 (CSV only)
     const imageItems = [];
@@ -1185,7 +1412,7 @@ async function processHistoricalCatalog() {
                 if (!hasValidSku || !hasValidName) {
                     console.warn(`Skipping row ${i + 1} (${fileName}): Missing required fields (SKU or Name)`);
                     failedCount++;
-                    failedItems.push({ row: i + 1, fileName, reason: 'Missing SKU or Name' });
+                    recordFailedItem(failedItems, { row: i + 1, fileName, reason: 'Missing SKU or Name' });
                     continue;
                 }
 
@@ -1272,7 +1499,7 @@ async function processHistoricalCatalog() {
                     } else {
                         failedCount += batchProducts.length;
                         const errorMsg = getUserFriendlyError(data.error_code || 'BATCH_ERROR', data.error, data.suggestion);
-                        failedItems.push({ row: 'batch', fileName: 'all', reason: errorMsg });
+                        recordFailedItem(failedItems, { row: 'batch', fileName: 'all', reason: errorMsg });
                         console.error(`[BATCH-METADATA] Batch ${batchIdx + 1}/${totalBatches} failed:`, data);
                     }
                 }
@@ -1282,72 +1509,44 @@ async function processHistoricalCatalog() {
         } catch (error) {
             failedCount += csvOnlyItems.length;
             const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
-            failedItems.push({ row: 'batch', fileName: 'all', reason: error.message });
+            recordFailedItem(failedItems, { row: 'batch', fileName: 'all', reason: error.message });
             console.error('[BATCH-METADATA] Batch creation error:', error);
         }
     }
 
     // Process image items in batch (Mode 1/3) - GPU batch processing
     if (imageItems.length > 0) {
-        console.log(`[BATCH-UPLOAD] Preparing to batch upload ${imageItems.length} images`);
+        debugLog(`[BATCH-UPLOAD] Preparing to batch upload ${imageItems.length} images`);
 
         try {
             // OPTIMIZATION: Stream batch uploads every 100 images
             // This overlaps file I/O with network requests instead of waiting for all files to load
-            const STREAM_BATCH_SIZE = 100;
-            const totalBatches = Math.ceil(imageItems.length / STREAM_BATCH_SIZE);
+            const totalBatches = Math.ceil(imageItems.length / STREAM_UPLOAD_BATCH_SIZE);
 
-            console.log(`[BATCH-UPLOAD] Streaming ${imageItems.length} images in ${totalBatches} batch(es) of ${STREAM_BATCH_SIZE}`);
+            debugLog(`[BATCH-UPLOAD] Streaming ${imageItems.length} images in ${totalBatches} batch(es) of ${STREAM_UPLOAD_BATCH_SIZE}`);
 
             // Process each batch
             for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
-                const batchStart = batchIdx * STREAM_BATCH_SIZE;
-                const batchEnd = Math.min(batchStart + STREAM_BATCH_SIZE, imageItems.length);
+                const batchStart = batchIdx * STREAM_UPLOAD_BATCH_SIZE;
+                const batchEnd = Math.min(batchStart + STREAM_UPLOAD_BATCH_SIZE, imageItems.length);
                 const batchItems = imageItems.slice(batchStart, batchEnd);
 
-                console.log(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches}: Preparing ${batchItems.length} images`);
+                debugLog(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches}: Preparing ${batchItems.length} images`);
 
                 try {
-                    // Collect image paths for this batch (not file data - MEMORY OPTIMIZATION)
                     let batchFormData = new FormData();
-                    const filePaths = [];
-                    const categories = [];
-                    const productNames = [];
-                    const skus = [];
-                    const metadataList = [];
+                    const batchFiles = batchItems.map((idx) => historicalFiles[idx]);
+                    const transportMode = appendBatchUploadPayload(
+                        batchFormData,
+                        batchFiles,
+                        categoryMap,
+                        true,
+                        imageItems.length,
+                        batchIdx === totalBatches - 1
+                    );
+                    uploadTransportsUsed.add(transportMode);
 
-                    for (const i of batchItems) {
-                        const fileObj = historicalFiles[i];
-                        const file = fileObj.file;
-                        const category = fileObj.category;
-                        const metadata = categoryMap[file.name] || {};
-
-                        // Append file path (not the file itself - backend reads directly from disk)
-                        filePaths.push(file.path);
-
-                        // Collect metadata
-                        const finalCategory = metadata.category || category;
-                        categories.push(finalCategory || null);
-                        productNames.push(metadata.name || file.name);
-                        skus.push(metadata.sku || null);
-
-                        // Add all other fields to generic metadata
-                        const dynamicMeta = { ...metadata };
-                        delete dynamicMeta.category;
-                        delete dynamicMeta.sku;
-                        delete dynamicMeta.name;
-                        metadataList.push(JSON.stringify(dynamicMeta));
-                    }
-
-                    // Append file paths and metadata as JSON arrays
-                    batchFormData.append('file_paths', JSON.stringify(filePaths));
-                    batchFormData.append('categories', JSON.stringify(categories));
-                    batchFormData.append('product_names', JSON.stringify(productNames));
-                    batchFormData.append('skus', JSON.stringify(skus));
-                    batchFormData.append('metadata', JSON.stringify(metadataList));
-                    batchFormData.append('is_historical', 'true');
-
-                    console.log(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches}: Sending ${batchItems.length} images`);
+                    debugLog(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches}: Sending ${batchItems.length} images`);
 
                     // Send this batch
                     const response = await fetchWithRetry('/api/products/batch-upload', {
@@ -1372,7 +1571,7 @@ async function processHistoricalCatalog() {
                     if (response.ok) {
                         // PERFORMANCE FIX: Removed debug logging to reduce network overhead during batch operations
 
-                        console.log(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches} response:`, {
+                        debugLog(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches} response:`, {
                             total: data.total,
                             successful: data.successful,
                             failed: data.failed,
@@ -1385,13 +1584,14 @@ async function processHistoricalCatalog() {
                         // Add backend's success count to our running total
                         const batchSuccessCount = data.successful || 0;
                         const batchFailedCount = (data.failed || 0) + (data.skipped || 0); // Skipped = failed for UI
-
-                        console.log(`[DEBUG] Before: success=${successCount}, failed=${failedCount}. Adding: +${batchSuccessCount} success, +${batchFailedCount} failed`);
+                        totalFeaturesExtracted += data.features_extracted || 0;
+                        totalFeaturesFailed += data.features_failed || 0;
+                        if (data.processing_profile_used) {
+                            extractionProfilesUsed.add(data.processing_profile_used);
+                        }
 
                         successCount += batchSuccessCount;
                         failedCount += batchFailedCount;
-
-                        console.log(`[DEBUG] After: success=${successCount}, failed=${failedCount}`);
 
                         // Process results to populate historicalProducts array for successful items
                         if (data.results) {
@@ -1420,7 +1620,7 @@ async function processHistoricalCatalog() {
                                     if (relativeIdx >= 0 && relativeIdx < batchItems.length) {
                                         const batchItemIdx = batchItems[relativeIdx];
                                         const fileObj = historicalFiles[batchItemIdx];
-                                        failedItems.push({
+                                        recordFailedItem(failedItems, {
                                             row: batchItemIdx + 1,
                                             fileName: result.filename || fileObj.file.name,
                                             reason: result.reason || result.error || 'Unknown error'
@@ -1439,7 +1639,7 @@ async function processHistoricalCatalog() {
                     for (const i of batchItems) {
                         const fileObj = historicalFiles[i];
                         failedCount++;
-                        failedItems.push({ row: i + 1, fileName: fileObj.file.name, reason: error.message || 'Batch processing failed' });
+                        recordFailedItem(failedItems, { row: i + 1, fileName: fileObj.file.name, reason: error.message || 'Batch processing failed' });
                     }
                     // Continue to next batch
                 }
@@ -1463,6 +1663,18 @@ async function processHistoricalCatalog() {
 
     let statusMsg = `<h4>Historical catalog processed</h4>`;
     statusMsg += `<p><strong>${successCount} successful</strong>, ${failedCount} failed</p>`;
+    if (totalFeaturesExtracted > 0 || totalFeaturesFailed > 0) {
+        statusMsg += `<p>Feature extraction: ${totalFeaturesExtracted} extracted, ${totalFeaturesFailed} failed</p>`;
+    }
+    if (totalFeaturesFailed > 0) {
+        statusMsg += `<p style="color: #ed8936;">Warning: ${totalFeaturesFailed} images failed feature extraction</p>`;
+    }
+    if (extractionProfilesUsed.has('fast')) {
+        statusMsg += `<p style="color: #2b6cb0;">Auto Fast Mode enabled for this upload (optimized CLIP preprocessing).</p>`;
+    }
+    if (uploadTransportsUsed.has('direct_upload')) {
+        statusMsg += `<p style="color: #4a5568; font-size: 12px;">Browser file mode detected: using direct upload fallback (no native file paths available).</p>`;
+    }
 
     if (catalogOption === 'add_to_existing' && existingCount > 0) {
         statusMsg += `<p>${successCount} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)</p>`;
@@ -1477,9 +1689,15 @@ async function processHistoricalCatalog() {
             statusMsg += `<li>Row ${item.row} (${item.fileName}): ${item.reason}</li>`;
         });
         statusMsg += `</ul></div>`;
-    } else if (failedItems.length > 10) {
-        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>${failedItems.length} items failed</strong> - check console for details</div>`;
-        console.log('Failed items:', failedItems);
+    } else if (failedCount > 0) {
+        const detailsShown = Math.min(failedItems.length, MAX_FAILED_ITEM_DETAILS);
+        const detailsNote = failedCount > detailsShown
+            ? ` (showing first ${detailsShown})`
+            : '';
+        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>${failedCount} items failed</strong>${detailsNote}</div>`;
+        if (failedItems.length > 0) {
+            debugLog('Failed item samples:', failedItems);
+        }
     }
 
     statusDiv.innerHTML = statusMsg;
@@ -1490,23 +1708,8 @@ async function processHistoricalCatalog() {
     // MEMORY OPTIMIZATION: Clear operation data to free 50-100MB
     clearOperationData();
 
-    // Show next step - force display
-    const newSection = document.getElementById('newSection');
-    console.log('[DEBUG] Attempting to show newSection:', newSection);
-    if (newSection) {
-        newSection.style.display = 'block';
-        newSection.style.visibility = 'visible';
-        console.log('[DEBUG] newSection display set to block, current style:', newSection.style.display);
-
-        // Re-apply mode settings to ensure UI is synced after section becomes visible
-        setMode('new', newMode);
-
-        setTimeout(() => {
-            newSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 200);
-    } else {
-        console.error('[ERROR] newSection element not found in DOM!');
-    }
+    // Show next step
+    showNewSectionAfterHistoricalStep();
 }
 
 function initNewUpload() {
@@ -1520,14 +1723,20 @@ function initNewUpload() {
     addTrackedListener(browseBtn, 'click', async (e) => {
         e.stopPropagation();
         // Try native folder selection first (for pywebview)
-        const handled = await selectFolderNative(handleNewFiles);
+        const handled = await selectFolderNative((files) => {
+            showUploadLoadingState('newInfo', `Processing ${files.length.toLocaleString()} selected files...`);
+            return handleNewFiles(files);
+        });
         if (!handled) {
             input.click();
         }
     }, 'new');
 
     addTrackedListener(dropZone, 'click', async () => {
-        const handled = await selectFolderNative(handleNewFiles);
+        const handled = await selectFolderNative((files) => {
+            showUploadLoadingState('newInfo', `Processing ${files.length.toLocaleString()} selected files...`);
+            return handleNewFiles(files);
+        });
         if (!handled) {
             input.click();
         }
@@ -1552,11 +1761,19 @@ function initNewUpload() {
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('drop-success');
         setTimeout(() => dropZone.classList.remove('drop-success'), 500);
-        handleNewFiles(Array.from(e.dataTransfer.files));
+        const files = Array.from(e.dataTransfer.files);
+        showUploadLoadingState('newInfo', `Processing ${files.length.toLocaleString()} dropped files...`);
+        setTimeout(() => {
+            void handleNewFiles(files);
+        }, 0);
     }, 'new');
 
     addTrackedListener(input, 'change', (e) => {
-        handleNewFiles(Array.from(e.target.files));
+        const files = Array.from(e.target.files);
+        showUploadLoadingState('newInfo', `Processing ${files.length.toLocaleString()} selected files...`);
+        setTimeout(() => {
+            void handleNewFiles(files);
+        }, 0);
     }, 'new');
 
     addTrackedListener(csvInput, 'change', async (e) => {
@@ -1587,11 +1804,16 @@ function initNewUpload() {
 
 }
 
-function handleNewFiles(files) {
-    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+async function handleNewFiles(files) {
+    const imageFiles = files.filter(isImageLikeFile);
 
     if (imageFiles.length === 0) {
         showToast('No image files found in folder', 'error');
+        return;
+    }
+
+    if (imageFiles.length > MAX_UPLOAD_FILES) {
+        showToast(`Too many files selected (${imageFiles.length.toLocaleString()}). Maximum supported is ${MAX_UPLOAD_FILES.toLocaleString()}.`, 'error');
         return;
     }
 
@@ -1603,13 +1825,8 @@ function handleNewFiles(files) {
 
     newFiles = filesWithCategories;
 
-    // Count categories
-    const categoryCount = {};
-    filesWithCategories.forEach(({ category }) => {
-        if (category) {
-            categoryCount[category] = (categoryCount[category] || 0) + 1;
-        }
-    });
+    // Count categories (yield for very large folders so UI stays responsive)
+    const categoryCount = await countCategoriesWithYield(filesWithCategories);
 
     const categorySummary = Object.keys(categoryCount).length > 0
         ? `<div style="margin-top: 10px;"><strong>Categories found:</strong> ${Object.entries(categoryCount).map(([cat, count]) => `${cat} (${count})`).join(', ')}</div>`
@@ -1723,6 +1940,10 @@ async function processNewProducts() {
     let successCount = 0;
     let failedCount = 0;
     const failedItems = [];
+    let totalFeaturesExtracted = 0;
+    let totalFeaturesFailed = 0;
+    const uploadTransportsUsed = new Set();
+    const extractionProfilesUsed = new Set();
 
     // Separate Mode 1/3 (images) from Mode 2 (CSV only)
     const imageItems = [];
@@ -1757,7 +1978,7 @@ async function processNewProducts() {
                 if (!hasValidSku || !hasValidName) {
                     console.warn(`Skipping row ${i + 1} (${fileName}): Missing required fields (SKU or Name)`);
                     failedCount++;
-                    failedItems.push({ row: i + 1, fileName, reason: 'Missing SKU or Name' });
+                    recordFailedItem(failedItems, { row: i + 1, fileName, reason: 'Missing SKU or Name' });
                     continue;
                 }
 
@@ -1815,141 +2036,113 @@ async function processNewProducts() {
                 } else {
                     failedCount += productsToCreate.length;
                     const errorMsg = getUserFriendlyError(data.error_code || 'BATCH_ERROR', data.error, data.suggestion);
-                    failedItems.push({ row: 'batch', fileName: 'all', reason: errorMsg });
+                    recordFailedItem(failedItems, { row: 'batch', fileName: 'all', reason: errorMsg });
                     console.error('[BATCH-METADATA] Batch creation failed:', data);
                 }
             }
         } catch (error) {
             failedCount += csvOnlyItems.length;
             const errorMsg = getUserFriendlyError('NETWORK_ERROR', error.message);
-            failedItems.push({ row: 'batch', fileName: 'all', reason: error.message });
+            recordFailedItem(failedItems, { row: 'batch', fileName: 'all', reason: error.message });
             console.error('[BATCH-METADATA] Batch creation error:', error);
         }
     }
 
     if (imageItems.length > 0) {
-        console.log(`[BATCH-UPLOAD] Preparing to batch upload ${imageItems.length} images`);
+        debugLog(`[BATCH-UPLOAD] Preparing to batch upload ${imageItems.length} images`);
 
         try {
-            let batchFormData = new FormData();
-            const categories = [];
-            const productNames = [];
-            const skus = [];
-            const filePaths = [];
-            const metadataList = [];
+            const totalBatches = Math.ceil(imageItems.length / STREAM_UPLOAD_BATCH_SIZE);
+            debugLog(`[BATCH-UPLOAD] Streaming ${imageItems.length} images in ${totalBatches} batch(es) of ${STREAM_UPLOAD_BATCH_SIZE}`);
 
-            for (const i of imageItems) {
-                const fileObj = newFiles[i];
-                const file = fileObj.file;
-                const category = fileObj.category;
-                const metadata = categoryMap[file.name] || {};
+            for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+                const batchStart = batchIdx * STREAM_UPLOAD_BATCH_SIZE;
+                const batchEnd = Math.min(batchStart + STREAM_UPLOAD_BATCH_SIZE, imageItems.length);
+                const batchItems = imageItems.slice(batchStart, batchEnd);
 
-                // Append file path (not the file itself - backend reads directly from disk - MEMORY OPTIMIZATION)
-                filePaths.push(file.path);
+                try {
+                    let batchFormData = new FormData();
+                    const batchFiles = batchItems.map((idx) => newFiles[idx]);
+                    const transportMode = appendBatchUploadPayload(
+                        batchFormData,
+                        batchFiles,
+                        categoryMap,
+                        false,
+                        imageItems.length,
+                        batchIdx === totalBatches - 1
+                    );
+                    uploadTransportsUsed.add(transportMode);
 
-                // Collect metadata
-                const finalCategory = metadata.category || category;
-                categories.push(finalCategory || null);
-                productNames.push(metadata.name || file.name);
-                skus.push(metadata.sku || null);
+                    debugLog(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches}: Sending ${batchItems.length} images`);
 
-                // Add all other fields to generic metadata
-                const dynamicMeta = { ...metadata };
-                delete dynamicMeta.category;
-                delete dynamicMeta.sku;
-                delete dynamicMeta.name;
-                metadataList.push(JSON.stringify(dynamicMeta));
-            }
+                    const response = await fetchWithRetry('/api/products/batch-upload', {
+                        method: 'POST',
+                        body: batchFormData
+                    });
 
-            // Append file paths and metadata as JSON arrays
-            batchFormData.append('file_paths', JSON.stringify(filePaths));
-            batchFormData.append('categories', JSON.stringify(categories));
-            batchFormData.append('product_names', JSON.stringify(productNames));
-            batchFormData.append('skus', JSON.stringify(skus));
-            batchFormData.append('metadata', JSON.stringify(metadataList));
-            batchFormData.append('is_historical', 'false');
+                    const data = await response.json();
+                    batchFormData = null;
 
-            console.log(`[BATCH-UPLOAD] Sending ${imageItems.length} images to batch-upload endpoint`);
+                    if (response.ok) {
+                        const batchSuccessCount = data.successful || 0;
+                        const batchFailedCount = (data.failed || 0) + (data.skipped || 0);
+                        totalFeaturesExtracted += data.features_extracted || 0;
+                        totalFeaturesFailed += data.features_failed || 0;
+                        if (data.processing_profile_used) {
+                            extractionProfilesUsed.add(data.processing_profile_used);
+                        }
 
-            // Send all images at once to batch-upload endpoint
-            const response = await fetchWithRetry('/api/products/batch-upload', {
-                method: 'POST',
-                body: batchFormData
-            });
+                        successCount += batchSuccessCount;
+                        failedCount += batchFailedCount;
 
-            const data = await response.json();
+                        if (data.results) {
+                            for (const result of data.results) {
+                                if (result.status === 'success' && result.product_id) {
+                                    const relativeIdx = result.index !== undefined ? result.index : 0;
+                                    if (relativeIdx >= 0 && relativeIdx < batchItems.length) {
+                                        const itemIdx = batchItems[relativeIdx];
+                                        const fileObj = newFiles[itemIdx];
+                                        const metadata = categoryMap[fileObj.file.name] || {};
 
-            // MEMORY OPTIMIZATION: Clear FormData after request to prevent accumulation (10-50MB per batch)
-            batchFormData = null;
-
-            if (response.ok) {
-                console.log(`[BATCH-UPLOAD] New products batch response:`, {
-                    total: data.total,
-                    successful: data.successful,
-                    failed: data.failed,
-                    skipped: data.skipped
-                });
-
-                const batchSuccessCount = data.successful || 0;
-                const batchFailedCount = (data.failed || 0) + (data.skipped || 0); // Skipped = failed for UI
-
-                successCount += batchSuccessCount;
-                failedCount += batchFailedCount;
-
-                // Process results to populate newProducts array for successful items
-                if (data.results) {
-                    for (const result of data.results) {
-                        if (result.status === 'success' && result.product_id) {
-                            // Find the corresponding file using the index
-                            const relativeIdx = result.index !== undefined ? result.index : 0;
-                            if (relativeIdx >= 0 && relativeIdx < imageItems.length) {
-                                const itemIdx = imageItems[relativeIdx];
-                                const fileObj = newFiles[itemIdx];
-                                const metadata = categoryMap[fileObj.file.name] || {};
-
-                                newProducts.push({
-                                    id: result.product_id,
-                                    filename: result.filename || fileObj.file.name,
-                                    category: metadata.category || fileObj.category,
-                                    sku: metadata.sku,
-                                    name: metadata.name || fileObj.file.name,
-                                    hasFeatures: true,
-                                    hasPriceHistory: false
-                                });
-                            }
-                        } else if (result.status === 'skipped' || result.status === 'failed') {
-                            // Collect failed items for detailed error display
-                            const relativeIdx = result.index !== undefined ? result.index : 0;
-                            if (relativeIdx >= 0 && relativeIdx < imageItems.length) {
-                                const itemIdx = imageItems[relativeIdx];
-                                const fileObj = newFiles[itemIdx];
-                                failedItems.push({
-                                    row: itemIdx + 1,
-                                    fileName: result.filename || fileObj.file.name,
-                                    reason: result.reason || result.error || 'Unknown error'
-                                });
+                                        newProducts.push({
+                                            id: result.product_id,
+                                            filename: result.filename || fileObj.file.name,
+                                            category: metadata.category || fileObj.category,
+                                            sku: metadata.sku,
+                                            name: metadata.name || fileObj.file.name,
+                                            hasFeatures: true,
+                                            hasPriceHistory: false
+                                        });
+                                    }
+                                } else if (result.status === 'skipped' || result.status === 'failed') {
+                                    const relativeIdx = result.index !== undefined ? result.index : 0;
+                                    if (relativeIdx >= 0 && relativeIdx < batchItems.length) {
+                                        const itemIdx = batchItems[relativeIdx];
+                                        const fileObj = newFiles[itemIdx];
+                                        recordFailedItem(failedItems, {
+                                            row: itemIdx + 1,
+                                            fileName: result.filename || fileObj.file.name,
+                                            reason: result.reason || result.error || 'Unknown error'
+                                        });
+                                    }
+                                }
                             }
                         }
+                    } else {
+                        throw new Error(data.error || `Server returned ${response.status}`);
                     }
-                }
-            } else {
-                // Batch upload failed - mark all as failed
-                console.error(`[BATCH-UPLOAD] Batch upload failed:`, data);
-                for (const i of imageItems) {
-                    const fileObj = newFiles[i];
-                    failedCount++;
-                    failedItems.push({ row: i + 1, fileName: fileObj.file.name, reason: data.error || 'Batch upload failed' });
+                } catch (error) {
+                    console.error(`[BATCH-UPLOAD] Batch ${batchIdx + 1}/${totalBatches} failed:`, error);
+                    for (const i of batchItems) {
+                        const fileObj = newFiles[i];
+                        failedCount++;
+                        recordFailedItem(failedItems, { row: i + 1, fileName: fileObj.file.name, reason: error.message || 'Batch processing failed' });
+                    }
                 }
             }
         } catch (error) {
-            // Network error - mark all as failed
-            console.error(`[BATCH-UPLOAD] Network error:`, error);
+            console.error(`[BATCH-UPLOAD] Critical error:`, error);
             if (tracker) tracker.stop();
-            for (const i of imageItems) {
-                const fileObj = newFiles[i];
-                failedCount++;
-                failedItems.push({ row: i + 1, fileName: fileObj.file.name, reason: error.message });
-            }
         }
     }
 
@@ -1965,6 +2158,18 @@ async function processNewProducts() {
 
     let statusMsg = `<h4>New products processed</h4>`;
     statusMsg += `<p><strong>${successCount} successful</strong>, ${failedCount} failed</p>`;
+    if (totalFeaturesExtracted > 0 || totalFeaturesFailed > 0) {
+        statusMsg += `<p>Feature extraction: ${totalFeaturesExtracted} extracted, ${totalFeaturesFailed} failed</p>`;
+    }
+    if (totalFeaturesFailed > 0) {
+        statusMsg += `<p style="color: #ed8936;">Warning: ${totalFeaturesFailed} images failed feature extraction</p>`;
+    }
+    if (extractionProfilesUsed.has('fast')) {
+        statusMsg += `<p style="color: #2b6cb0;">Auto Fast Mode enabled for this upload (optimized CLIP preprocessing).</p>`;
+    }
+    if (uploadTransportsUsed.has('direct_upload')) {
+        statusMsg += `<p style="color: #4a5568; font-size: 12px;">Browser file mode detected: using direct upload fallback (no native file paths available).</p>`;
+    }
 
     if (newLoadOption === 'add_to_existing' && existingCount > 0) {
         statusMsg += `<p>${successCount} total products ready for matching (${existingCount} existing + ${newlyUploaded} newly added)</p>`;
@@ -1979,9 +2184,15 @@ async function processNewProducts() {
             statusMsg += `<li>Row ${item.row} (${item.fileName}): ${item.reason}</li>`;
         });
         statusMsg += `</ul></div>`;
-    } else if (failedItems.length > 10) {
-        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>${failedItems.length} items failed</strong> - check console for details</div>`;
-        console.log('Failed items:', failedItems);
+    } else if (failedCount > 0) {
+        const detailsShown = Math.min(failedItems.length, MAX_FAILED_ITEM_DETAILS);
+        const detailsNote = failedCount > detailsShown
+            ? ` (showing first ${detailsShown})`
+            : '';
+        statusMsg += `<div style="margin-top: 10px; color: #ed8936; font-size: 12px;"><strong>${failedCount} items failed</strong>${detailsNote}</div>`;
+        if (failedItems.length > 0) {
+            debugLog('Failed item samples:', failedItems);
+        }
     }
 
     statusDiv.innerHTML = statusMsg;
@@ -1997,19 +2208,16 @@ async function processNewProducts() {
 
     processBtn.disabled = false;
 
-    showToast(`New products ready: ${successCount} products`, 'success');
-    showLoadingSpinner(processBtn, false);
-
     // MEMORY OPTIMIZATION: Clear operation data to free 50-100MB
     clearOperationData();
 
     // Show matching section - force display
     const matchSection = document.getElementById('matchSection');
-    console.log('[DEBUG] Attempting to show matchSection:', matchSection);
+    debugLog('[DEBUG] Attempting to show matchSection:', matchSection);
     if (matchSection) {
         matchSection.style.display = 'block';
         matchSection.style.visibility = 'visible';
-        console.log('[DEBUG] matchSection display set to block, current style:', matchSection.style.display);
+        debugLog('[DEBUG] matchSection display set to block, current style:', matchSection.style.display);
         setTimeout(() => {
             matchSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 200);
@@ -2031,13 +2239,13 @@ function initMatching() {
 }
 
 async function startMatching() {
-    console.log('[MATCHING] startMatching() called');
+    debugLog('[MATCHING] startMatching() called');
     const threshold = parseInt(document.getElementById('thresholdSlider').value);
     const limit = parseInt(document.getElementById('limitSelect').value);
     const progressDiv = document.getElementById('matchProgress');
     const matchBtn = document.getElementById('matchBtn');
 
-    console.log('[MATCHING] Threshold:', threshold, 'Limit:', limit);
+    debugLog('[MATCHING] Threshold:', threshold, 'Limit:', limit);
 
     dynamicThreshold = threshold;
     dynamicLimit = limit;
@@ -2045,14 +2253,14 @@ async function startMatching() {
     progressDiv.classList.add('show');
     matchBtn.disabled = true;
     showLoadingSpinner(matchBtn, true);
-    console.log('[MATCHING] UI updated, starting matching process');
-    console.log('[MATCHING] Using backend to query new products (memory efficient)');
+    debugLog('[MATCHING] UI updated, starting matching process');
+    debugLog('[MATCHING] Using backend to query new products (memory efficient)');
 
     matchResults = [];
     resetChunking();  // Reset chunking for new match operation
 
     try {
-        console.log(`[BATCH-MATCHING] Starting batch matching (backend will query new products)`);
+        debugLog(`[BATCH-MATCHING] Starting batch matching (backend will query new products)`);
 
         let effectiveMode = newMode;
 
@@ -2095,17 +2303,17 @@ async function startMatching() {
         // Add dynamic metadata weights if available (Mode 2 or Mode 3)
         if ((effectiveMode === 'metadata' || effectiveMode === 'hybrid') && Object.keys(metadataWeights).length > 0) {
             batchPayload.metadata_weights = getNormalizedMetadataWeights();
-            console.log(`[BATCH-MATCHING] Using dynamic metadata weights:`, batchPayload.metadata_weights);
+            debugLog(`[BATCH-MATCHING] Using dynamic metadata weights:`, batchPayload.metadata_weights);
         }
 
-        console.log(`[BATCH-MATCHING] Step 1: Prepare batch request`);
-        console.log(`[BATCH-MATCHING] Mode: Backend will query new product IDs`);
-        console.log(`[BATCH-MATCHING] Weights: visual=${visualWeight}, metadata=${metadataWeight}`);
-        console.log(`[BATCH-MATCHING] Threshold: ${threshold}, Limit: ${limit}`);
-        console.log(`[BATCH-MATCHING] Sending batch request with match_all_new=true (Effective Mode: ${effectiveMode})`);
+        debugLog(`[BATCH-MATCHING] Step 1: Prepare batch request`);
+        debugLog(`[BATCH-MATCHING] Mode: Backend will query new product IDs`);
+        debugLog(`[BATCH-MATCHING] Weights: visual=${visualWeight}, metadata=${metadataWeight}`);
+        debugLog(`[BATCH-MATCHING] Threshold: ${threshold}, Limit: ${limit}`);
+        debugLog(`[BATCH-MATCHING] Sending batch request with match_all_new=true (Effective Mode: ${effectiveMode})`);
 
         // Send batch request (backend processes independently)
-        console.log(`[BATCH-MATCHING] Step 2: Send POST request to /api/products/batch-match`);
+        debugLog(`[BATCH-MATCHING] Step 2: Send POST request to /api/products/batch-match`);
         const response = await fetchWithRetry('/api/products/batch-match', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2113,8 +2321,8 @@ async function startMatching() {
         });
 
         const data = await response.json();
-        console.log(`[BATCH-MATCHING] Step 3: Received response - status: ${response.status}, ok: ${response.ok}`);
-        console.log(`[BATCH-MATCHING] Response data:`, data);
+        debugLog(`[BATCH-MATCHING] Step 3: Received response - status: ${response.status}, ok: ${response.ok}`);
+        debugLog(`[BATCH-MATCHING] Response data:`, data);
 
         if (!response.ok) {
             console.error(`[BATCH-MATCHING] Error response:`, data);
@@ -2127,7 +2335,7 @@ async function startMatching() {
 
         // Process batch results
         const batchResults = data.results || [];
-        console.log(`[BATCH-MATCHING] Step 4: Process results - Received ${batchResults.length} results from batch`);
+        debugLog(`[BATCH-MATCHING] Step 4: Process results - Received ${batchResults.length} results from batch`);
 
         // Process each result
         for (let i = 0; i < batchResults.length; i++) {
@@ -2138,7 +2346,7 @@ async function startMatching() {
 
             if (!product) {
                 // Fallback: create minimal product object if details not found (shouldn't happen with new enriched response)
-                console.warn(`[BATCH-MATCHING] Product ${result.product_id} data not found in response, using minimal object`);
+                debugWarn(`[BATCH-MATCHING] Product ${result.product_id} data not found in response, using minimal object`);
                 product = {
                     id: result.product_id,
                     filename: `Product ${result.product_id}`,
@@ -2169,7 +2377,7 @@ async function startMatching() {
             }
             const matches = uniqueMatches;
 
-            console.log(`[BATCH-MATCHING] Product ${product.id}: ${matches.length} matches found`);
+            debugLog(`[BATCH-MATCHING] Product ${product.id}: ${matches.length} matches found`);
             const compactMatches = matches.map(m => createCompactMatch(m));
             const compactProduct = createCompactProduct(product);
 
@@ -2187,7 +2395,7 @@ async function startMatching() {
             matchResults.push(resultObj);
         }
 
-        console.log(`[BATCH-MATCHING] ✓ Complete! Processed ${matchResults.length} products`);
+        debugLog(`[BATCH-MATCHING] ✓ Complete! Processed ${matchResults.length} products`);
 
         // Complete progress tracker (backend finished, jump to 100%)
         if (tracker) {
@@ -2204,15 +2412,14 @@ async function startMatching() {
         return;
     }
 
-    console.log(`[BATCH-MATCHING] Matching complete. Total matchResults: ${matchResults.length}`);
+    debugLog(`[BATCH-MATCHING] Matching complete. Total matchResults: ${matchResults.length}`);
 
     showToast('Matching complete!', 'success');
     showLoadingSpinner(matchBtn, false);
 
     // Show results
     displayResults();
-    document.getElementById('resultsSection').style.display = 'block';
-    document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+    showResultsSectionWithCollapse();
 
     // Show save dialog after matching completes
     showSaveDialog('matching_complete');
@@ -2413,10 +2620,10 @@ function renderMetadataStats(stats, productId, selectedMetric = 'avg') {
 
             ${Object.keys(stats.metadataStats).length > 0 ? `
                 <div class="metadata-breakdown">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <div class="metadata-breakdown-toolbar">
                         <h5 style="margin: 0;">Similarity Breakdown</h5>
                         ${productId ? `
-                            <select class="metric-selector" onchange="updateProductMetric(${productId}, this.value)" style="padding: 5px 10px; border: 1px solid #cbd5e0; border-radius: 4px; background: white; font-size: 0.9em; cursor: pointer;">
+                            <select class="metric-selector" onchange="updateProductMetric(${productId}, this.value)">
                                 <option value="avg" ${selectedMetric === 'avg' ? 'selected' : ''}>Average</option>
                                 <option value="sum" ${selectedMetric === 'sum' ? 'selected' : ''}>Sum</option>
                                 <option value="min" ${selectedMetric === 'min' ? 'selected' : ''}>Minimum</option>
@@ -2499,7 +2706,6 @@ function updateProductMetric(productId, metric) {
     productMetricSelections[productId] = metric;
     displayResults(false);  // Re-render without resetting pagination
 }
-
 
 function cleanupMetricSelections() {
     const currentProductIds = new Set();
@@ -3126,6 +3332,8 @@ function displayResults(resetPage = true) {
     // Remove existing dynamic filters to allow regeneration with new data
     const existingFilters = document.getElementById('dynamicFiltersContainer');
     if (existingFilters) {
+        // Prevent leaking document-level dropdown listeners when filters are regenerated
+        cleanupDynamicFilterDropdownListeners(existingFilters);
         existingFilters.remove();
     }
 
@@ -3181,7 +3389,7 @@ function displayResults(resetPage = true) {
     summaryDiv.innerHTML = `
         <h3>Match Results Summary</h3>
         ${chunkInfo.totalResults > CHUNK_SIZE ? `
-            <div style="margin-bottom: 15px; padding: 10px; background: rgba(102, 126, 234, 0.1); border-left: 4px solid #667eea; border-radius: 4px;">
+            <div style="margin-bottom: 10px; padding: 8px; background: rgba(102, 126, 234, 0.1); border-left: 4px solid #667eea; border-radius: 4px;">
                 <strong>Large Dataset:</strong> Chunk ${chunkInfo.chunkNumber} (${chunkInfo.startIdx.toLocaleString()}-${chunkInfo.endIdx.toLocaleString()})
             </div>
         ` : ''}
@@ -3202,17 +3410,22 @@ function displayResults(resetPage = true) {
             ` : ''}
         </div>
         
-        <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 30px; align-items: center; justify-content: center; flex-wrap: wrap;">
+        <div style="margin-top: 12px; padding: 10px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap;">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <label style="font-weight: 600; color: #2d3748;">Min Similarity:</label>
                 <input type="range" id="dynamicThresholdSlider" min="30" max="100" value="${dynamicThreshold}"
-                       style="width: 150px;" oninput="updateDynamicThreshold(this.value)">
+                       style="width: 150px;"
+                       oninput="updateDynamicThresholdPreview(this.value)"
+                       onchange="applyDynamicThreshold(this.value)"
+                       onkeyup="applyDynamicThreshold(this.value)"
+                       onmouseup="applyDynamicThreshold(this.value)"
+                       ontouchend="applyDynamicThreshold(this.value)">
                 <span id="dynamicThresholdValue" style="font-weight: 600; min-width: 40px;">${dynamicThreshold}%</span>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <label style="font-weight: 600; color: #2d3748;">SHOW TOP:</label>
                 <select id="dynamicLimitSelect" onchange="updateDynamicLimit(this.value)"
-                        style="padding: 5px; border: 2px solid #000; background: white; font-weight: 600;">
+                        style="padding: 4px 6px; border: 2px solid #000; background: white; font-weight: 600;">
                     <option value="5" ${dynamicLimit === 5 ? 'selected' : ''}>5</option>
                     <option value="10" ${dynamicLimit === 10 ? 'selected' : ''}>10</option>
                     <option value="20" ${dynamicLimit === 20 ? 'selected' : ''}>20</option>
@@ -3223,7 +3436,7 @@ function displayResults(resetPage = true) {
         </div>
         
         ${filteredCount > RESULTS_PER_PAGE ? `
-            <div style="text-align: center; margin-top: 15px; color: #718096;">
+            <div style="text-align: center; margin-top: 10px; color: #718096;">
                 Showing ${startIndex + 1}-${endIndex} of ${filteredCount} products
             </div>
         ` : ''}
@@ -3291,7 +3504,7 @@ function displayResults(resetPage = true) {
                         ${matches.slice(0, 12).map(match => renderMatchCard(match, product.id, isMetadataMode)).join('')}
                     </div>
                     ${matches.length > 12 ? `
-                        <div style="text-align: center; margin-top: 10px;">
+                        <div style="text-align: center; margin-top: 8px;">
                             <button class="btn btn-sm" onclick="showDetailedComparison(${product.id}, ${matches[0].mid})" style="background: #e2e8f0; color: #4a5568;">
                                 Show All ${matches.length} Matches
                             </button>
@@ -3308,7 +3521,7 @@ function displayResults(resetPage = true) {
         const hasPrevious = currentPage > 1;
 
         listDiv.innerHTML += `
-            <div style="display: flex; justify-content: center; gap: 15px; margin-top: 30px; padding: 20px;">
+            <div style="display: flex; justify-content: center; gap: 10px; margin-top: 18px; padding: 10px;">
                 ${hasPrevious ? `
                     <button class="btn" onclick="loadPreviousPage()" style="min-width: 120px;">
                         Previous
@@ -3332,8 +3545,8 @@ function displayResults(resetPage = true) {
         const hasNext = chunkInfo.hasMore;
 
         listDiv.innerHTML += `
-            <div style="margin-top: 30px; padding: 15px; text-align: center; border-top: 1px solid #eee;">
-                 <div style="margin-bottom: 10px; color: #718096; font-weight: 500;">
+            <div style="margin-top: 18px; padding: 10px; text-align: center; border-top: 1px solid #eee;">
+                 <div style="margin-bottom: 8px; color: #718096; font-weight: 500;">
                     Data Chunk ${chunkInfo.chunkNumber} of ${totalChunks} (${CHUNK_SIZE.toLocaleString()} products per chunk)
                  </div>
                  <div style="display: flex; gap: 10px; justify-content: center;">
@@ -3411,10 +3624,32 @@ async function loadMoreHistoricalProducts() {
     }
 }
 
-function updateDynamicThreshold(value) {
-    dynamicThreshold = parseInt(value);
-    document.getElementById('dynamicThresholdValue').textContent = value + '%';
+function updateDynamicThresholdPreview(value) {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed)) return;
+
+    const thresholdValueEl = document.getElementById('dynamicThresholdValue');
+    if (thresholdValueEl) {
+        thresholdValueEl.textContent = parsed + '%';
+    }
+}
+
+function applyDynamicThreshold(value) {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed)) return;
+
+    if (parsed === dynamicThreshold) {
+        return;
+    }
+
+    dynamicThreshold = parsed;
     displayResults(true); // Reset to page 1 when filter changes
+}
+
+// Backward compatibility for any existing inline handlers
+function updateDynamicThreshold(value) {
+    updateDynamicThresholdPreview(value);
+    applyDynamicThreshold(value);
 }
 
 function updateDynamicLimit(value) {
@@ -5876,8 +6111,7 @@ function loadSession() {
 
             // Display results
             displayResults();
-            document.getElementById('resultsSection').style.display = 'block';
-            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+            showResultsSectionWithCollapse();
 
             showToast(`Session loaded: ${matchResults.length} products with matches`, 'success');
 
@@ -6787,6 +7021,10 @@ let mobileFlagCheckInterval = null;  // Check flag every 2 seconds
 
 // Poll for mobile results flag via API
 function setupMobileResultsListener() {
+    if (mobileFlagCheckInterval) {
+        return;
+    }
+
     try {
         // Check mobile results flag every 2 seconds
         mobileFlagCheckInterval = setInterval(async () => {
@@ -6795,7 +7033,7 @@ function setupMobileResultsListener() {
                 const data = await response.json();
 
                 if (data.ready) {
-                    console.log('📱 [MOBILE] Flag set - results are ready');
+                    debugLog('📱 [MOBILE] Flag set - results are ready');
 
                     // Stop flag checking
                     if (mobileFlagCheckInterval) {
@@ -6807,14 +7045,24 @@ function setupMobileResultsListener() {
                     startMatchResultsPolling();
                 }
             } catch (error) {
-                console.debug('Error checking mobile flag:', error);
+                debugWarn('Error checking mobile flag:', error);
             }
         }, 2000);  // Check every 2 seconds
 
-        console.log('✓ Mobile results listener initialized (polling flag)');
+        debugLog('✓ Mobile results listener initialized (polling flag)');
     } catch (error) {
         console.warn('Failed to setup mobile listener:', error);
     }
+}
+
+function syncMobileResultsManual() {
+    if (matchResultsPollingInterval) {
+        showToast('Already checking mobile results...', 'info');
+        return;
+    }
+
+    showToast('Checking mobile results...', 'info');
+    startMatchResultsPolling();
 }
 
 function startMatchResultsPolling() {
@@ -6844,7 +7092,7 @@ function startMatchResultsPolling() {
             const results = data.results || [];
 
             if (results.length > 0) {
-                console.log(`📱 [MOBILE] Received ${results.length} results`);
+                debugLog(`📱 [MOBILE] Received ${results.length} results`);
 
                 // Add all results to display
                 results.forEach(result => {
@@ -6858,40 +7106,39 @@ function startMatchResultsPolling() {
                 });
 
                 // Show results section
-                const resultsSection = document.getElementById('resultsSection');
-                if (resultsSection) {
-                    resultsSection.style.display = 'block';
-                    resultsSection.scrollIntoView({ behavior: 'smooth' });
-                }
+                showResultsSectionWithCollapse();
 
                 displayResults(false);
-                console.log('✓ Mobile results displayed');
+                debugLog('✓ Mobile results displayed');
 
                 // Stop polling - we got the results
                 stopMatchResultsPolling();
             } else if (pollAttempts >= maxAttempts) {
                 // No results after 9 seconds, give up
-                console.warn('📱 [MOBILE] No results found after 3 attempts');
+                debugWarn('📱 [MOBILE] No results found after 3 attempts');
                 stopMatchResultsPolling();
             }
         } catch (error) {
-            console.warn('Error fetching mobile results:', error);
+            debugWarn('Error fetching mobile results:', error);
             if (pollAttempts >= maxAttempts) stopMatchResultsPolling();
         }
     }, 3000); // Try every 3 seconds
 
-    console.log('🔄 [MOBILE] Polling started (max 9 seconds)');
+    debugLog('🔄 [MOBILE] Polling started (max 9 seconds)');
 }
 
 function stopMatchResultsPolling() {
     if (matchResultsPollingInterval) {
         clearInterval(matchResultsPollingInterval);
         matchResultsPollingInterval = null;
-        console.log('✓ [MOBILE] Polling stopped');
+        debugLog('✓ [MOBILE] Polling stopped');
 
         // Clear the mobile flag so mobile can send new results
         fetch('/api/mobile/clear-flag', { method: 'POST' })
-            .catch(error => console.debug('Could not clear mobile flag:', error));
+            .catch(error => debugWarn('Could not clear mobile flag:', error));
+
+        // Resume lightweight flag listener for future mobile uploads.
+        setupMobileResultsListener();
     }
 }
 
@@ -7234,12 +7481,7 @@ async function processHistoricalCatalogWithOptions() {
                 `<p class="success">Loaded ${historicalProducts.length} products from existing catalog</p>`;
 
             // Show next section
-            document.getElementById('newSection').style.display = 'block';
-
-            // Re-apply mode settings to ensure UI is synced after section becomes visible
-            setMode('new', newMode);
-
-            document.getElementById('newSection').scrollIntoView({ behavior: 'smooth' });
+            showNewSectionAfterHistoricalStep();
 
             // Load metadata schema to populate sliders if research was already done
             await loadMetadataSchema();
@@ -7270,21 +7512,28 @@ async function processHistoricalCatalogWithOptions() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: snapshotName,
-                        description: 'Automatic backup created before batch replace operations'
+                        description: 'Automatic backup created before batch replace operations',
+                        tags: ['auto-backup', 'replace'],
+                        skip_if_empty: true
                     })
                 });
+                const snapshotResult = await snapshotResponse.json().catch(() => ({}));
 
                 if (snapshotResponse.ok) {
-                    console.log('[REPLACE] Backup snapshot created:', snapshotName);
-                    showToast('Backup snapshot created', 'success');
+                    if (snapshotResult.skipped) {
+                        console.log('[REPLACE] Skipping backup snapshot (catalog is empty)');
+                        showToast('No existing catalog to back up', 'info');
+                    } else {
+                        console.log('[REPLACE] Backup snapshot created:', snapshotName);
+                        showToast('Backup snapshot created', 'success');
+                        // Wait a moment to ensure snapshot is complete
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
                     lastAutoBackupTime = now;
                 } else {
                     console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
                     showToast('Warning: Could not create backup snapshot', 'warning');
                 }
-
-                // Wait a moment to ensure snapshot is complete
-                await new Promise(resolve => setTimeout(resolve, 300));
             } catch (error) {
                 console.warn('[REPLACE] Error creating backup snapshot:', error);
                 showToast('Warning: Could not create backup snapshot', 'warning');
@@ -7494,21 +7743,28 @@ async function processNewCatalogWithOptions() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: snapshotName,
-                        description: 'Automatic backup created before batch replace operations'
+                        description: 'Automatic backup created before batch replace operations',
+                        tags: ['auto-backup', 'replace'],
+                        skip_if_empty: true
                     })
                 });
+                const snapshotResult = await snapshotResponse.json().catch(() => ({}));
 
                 if (snapshotResponse.ok) {
-                    console.log('[REPLACE] Backup snapshot created:', snapshotName);
-                    showToast('Backup snapshot created', 'success');
+                    if (snapshotResult.skipped) {
+                        console.log('[REPLACE] Skipping backup snapshot (catalog is empty)');
+                        showToast('No existing catalog to back up', 'info');
+                    } else {
+                        console.log('[REPLACE] Backup snapshot created:', snapshotName);
+                        showToast('Backup snapshot created', 'success');
+                        // Wait a moment to ensure snapshot is complete
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
                     lastAutoBackupTime = now;
                 } else {
                     console.warn('[REPLACE] Failed to create backup snapshot, continuing anyway');
                     showToast('Warning: Could not create backup snapshot', 'warning');
                 }
-
-                // Wait a moment to ensure snapshot is complete
-                await new Promise(resolve => setTimeout(resolve, 300));
             } catch (error) {
                 console.warn('[REPLACE] Error creating backup snapshot:', error);
                 showToast('Warning: Could not create backup snapshot', 'warning');
@@ -7652,6 +7908,8 @@ async function resetAppState(reason = 'Catalog data has changed') {
     if (newSection) newSection.style.display = 'none';
     if (matchSection) matchSection.style.display = 'none';
     if (resultsSection) resultsSection.style.display = 'none';
+    setSectionCollapsed('historicalSection', false);
+    setSectionCollapsed('newSection', false);
 
     // Clear status messages
     const historicalStatus = document.getElementById('historicalStatus');
@@ -8235,25 +8493,68 @@ function closeMobileModal() {
 
 async function loadMobileConnectionInfo() {
     try {
-        // Fetch local IP and port
-        const ipResponse = await fetch('/api/network/local-ip');
-        const ipData = await ipResponse.json();
+        // Local-only connection + PIN data for desktop modal
+        const connectionResponse = await fetch('/api/mobile/connection-info');
+        if (!connectionResponse.ok) throw new Error('Failed to fetch connection info');
+        const connectionData = await connectionResponse.json();
 
-        // Fetch current password
-        const pwResponse = await fetch('/api/mobile/password');
-        const pwData = await pwResponse.json();
+        // Remote URL config metadata (source/editable)
+        let remoteConfig = {
+            remote_url: connectionData.remote_url || null,
+            source: 'config',
+            editable: true
+        };
 
-        const password = pwData.password || '000000';
-        const mobileUrl = ipData.mobile_url || `http://${ipData.primary_ip}:${ipData.port}/mobile`;
+        try {
+            const remoteResponse = await fetch('/api/mobile/remote-url');
+            if (remoteResponse.ok) {
+                remoteConfig = await remoteResponse.json();
+            }
+        } catch (_) {
+            // Keep graceful fallback to connectionData.remote_url
+        }
 
-        // Update UI with IP and password
-        document.getElementById('ipAddressInput').value = ipData.primary_ip || 'localhost';
+        const password = connectionData.password || '000000';
+        const localUrl = connectionData.lan_url || connectionData.mobile_url || `http://${connectionData.primary_ip}:${connectionData.port}/mobile`;
+        const remoteUrl = remoteConfig.remote_url || connectionData.remote_url || '';
+
+        // Update UI with local network info + PIN
+        document.getElementById('ipAddressInput').value = connectionData.primary_ip || 'localhost';
         document.getElementById('passwordInput').value = password;
-        document.getElementById('mobileUrl').textContent = mobileUrl;
+        document.getElementById('localMobileUrl').textContent = localUrl;
         document.getElementById('mobilePassword').textContent = password;
 
-        // Generate QR code
-        generateQRCode(mobileUrl);
+        // Update remote URL controls and visibility
+        const remoteInput = document.getElementById('remoteUrlInput');
+        const remoteStatus = document.getElementById('remoteUrlStatus');
+        const remoteRow = document.getElementById('remoteUrlRow');
+        const remoteText = document.getElementById('remoteMobileUrl');
+        const saveBtn = document.getElementById('saveRemoteUrlBtn');
+        const clearBtn = document.getElementById('clearRemoteUrlBtn');
+        const autoNgrokBtn = document.getElementById('autoNgrokRemoteUrlBtn');
+
+        if (remoteInput) remoteInput.value = remoteUrl;
+        if (remoteText) remoteText.textContent = remoteUrl || 'Not configured';
+        if (remoteRow) remoteRow.style.display = remoteUrl ? 'list-item' : 'none';
+
+        const editable = !!remoteConfig.editable;
+        if (remoteInput) remoteInput.disabled = !editable;
+        if (saveBtn) saveBtn.disabled = !editable;
+        if (clearBtn) clearBtn.disabled = !editable;
+        if (autoNgrokBtn) autoNgrokBtn.disabled = !editable;
+
+        if (remoteStatus) {
+            if (!editable && remoteConfig.source === 'env') {
+                remoteStatus.textContent = 'Managed by MOBILE_REMOTE_URL environment variable (read-only here).';
+            } else if (remoteUrl) {
+                remoteStatus.textContent = 'Remote URL configured. Use this secure URL outside office.';
+            } else {
+                remoteStatus.textContent = 'Start ngrok, then click AUTO NGROK or paste HTTPS URL.';
+            }
+        }
+
+        // Prefer secure remote URL for QR when available
+        generateQRCode(remoteUrl || localUrl);
 
     } catch (error) {
         console.error('Error loading mobile connection info:', error);
@@ -8346,7 +8647,90 @@ async function generateNewPassword() {
     }
 }
 
+async function saveRemoteUrl() {
+    const input = document.getElementById('remoteUrlInput');
+    if (!input) return;
+
+    const remoteUrl = input.value.trim();
+    if (!remoteUrl) {
+        showToast('Enter an HTTPS remote URL or use CLEAR', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/mobile/remote-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remote_url: remoteUrl })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to save remote URL');
+        }
+
+        showToast('Secure remote URL saved', 'success', 2500);
+        await loadMobileConnectionInfo();
+    } catch (error) {
+        console.error('Error saving remote URL:', error);
+        showToast(error.message || 'Failed to save remote URL', 'error');
+    }
+}
+
+async function autoDetectNgrokRemoteUrl() {
+    const autoBtn = document.getElementById('autoNgrokRemoteUrlBtn');
+    if (autoBtn) autoBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/mobile/remote-url/auto-ngrok', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                data.error ||
+                data.suggestion ||
+                data.details?.hint ||
+                'Failed to auto-detect ngrok URL'
+            );
+        }
+
+        showToast('ngrok URL detected and saved', 'success', 2500);
+        await loadMobileConnectionInfo();
+    } catch (error) {
+        console.error('Error auto-detecting ngrok URL:', error);
+        showToast(error.message || 'Failed to auto-detect ngrok URL', 'error');
+    } finally {
+        const refreshAutoBtn = document.getElementById('autoNgrokRemoteUrlBtn');
+        if (refreshAutoBtn) refreshAutoBtn.disabled = false;
+    }
+}
+
+async function clearRemoteUrl() {
+    try {
+        const response = await fetch('/api/mobile/remote-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remote_url: '' })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to clear remote URL');
+        }
+
+        showToast('Remote URL cleared', 'success', 2000);
+        await loadMobileConnectionInfo();
+    } catch (error) {
+        console.error('Error clearing remote URL:', error);
+        showToast(error.message || 'Failed to clear remote URL', 'error');
+    }
+}
+
 function refreshMobileModal() {
     loadMobileConnectionInfo();
     showToast('Mobile connection info refreshed', 'success', 2000);
 }
+
+

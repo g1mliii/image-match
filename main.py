@@ -29,6 +29,10 @@ import json
 import uuid
 import atexit
 import signal
+import subprocess
+import shutil
+import urllib.request
+import urllib.error
 from datetime import datetime
 
 # Add backend to path
@@ -43,6 +47,12 @@ child_windows = {}
 
 # Staging directory for inter-window communication
 STAGING_DIR = get_staging_dir()
+APP_PORT = 8000  # Use 8000 (ports 5000-5003 sometimes blocked by Windows)
+
+# ngrok process state (optional best-effort auto-start)
+ngrok_process = None
+ngrok_started_by_app = False
+cleanup_has_run = False
 
 
 def ensure_staging_dir():
@@ -129,8 +139,11 @@ class WebViewAPI:
             elif isinstance(content, str):
                 content = content.encode('utf-8')
 
+            file_dialog_enum = getattr(webview, 'FileDialog', None)
+            save_dialog_type = file_dialog_enum.SAVE if file_dialog_enum and hasattr(file_dialog_enum, 'SAVE') else webview.SAVE_DIALOG
+
             result = webview.windows[0].create_file_dialog(
-                webview.SAVE_DIALOG,
+                save_dialog_type,
                 save_filename=filename,
                 file_types=file_types
             )
@@ -152,8 +165,14 @@ class WebViewAPI:
         MEMORY OPTIMIZATION: Returns only file paths, not base64 data. Images are processed directly from disk.
         """
         try:
+            file_dialog_enum = getattr(webview, 'FileDialog', None)
+            if file_dialog_enum and hasattr(file_dialog_enum, 'FOLDER'):
+                folder_dialog_type = file_dialog_enum.FOLDER
+            else:
+                folder_dialog_type = webview.FOLDER_DIALOG
+
             result = webview.windows[0].create_file_dialog(
-                webview.FOLDER_DIALOG
+                folder_dialog_type
             )
 
             if not result:
@@ -214,7 +233,7 @@ class WebViewAPI:
         global child_windows
 
         try:
-            port = 5001 if platform.system() == 'Darwin' else 5000
+            port = APP_PORT
             window_id = staging_window_id or f"csv_builder_{uuid.uuid4().hex[:8]}"
 
             # Pass context via query params
@@ -248,7 +267,7 @@ class WebViewAPI:
         global child_windows
 
         try:
-            port = 5001 if platform.system() == 'Darwin' else 5000
+            port = APP_PORT
             window_id = f"catalog_manager_{uuid.uuid4().hex[:8]}"
 
             url = f'http://127.0.0.1:{port}/catalog-manager?window_id={window_id}'
@@ -447,16 +466,164 @@ class ChildWindowAPI(WebViewAPI):
             print(f"Error closing window: {e}")
             return False
 
+def _is_truthy_env(value):
+    return str(value or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _should_auto_start_ngrok():
+    # Enabled by default; set AUTO_START_NGROK=false to disable.
+    raw = os.environ.get('AUTO_START_NGROK')
+    if raw is None:
+        return True
+    return _is_truthy_env(raw)
+
+
+def _discover_ngrok_https_url():
+    api_url = (os.environ.get('NGROK_API_URL') or 'http://127.0.0.1:4040/api/tunnels').strip()
+    try:
+        req = urllib.request.Request(api_url, headers={'Accept': 'application/json'})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status != 200:
+                return None
+            payload = json.loads(resp.read().decode('utf-8', errors='replace'))
+    except Exception:
+        return None
+
+    tunnels = payload.get('tunnels', [])
+    if not isinstance(tunnels, list):
+        return None
+
+    for tunnel in tunnels:
+        public_url = str((tunnel or {}).get('public_url', '')).strip()
+        if public_url.startswith('https://'):
+            return public_url.rstrip('/')
+    return None
+
+
+def _auto_configure_remote_url_from_ngrok(port):
+    # Respect explicitly managed remote URL.
+    if (os.environ.get('MOBILE_REMOTE_URL') or '').strip():
+        print("[NGROK] Skipping remote URL auto-save (MOBILE_REMOTE_URL is set)")
+        return
+
+    endpoint = f'http://127.0.0.1:{port}/api/mobile/remote-url/auto-ngrok'
+    req = urllib.request.Request(endpoint, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            body = resp.read().decode('utf-8', errors='replace')
+            payload = json.loads(body) if body else {}
+            remote_url = payload.get('remote_url')
+            if remote_url:
+                print(f"[NGROK] Remote mobile URL auto-configured: {remote_url}")
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode('utf-8', errors='replace')
+            payload = json.loads(body) if body else {}
+            message = payload.get('error') or payload.get('suggestion') or str(e)
+        except Exception:
+            message = str(e)
+        print(f"[NGROK] Remote URL auto-config skipped: {message}")
+    except Exception as e:
+        print(f"[NGROK] Remote URL auto-config skipped: {e}")
+
+
+def start_ngrok_tunnel(port):
+    """Start ngrok tunnel in background (best-effort, non-fatal)."""
+    global ngrok_process, ngrok_started_by_app
+
+    if not _should_auto_start_ngrok():
+        print("[NGROK] Auto-start disabled (AUTO_START_NGROK=false)")
+        return False
+
+    if _discover_ngrok_https_url():
+        print("[NGROK] Existing tunnel detected; using running ngrok instance")
+        _auto_configure_remote_url_from_ngrok(port)
+        return True
+
+    ngrok_path = shutil.which('ngrok')
+    if not ngrok_path:
+        print("[NGROK] Not installed or not in PATH; skipping auto-start")
+        return False
+
+    cmd = [ngrok_path, 'http', f'http://127.0.0.1:{port}']
+    popen_kwargs = {
+        'stdout': subprocess.DEVNULL,
+        'stderr': subprocess.STDOUT
+    }
+    if sys.platform == 'win32':
+        popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
+    try:
+        ngrok_process = subprocess.Popen(cmd, **popen_kwargs)
+        ngrok_started_by_app = True
+        print("[NGROK] Starting tunnel in background...")
+    except Exception as e:
+        print(f"[NGROK] Failed to start: {e}")
+        ngrok_process = None
+        ngrok_started_by_app = False
+        return False
+
+    # Wait briefly for ngrok local API and auto-configure remote URL if ready.
+    ready_url = None
+    for _ in range(20):
+        if ngrok_process and ngrok_process.poll() is not None:
+            break
+        ready_url = _discover_ngrok_https_url()
+        if ready_url:
+            break
+        time.sleep(0.25)
+
+    if ready_url:
+        print(f"[NGROK] Tunnel ready: {ready_url}")
+        _auto_configure_remote_url_from_ngrok(port)
+        return True
+
+    print("[NGROK] Started, but URL not ready yet (it may appear in a few seconds)")
+    return True
+
+
+def stop_ngrok_tunnel():
+    """Stop ngrok only if this app started it."""
+    global ngrok_process, ngrok_started_by_app
+
+    if not ngrok_started_by_app:
+        return
+
+    process = ngrok_process
+    ngrok_process = None
+    ngrok_started_by_app = False
+
+    if process is None:
+        return
+    if process.poll() is not None:
+        return
+
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+        print("[NGROK] Tunnel stopped")
+    except Exception:
+        try:
+            process.kill()
+            process.wait(timeout=2)
+            print("[NGROK] Tunnel killed on shutdown")
+        except Exception as e:
+            print(f"[NGROK] Failed to stop tunnel cleanly: {e}")
+
+
 def start_flask():
     """Start Flask server in a separate thread"""
-    port = 5001 if platform.system() == 'Darwin' else 5000
     # Bind to 0.0.0.0 to allow network access from mobile devices
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=APP_PORT, debug=False, use_reloader=False)
 
 
 def cleanup_on_exit():
     """Clean up resources when application exits"""
-    global child_windows
+    global child_windows, cleanup_has_run
+
+    if cleanup_has_run:
+        return
+    cleanup_has_run = True
 
     # Close all child windows
     for window_id, window in list(child_windows.items()):
@@ -465,6 +632,9 @@ def cleanup_on_exit():
         except Exception:
             pass
     child_windows.clear()
+
+    # Stop background ngrok tunnel if it was started by this app.
+    stop_ngrok_tunnel()
 
     # Clean staging directory
     clean_staging_dir()
@@ -508,7 +678,10 @@ def main():
 
     # Platform detection
     system = platform.system()
-    port = 5001 if system == 'Darwin' else 5000
+    port = APP_PORT
+
+    # Optional: start ngrok automatically for remote mobile access.
+    start_ngrok_tunnel(port)
 
     # Create API instance for main window
     api = WebViewAPI()

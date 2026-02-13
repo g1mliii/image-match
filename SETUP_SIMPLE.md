@@ -27,6 +27,30 @@ Run as a desktop application:
 python main.py
 ```
 
+### Remote Mobile Access (ngrok, auto-start)
+
+For Desktop Mode, ngrok now auto-starts in the background when the app launches (best effort).
+
+One-time setup on host machine:
+```bash
+ngrok config add-authtoken <YOUR_TOKEN>
+```
+
+Port mapping:
+- App server: `127.0.0.1:8000`
+- ngrok local API/status: `127.0.0.1:4040`
+- Public HTTPS ngrok URL forwards to `127.0.0.1:8000`
+
+In the app:
+1. Open `CONNECT PHONE`
+2. Click `AUTO NGROK`
+3. Share remote URL + PIN
+
+Optional: disable ngrok auto-start
+```bash
+AUTO_START_NGROK=false python main.py
+```
+
 ## Project Structure
 
 ```

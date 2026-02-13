@@ -16,8 +16,8 @@
             color: #000;
             font-family: 'Courier New', monospace;
             font-size: 14px;
-            line-height: 1.6;
-            padding: 20px;
+            line-height: 1.4;
+            padding: 12px;
             min-height: 100vh;
         }
 
@@ -28,15 +28,15 @@
 
         header {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
             border-bottom: 2px solid #000;
-            padding-bottom: 20px;
+            padding-bottom: 12px;
         }
 
         header h1 {
-            font-size: 24px;
+            font-size: 20px;
             letter-spacing: 2px;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
         }
 
         header p {
@@ -45,22 +45,22 @@
         }
 
         .section {
-            margin-bottom: 30px;
-            padding: 20px;
+            margin-bottom: 16px;
+            padding: 14px;
             border: 2px solid #000;
             background-color: #f5f0e6;
         }
 
         .section h2 {
             font-size: 16px;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
 
         label {
             display: block;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
             font-weight: bold;
             text-transform: uppercase;
             font-size: 12px;
@@ -72,8 +72,8 @@
         input[type="number"],
         select {
             width: 100%;
-            padding: 12px;
-            margin-bottom: 15px;
+            padding: 9px;
+            margin-bottom: 10px;
             background-color: #f5f0e6;
             color: #000;
             border: 2px solid #000;
@@ -91,13 +91,13 @@
 
         .mode-buttons {
             display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
+            gap: 8px;
+            margin-bottom: 10px;
         }
 
         .mode-btn {
             flex: 1;
-            padding: 15px;
+            padding: 10px;
             background-color: #f5f0e6;
             color: #000;
             border: 2px solid #000;
@@ -123,9 +123,9 @@
 
         .file-upload-area {
             border: 2px dashed #000;
-            padding: 30px;
+            padding: 18px;
             text-align: center;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             cursor: pointer;
             transition: all 0.2s;
             background-color: #f9f9f9;
@@ -146,13 +146,13 @@
         }
 
         .file-name {
-            margin-top: 10px;
+            margin-top: 6px;
             font-size: 12px;
             opacity: 0.8;
         }
 
         .image-preview {
-            margin-top: 15px;
+            margin-top: 10px;
             display: none;
             text-align: center; /* Center the image horizontally */
         }
@@ -172,8 +172,8 @@
 
         .metadata-fields {
             display: none;
-            margin-top: 20px;
-            padding-top: 20px;
+            margin-top: 12px;
+            padding-top: 12px;
             border-top: 2px solid #000;
         }
 
@@ -182,11 +182,11 @@
         }
 
         .metadata-field {
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
 
         .metadata-field label {
-            margin-bottom: 5px;
+            margin-bottom: 4px;
         }
 
         .metadata-field input[type="text"],
@@ -197,7 +197,7 @@
         /* PERFORMANCE: CSS class for metadata select (avoid inline styles) */
         .metadata-select {
             width: 100%;
-            padding: 10px;
+            padding: 8px;
             margin-bottom: 0;
             background-color: #f5f0e6;
             color: #000;
@@ -208,7 +208,7 @@
 
         .btn-primary {
             width: 100%;
-            padding: 15px;
+            padding: 10px;
             background-color: #000;
             color: #fff;
             border: 2px solid #000;
@@ -219,7 +219,7 @@
             letter-spacing: 1px;
             cursor: pointer;
             transition: all 0.2s;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
 
         .btn-primary:hover:not(:disabled) {
@@ -233,8 +233,8 @@
 
         .results {
             display: none;
-            margin-top: 30px;
-            padding: 20px;
+            margin-top: 16px;
+            padding: 12px;
             border: 2px solid #000;
             background-color: #f5f0e6;
         }
@@ -243,28 +243,174 @@
             display: block;
         }
 
-        .result-item {
-            margin-bottom: 15px;
-            padding: 15px;
-            border: 2px solid #000;
-            background-color: #f9f9f9;
-        }
-
-        .result-item h3 {
+        .results h2 {
             margin-bottom: 10px;
-            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 16px;
         }
 
-        .result-score {
-            font-size: 12px;
-            opacity: 0.8;
+        .result-item {
+            border: 3px solid #000;
+            padding: 10px;
+            background-color: #f5f0e6;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #000;
+        }
+
+        .result-image {
+            width: 72px;
+            height: 72px;
+            object-fit: cover;
+            border: 2px solid #000;
+            background: #ebe5d6;
+        }
+
+        .result-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .result-info h3 {
+            font-size: 14px;
             margin-bottom: 5px;
+            word-break: break-word;
+        }
+
+        .result-meta {
+            font-size: 11px;
+            opacity: 0.9;
+            line-height: 1.35;
+            word-break: break-word;
+        }
+
+        .result-summary {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .result-summary-item {
+            border: 2px solid #000;
+            background: #ebe5d6;
+            padding: 6px;
+            text-align: center;
+        }
+
+        .result-summary-item .value {
+            display: block;
+            font-weight: bold;
+            font-size: 13px;
+        }
+
+        .result-summary-item .label {
+            display: block;
+            font-size: 10px;
+            margin-top: 2px;
+        }
+
+        .matches-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 8px;
+        }
+
+        .match-card {
+            border: 2px solid #000;
+            padding: 6px;
+            background: #f9f9f9;
+        }
+
+        .match-image {
+            width: 100%;
+            height: 88px;
+            object-fit: cover;
+            border: 2px solid #000;
+            margin-bottom: 6px;
+            background: #ebe5d6;
+        }
+
+        .match-score {
+            display: inline-block;
+            padding: 3px 6px;
+            border: 2px solid #000;
+            font-weight: bold;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+
+        .score-high {
+            background: #000;
+            color: #fff;
+        }
+
+        .score-medium {
+            background: #ebe5d6;
+            color: #000;
+        }
+
+        .score-low {
+            background: #f5f0e6;
+            color: #000;
+        }
+
+        .duplicate-badge {
+            display: inline-block;
+            padding: 2px 5px;
+            background: #000;
+            color: #fff;
+            font-size: 9px;
+            font-weight: bold;
+            margin-left: 4px;
+            vertical-align: top;
+        }
+
+        .match-info {
+            font-size: 10px;
+            line-height: 1.35;
+            word-break: break-word;
+        }
+
+        .match-name {
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .match-metadata-scores {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 5px;
+        }
+
+        .metadata-tag {
+            display: inline-block;
+            border: 1px solid #000;
+            padding: 2px 4px;
+            font-size: 9px;
+            background: #ebe5d6;
+        }
+
+        .no-matches {
+            text-align: center;
+            padding: 12px;
+            border: 2px dashed #000;
+            background: #f9f9f9;
+            font-size: 12px;
         }
 
         .loading {
             display: none;
             text-align: center;
-            margin: 20px 0;
+            margin: 12px 0;
         }
 
         .loading.visible {
@@ -286,8 +432,8 @@
         }
 
         .message {
-            padding: 15px;
-            margin-bottom: 15px;
+            padding: 10px;
+            margin-bottom: 10px;
             border: 2px solid #000;
             text-align: center;
             font-size: 13px;
@@ -310,7 +456,7 @@
 
         @media (max-width: 600px) {
             body {
-                padding: 15px;
+                padding: 10px;
             }
 
             header h1 {
@@ -318,7 +464,7 @@
             }
 
             .section {
-                padding: 15px;
+                padding: 10px;
             }
 
             .mode-buttons {
@@ -335,7 +481,7 @@
     <!-- Lucide Icons (latest stable version) -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
-<body>
+<body class="compact-ui">
     <div class="container">
         <header>
             <h1><i data-lucide="smartphone" style="width: 20px; height: 20px; vertical-align: middle;"></i> MOBILE UPLOAD</h1>
@@ -444,7 +590,7 @@
             <!-- Messages -->
             <div id="messageContainer"></div>
 
-            <!-- Results (hidden - main app will show them) -->
+            <!-- Results -->
             <div id="resultsContainer" class="results" style="display: none;">
                 <h2>Results</h2>
                 <div id="matchResults"></div>
@@ -465,6 +611,47 @@
         // PERFORMANCE: Category caching to avoid redundant API calls
         let cachedCategories = null;
         let cachedCatalogId = null;
+
+        // Keep client-to-server logging bounded so diagnostics do not degrade UX.
+        const mobileLogConfig = {
+            debug: new URLSearchParams(window.location.search).get('debug_logs') === '1',
+            infoSampleRate: 0.15,
+            minSendIntervalMs: 500,
+            maxPerMinute: 80,
+            maxInFlight: 2
+        };
+        let mobileLogState = {
+            lastSentAt: 0,
+            windowStart: Date.now(),
+            sentInWindow: 0,
+            inFlight: 0
+        };
+
+        function sanitizeLogData(data, maxKeys = 10) {
+            if (!data || typeof data !== 'object') return null;
+
+            const sanitized = {};
+            let count = 0;
+            Object.entries(data).forEach(([key, value]) => {
+                if (count >= maxKeys) return;
+                if (value === null || value === undefined) return;
+
+                if (typeof value === 'number' || typeof value === 'boolean') {
+                    sanitized[key] = value;
+                } else if (typeof value === 'string') {
+                    sanitized[key] = value.length > 120 ? `${value.substring(0, 120)}...` : value;
+                } else if (Array.isArray(value)) {
+                    sanitized[key] = `array(${value.length})`;
+                } else if (typeof value === 'object') {
+                    sanitized[key] = 'object';
+                } else {
+                    sanitized[key] = String(value).substring(0, 120);
+                }
+                count += 1;
+            });
+
+            return sanitized;
+        }
 
         // FIX: Cache DOM references for better performance
         function initDOMCache() {
@@ -491,17 +678,60 @@
 
         // Server-side logging helper
         function serverLog(level, message, data = null) {
-            console.log(`[${level.toUpperCase()}] ${message}`, data || '');
+            const normalizedLevel = String(level || 'info').toLowerCase();
+            const safeMessage = String(message || '').substring(0, 200);
 
-            // Send to server for logging
+            // Always show locally; sending to server is rate-limited below.
+            if (mobileLogConfig.debug || normalizedLevel !== 'info') {
+                console.log(`[${normalizedLevel.toUpperCase()}] ${safeMessage}`, data || '');
+            }
+
+            // Never send logs before authentication.
+            if (!authToken) return;
+
+            // In normal mode, sample noisy info/debug logs.
+            if (!mobileLogConfig.debug && (normalizedLevel === 'info' || normalizedLevel === 'debug')) {
+                if (Math.random() > mobileLogConfig.infoSampleRate) return;
+            }
+
+            const now = Date.now();
+            if (now - mobileLogState.windowStart >= 60000) {
+                mobileLogState.windowStart = now;
+                mobileLogState.sentInWindow = 0;
+            }
+
+            // Keep hard limits on send rate and concurrent requests.
+            const minInterval = normalizedLevel === 'error' ? 0 : mobileLogConfig.minSendIntervalMs;
+            if (now - mobileLogState.lastSentAt < minInterval) return;
+            if (mobileLogState.sentInWindow >= mobileLogConfig.maxPerMinute) return;
+            if (mobileLogState.inFlight >= mobileLogConfig.maxInFlight) return;
+
+            const payload = {
+                level: normalizedLevel,
+                message: safeMessage,
+                data: sanitizeLogData(data)
+            };
+
+            mobileLogState.lastSentAt = now;
+            mobileLogState.sentInWindow += 1;
+            mobileLogState.inFlight += 1;
+
             fetch('/api/mobile/log', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Mobile-Password': authToken || ''
+                    'X-Mobile-Session': authToken
                 },
-                body: JSON.stringify({ level, message, data })
-            }).catch(err => console.error('Failed to send log to server:', err));
+                body: JSON.stringify(payload)
+            })
+            .catch(err => {
+                if (mobileLogConfig.debug) {
+                    console.warn('Failed to send log to server:', err);
+                }
+            })
+            .finally(() => {
+                mobileLogState.inFlight = Math.max(0, mobileLogState.inFlight - 1);
+            });
         }
 
         // Debug helper - shows current state
@@ -519,14 +749,6 @@
             serverLog('info', 'Debug state requested', state);
             return state;
         };
-
-        // Load password from localStorage
-        window.addEventListener('load', () => {
-            const savedPassword = localStorage.getItem('mobile_password');
-            if (savedPassword) {
-                document.getElementById('password').value = savedPassword;
-            }
-        });
 
         async function authenticate() {
             const password = document.getElementById('password').value.trim();
@@ -552,12 +774,20 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    showMessage('messageContainer', 'Invalid password', 'error');
+                    const retryAfter = data?.details?.retry_after_seconds;
+                    if (response.status === 429 && retryAfter) {
+                        showMessage('messageContainer', `Too many attempts. Try again in ${retryAfter}s`, 'error');
+                    } else {
+                        showMessage('messageContainer', data.error || 'Invalid password', 'error');
+                    }
                     return;
                 }
 
-                authToken = password;
-                localStorage.setItem('mobile_password', password);
+                if (!data.session_token) {
+                    showMessage('messageContainer', 'Auth succeeded but no session token returned', 'error');
+                    return;
+                }
+                authToken = data.session_token;
 
                 showMessage('messageContainer', 'Authenticated successfully', 'success');
                 document.getElementById('uploadSection').style.display = 'block';
@@ -683,7 +913,7 @@
                     const response = await fetch(
                         `/api/mobile/catalog-categories?catalog_id=${selectedCatalog}&_t=${Date.now()}`,
                         {
-                            headers: { 'X-Mobile-Password': authToken }
+                            headers: { 'X-Mobile-Session': authToken }
                         }
                     );
 
@@ -728,7 +958,7 @@
                 const response = await fetch(
                     `/api/mobile/catalog-schema?catalog_id=${selectedCatalog}`,
                     {
-                        headers: { 'X-Mobile-Password': authToken }
+                        headers: { 'X-Mobile-Session': authToken }
                     }
                 );
 
@@ -1090,7 +1320,7 @@
 
                 const response = await fetch('/api/mobile/upload-and-match', {
                     method: 'POST',
-                    headers: { 'X-Mobile-Password': authToken },
+                    headers: { 'X-Mobile-Session': authToken },
                     body: formData
                 });
 
@@ -1105,13 +1335,16 @@
                     );
 
                     // Display results
-                    displayResults(data.matches);
+                    displayResults(data.mobile_result || data);
 
                     // Notify main app that mobile results are ready via API
                     try {
                         fetch('/api/mobile/results-ready', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' }
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Mobile-Session': authToken
+                            }
                         })
                         .then(response => response.json())
                         .then(data => {
@@ -1144,23 +1377,156 @@
             }
         }
 
-        function displayResults(matches) {
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function getScoreClass(score) {
+            const numeric = Number(score) || 0;
+            if (numeric >= 70) return 'score-high';
+            if (numeric >= 50) return 'score-medium';
+            return 'score-low';
+        }
+
+        function renderMetadataScoresHtml(metadataScores, metadataValues) {
+            if (!metadataScores || typeof metadataScores !== 'object') return '';
+
+            const entries = Object.entries(metadataScores)
+                .filter(([_, score]) => score !== undefined && score !== null)
+                .slice(0, 4);
+
+            if (entries.length === 0) return '';
+
+            const numericFields = new Map();
+            if (metadataValues && typeof metadataValues === 'object') {
+                for (const [key, value] of Object.entries(metadataValues)) {
+                    if (value === undefined || value === null) continue;
+                    const parsed = parseFloat(value);
+                    if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+                        numericFields.set(key, parsed);
+                    }
+                }
+            }
+
+            const tagsHtml = entries.map(([key, score]) => {
+                const shortKey = escapeHtml(String(key).substring(0, 3).toUpperCase());
+                if (numericFields.has(key)) {
+                    const numValue = numericFields.get(key);
+                    const formatted = numValue >= 1000
+                        ? numValue.toLocaleString('en-US', { maximumFractionDigits: 0 })
+                        : numValue.toFixed(1);
+                    return `<span class="metadata-tag" title="${escapeHtml(key)}: ${escapeHtml(formatted)}">${shortKey}: ${escapeHtml(formatted)}</span>`;
+                }
+                const pct = Number(score).toFixed(0);
+                return `<span class="metadata-tag" title="${escapeHtml(key)}: ${pct}% match">${shortKey}: ${pct}%</span>`;
+            }).join('');
+
+            const moreTag = Object.keys(metadataScores).length > 4 ? '<span class="metadata-tag">+MORE</span>' : '';
+            return `<div class="match-metadata-scores">${tagsHtml}${moreTag}</div>`;
+        }
+
+        function renderMobileMatchCard(match, index) {
+            const similarityScore = Number(match.similarity_score ?? match.score ?? 0);
+            const scoreClass = getScoreClass(similarityScore);
+            const duplicateBadge = similarityScore > 90 ? '<span class="duplicate-badge">DUPLICATE?</span>' : '';
+            const metadataScoresHtml = renderMetadataScoresHtml(match.metadata_scores, match.metadata_values);
+
+            const imageHtml = match.image_url
+                ? `<img src="${escapeHtml(match.image_url)}" class="match-image" alt="Match ${index + 1}" loading="lazy">`
+                : `<div class="match-image" style="display:flex;align-items:center;justify-content:center;font-size:11px;">No Image</div>`;
+
+            const fileLine = match.filename
+                ? `<div style="opacity:0.8;">${escapeHtml(match.filename)}</div>`
+                : '';
+
+            const hybridLine = (match.visual_score !== undefined && match.metadata_score !== undefined)
+                ? `<div style="margin-top:2px;">V:${Number(match.visual_score).toFixed(1)}% | M:${Number(match.metadata_score).toFixed(1)}%</div>`
+                : '';
+
+            return `
+                <div class="match-card">
+                    ${imageHtml}
+                    <div class="match-score ${scoreClass}">${similarityScore.toFixed(1)}%</div>
+                    ${duplicateBadge}
+                    <div class="match-info">
+                        <div class="match-name">${escapeHtml(match.name || `Match #${index + 1}`)}</div>
+                        <div>${escapeHtml(match.category || 'Uncategorized')}</div>
+                        ${match.sku ? `<div>SKU: ${escapeHtml(match.sku)}</div>` : ''}
+                        ${fileLine}
+                        ${hybridLine}
+                        ${metadataScoresHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayResults(resultData) {
             const container = document.getElementById('resultsContainer');
             const resultsDiv = document.getElementById('matchResults');
 
-            if (!matches || matches.length === 0) {
-                resultsDiv.innerHTML = '<p>No matches found</p>';
-            } else {
-                resultsDiv.innerHTML = matches.map((match, idx) => `
-                    <div class="result-item">
-                        <h3>#${idx + 1} ${match.name}</h3>
-                        <div class="result-score">Score: ${(match.score * 100).toFixed(1)}%</div>
-                        ${match.category ? `<div>Category: ${match.category}</div>` : ''}
-                        ${match.sku ? `<div>SKU: ${match.sku}</div>` : ''}
-                    </div>
-                `).join('');
-            }
+            const group = Array.isArray(resultData)
+                ? { matches: resultData, query_product: null, mode: selectedMode }
+                : (resultData || {});
 
+            const matches = Array.isArray(group.matches) ? group.matches : [];
+            const queryProduct = group.query_product || {};
+            const mode = group.mode || selectedMode || '';
+
+            const summaryTop = Number(group.summary?.top_score ?? (matches[0]?.similarity_score ?? matches[0]?.score ?? 0));
+            const summaryAvg = Number(group.summary?.average_score ?? (
+                matches.length ? matches.reduce((sum, m) => sum + Number(m.similarity_score ?? m.score ?? 0), 0) / matches.length : 0
+            ));
+            const summaryCount = Number(group.summary?.total_matches ?? matches.length);
+
+            const modeLabel = mode === 'mode3' ? 'Visual + Metadata' : 'Visual Only';
+
+            const queryImageHtml = queryProduct.image_url
+                ? `<img src="${escapeHtml(queryProduct.image_url)}" class="result-image" alt="Uploaded product" loading="lazy">`
+                : '';
+
+            resultsDiv.innerHTML = `
+                <div class="result-item">
+                    <div class="result-header">
+                        ${queryImageHtml}
+                        <div class="result-info">
+                            <h3>${escapeHtml(queryProduct.name || 'Uploaded Product')}</h3>
+                            <div class="result-meta">
+                                Category: ${escapeHtml(queryProduct.category || 'Uncategorized')}
+                                ${queryProduct.sku ? ` | SKU: ${escapeHtml(queryProduct.sku)}` : ''}
+                                <br>
+                                Mode: ${escapeHtml(modeLabel)}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="result-summary">
+                        <div class="result-summary-item">
+                            <span class="value">${summaryCount}</span>
+                            <span class="label">Matches</span>
+                        </div>
+                        <div class="result-summary-item">
+                            <span class="value">${summaryTop.toFixed(1)}%</span>
+                            <span class="label">Top Score</span>
+                        </div>
+                        <div class="result-summary-item">
+                            <span class="value">${summaryAvg.toFixed(1)}%</span>
+                            <span class="label">Average</span>
+                        </div>
+                    </div>
+
+                    ${matches.length > 0
+                        ? `<div class="matches-grid">${matches.map((match, idx) => renderMobileMatchCard(match, idx)).join('')}</div>`
+                        : '<div class="no-matches">No matches found</div>'
+                    }
+                </div>
+            `;
+
+            container.style.display = 'block';
             container.classList.add('visible');
         }
 

@@ -24,7 +24,14 @@
       "Bash(find:*)",
       "Bash(pip show:*)",
       "WebSearch",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(cmd.exe /c cleanup.bat)",
+      "Bash(powershell -ExecutionPolicy Bypass -File create-zip.ps1:*)",
+      "Bash(powershell \"Stop-Process -Id 6940 -Force; Stop-Process -Id 7840 -Force\")",
+      "Bash(tasklist:*)",
+      "Bash(curl:*)",
+      "Bash(cmd.exe /c \"Restart App.bat\")",
+      "Bash(taskkill:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

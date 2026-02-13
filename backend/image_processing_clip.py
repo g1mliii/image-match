@@ -28,6 +28,9 @@ from typing import Optional, List, Tuple, Dict, Any, Callable
 from pathlib import Path
 import json
 
+# Get logger (will inherit UTF-8 configuration from root logger in app.py)
+logger = logging.getLogger(__name__)
+
 # Try to import PyTorch and related libraries
 try:
     import torch
@@ -77,9 +80,6 @@ except ImportError:
         import cv2
         return cv2.imread(path, flags)
 
-# Get logger (will inherit UTF-8 configuration from root logger in app.py)
-logger = logging.getLogger(__name__)
-
 # Suppress transformers warnings about slow image processor
 # This warning is informational and doesn't affect functionality
 import warnings
@@ -97,6 +97,7 @@ os.environ['TRANSFORMERS_CACHE'] = str(_CLIP_CACHE_DIR)  # And transformers cach
 _clip_model = None
 _clip_device = None
 _clip_model_name = 'clip-ViT-B-32'
+_detected_device_cache: Optional[str] = None
 
 # Available CLIP models
 AVAILABLE_MODELS = {
@@ -353,6 +354,8 @@ def detect_device() -> str:
         - Integrated GPUs (iGPUs) are typically Intel with lower VRAM
         - Discrete GPUs are typically NVIDIA/AMD with higher VRAM
     """
+    global _detected_device_cache
+
     if not TORCH_AVAILABLE:
         raise CLIPModelError(
             "PyTorch is not installed",
@@ -361,11 +364,15 @@ def detect_device() -> str:
     
     # Check for forced device override (for testing)
     force_device = os.environ.get('FORCE_GPU_DEVICE', '').strip()
+    if _detected_device_cache and not force_device:
+        return _detected_device_cache
+
     if force_device:
         logger.warning(f"⚠️  FORCE_GPU_DEVICE set to '{force_device}' - overriding automatic detection")
         if force_device == 'cpu':
             logger.info("Forced to CPU mode")
-            return 'cpu'
+            _detected_device_cache = 'cpu'
+            return _detected_device_cache
         elif force_device.startswith('cuda'):
             if torch.cuda.is_available():
                 # Validate device index
@@ -374,7 +381,8 @@ def detect_device() -> str:
                     if device_idx < torch.cuda.device_count():
                         gpu_name = torch.cuda.get_device_name(device_idx)
                         logger.info(f"Forced to {force_device}: {gpu_name}")
-                        return force_device
+                        _detected_device_cache = force_device
+                        return _detected_device_cache
                     else:
                         logger.error(f"Invalid device index {device_idx}, falling back to auto-detection")
                 except:
@@ -468,6 +476,7 @@ def detect_device() -> str:
         device = 'cpu'
         logger.info("No GPU detected, using CPU")
     
+    _detected_device_cache = device
     return device
 
 
@@ -1218,7 +1227,9 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                                   skip_errors: bool = True,
                                   use_amp: bool = True,
                                   auto_adjust_batch: bool = True,
-                                  use_multiprocessing: bool = None) -> List[Tuple[str, Optional[np.ndarray], Optional[str]]]:
+                                  use_multiprocessing: bool = None,
+                                  fast_preprocess: bool = False,
+                                  preprocess_max_dim: Optional[int] = 768) -> List[Tuple[str, Optional[np.ndarray], Optional[str]]]:
     """Extract CLIP embeddings for multiple images in batch with performance optimizations
     
     PERFORMANCE OPTIMIZATIONS:
@@ -1238,6 +1249,8 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         use_amp: Use Automatic Mixed Precision for faster GPU inference (default: True)
         auto_adjust_batch: Automatically adjust batch size based on VRAM (default: True)
         use_multiprocessing: Force multiprocessing on/off. If None, auto-detect based on device
+        fast_preprocess: If True, downscale large images before CLIP encoding for faster throughput
+        preprocess_max_dim: Max image dimension used when fast_preprocess is enabled
     
     Returns:
         List of tuples: (image_path, embedding or None, error_message or None)
@@ -1250,6 +1263,8 @@ def batch_extract_clip_embeddings(image_paths: List[str],
     
     logger.info(f"[CLIP-BATCH] ▶ Starting batch CLIP extraction for {len(image_paths)} images")
     logger.debug(f"[CLIP-BATCH] Parameters: batch_size={batch_size}, AMP={use_amp}, auto_adjust={auto_adjust_batch}")
+    if fast_preprocess and preprocess_max_dim and preprocess_max_dim > 0:
+        logger.info(f"[CLIP-BATCH] Fast preprocess enabled (max_dim={preprocess_max_dim})")
     
     # Get CLIP model
     model, device = get_clip_model(model_name)
@@ -1338,6 +1353,15 @@ def batch_extract_clip_embeddings(image_paths: List[str],
             try:
                 # Load and validate image
                 img_array = safe_imread(image_path, flags=1)
+
+                if fast_preprocess and preprocess_max_dim and preprocess_max_dim > 0:
+                    h, w = img_array.shape[:2]
+                    largest_dim = max(h, w)
+                    if largest_dim > preprocess_max_dim:
+                        scale = preprocess_max_dim / float(largest_dim)
+                        resized_w = max(1, int(w * scale))
+                        resized_h = max(1, int(h * scale))
+                        img_array = cv2.resize(img_array, (resized_w, resized_h), interpolation=cv2.INTER_AREA)
                 
                 # Convert to PIL Image (optimized - direct conversion)
                 img_rgb = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
@@ -1406,7 +1430,7 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                         results[global_idx] = (image_path, embedding, None)
             
             except Exception as e:
-                logger.error(f"Batch embedding extraction failed: {e}")
+                logger.error(f"[CLIP-BATCH] [BATCH {batch_num}/{num_batches}] Failed for {len(batch_valid_indices)} images: {e}")
                 
                 # Mark all images in batch as failed
                 for global_idx in batch_valid_indices:
@@ -1418,6 +1442,15 @@ def batch_extract_clip_embeddings(image_paths: List[str],
                         f"Batch embedding extraction failed: {str(e)}",
                         "Check GPU memory and model status."
                     )
+            finally:
+                # Release PIL image objects promptly to keep memory stable on huge catalogs.
+                for pil_image in batch_images:
+                    try:
+                        pil_image.close()
+                    except Exception:
+                        pass
+                batch_images.clear()
+                batch_valid_indices.clear()
     
     # Sort results by index to match input order
     sorted_results = [results.get(i, (image_paths[i], None, "Not processed")) for i in range(len(image_paths))]

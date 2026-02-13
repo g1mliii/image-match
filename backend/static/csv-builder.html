@@ -87,7 +87,7 @@
         }
     </script>
 </head>
-<body>
+<body class="compact-ui">
     <div class="container">
         <header>
             <h1>CSV BUILDER</h1>
@@ -131,17 +131,17 @@
                     <h2>STEP 1: UPLOAD</h2>
                     <button class="help-btn" onclick="toggleHelp('step1Help')">?</button>
                 </div>
-                <div class="help-text" id="step1Help" style="display: none; margin-bottom: 20px;">
-                    <p><strong>TWO WAYS TO START:</strong></p>
-                    <p><strong>OPTION 1: Upload Images</strong> - Drop a folder of product images. Filenames and categories (from folder names) will be extracted. In the next step, you can import a CSV to link metadata to your images.</p>
-                    <p><strong>OPTION 2: Import CSV Directly</strong> - If you already have a CSV with all your product data (including a filename column), import it directly. Any columns you include will be auto-detected and available for weighted matching.</p>
+                <div class="help-text" id="step1Help" style="display: none; margin-bottom: 12px;">
+                    <p><strong>IMAGE-FIRST WORKFLOW:</strong></p>
+                    <p><strong>STEP A (PRIMARY): Upload Images</strong> - Drop a folder of product images. Filenames and categories (from folder names) are extracted first.</p>
+                    <p><strong>STEP B (OPTIONAL): Import CSV</strong> - Expand CSV import only if you already have metadata to merge.</p>
                     <p><strong>SUPPORTED FORMATS:</strong> Images (JPG, PNG, WebP, GIF), CSV files</p>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <!-- Image Upload -->
+                <div>
+                    <!-- Image Upload (Primary) -->
                     <div class="upload-box">
-                        <h3 style="margin-bottom: 10px;">UPLOAD IMAGES</h3>
+                        <h3 style="margin-bottom: 10px;">UPLOAD IMAGES (PRIMARY)</h3>
                         <div class="drop-zone" id="imageDropZone">
                             <p>DROP FOLDER HERE</p>
                             <button class="btn" id="imageBrowseBtn">BROWSE</button>
@@ -150,19 +150,24 @@
                         <div class="file-info" id="imageInfo"></div>
                     </div>
 
-                    <!-- Direct CSV Import -->
-                    <div class="upload-box">
-                        <h3 style="margin-bottom: 10px;">OR IMPORT CSV</h3>
-                        <div class="drop-zone" id="csvDropZone">
-                            <p>DROP CSV HERE</p>
-                            <button class="btn" id="csvBrowseBtn">BROWSE</button>
-                            <input type="file" id="csvInput" accept=".csv" hidden>
+                    <!-- Direct CSV Import (Secondary / Collapsible) -->
+                    <div class="upload-box" style="margin-top: 12px;">
+                        <h3 style="margin-bottom: 10px;">OPTIONAL CSV IMPORT</h3>
+                        <button class="btn" id="toggleCsvImportBtn" onclick="toggleCsvImportSection()" type="button" style="margin-bottom: 10px;">
+                            SHOW CSV IMPORT
+                        </button>
+                        <div id="csvUploadSection" style="display: none;">
+                            <div class="drop-zone" id="csvDropZone">
+                                <p>DROP CSV HERE</p>
+                                <button class="btn" id="csvBrowseBtn">BROWSE</button>
+                                <input type="file" id="csvInput" accept=".csv" hidden>
+                            </div>
+                            <div class="file-info" id="csvInfo"></div>
                         </div>
-                        <div class="file-info" id="csvInfo"></div>
                     </div>
                 </div>
 
-                <div class="actions" style="margin-top: 20px;">
+                <div class="actions" style="margin-top: 12px;">
                     <button class="btn btn-primary" id="nextToLink" disabled>NEXT</button>
                 </div>
             </section>
@@ -173,16 +178,11 @@
                     <h2>STEP 2: LINK & PREVIEW</h2>
                     <button class="help-btn" onclick="toggleHelp('step2Help')">?</button>
                 </div>
-                <div class="help-text" id="step2Help" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="step2Help" style="display: none; margin-bottom: 12px;">
                     <p><strong>LINK METADATA TO IMAGES:</strong></p>
-                    <p>Import a CSV file to link product metadata to your uploaded images. The linking strategy determines how image filenames are matched to CSV data.</p>
-                    <p><strong>LINKING STRATEGIES:</strong></p>
-                    <p>• <strong>Filename = SKU:</strong> Image filename matches CSV SKU field • product123.jpg → SKU "product123"</p>
-                    <p>• <strong>Filename Contains SKU:</strong> Extract SKU from complex filenames • IMG_ABC-123_front.jpg → finds "ABC-123"</p>
-                    <p>• <strong>CSV Has Image Column:</strong> CSV has "filename", "product", or "image" column with filenames</p>
-                    <p>• <strong>Product Name Match:</strong> Fuzzy match filename to CSV "name" field (handles variations)</p>
-                    <p>• <strong>Search All Fields:</strong> Check all columns including edge cases (SKU=name, etc.)</p>
-                    <p><strong>TIP:</strong> Start with "Filename = SKU" (most common). If your CSV has a column listing image filenames, use "CSV Has Image Column". For messy data, try "Search All Fields".</p>
+                    <p>Import a CSV file to link product metadata to your uploaded images.</p>
+                    <p><strong>DEFAULT:</strong> Auto-detect uses Search All Fields.</p>
+                    <p><strong>ADVANCED OPTIONS:</strong> Use only if auto-detect misses links.</p>
                 </div>
 
                 <!-- Import Panel (shown when images were uploaded) -->
@@ -203,33 +203,42 @@
                 <!-- Linking Strategy Panel -->
                 <div id="linkingPanel" style="display: none;">
                     <div class="linking-strategy">
-                        <h3>LINKING STRATEGY</h3>
+                        <h3>LINKING</h3>
+                        <p style="margin-bottom: 10px; color: #666;">
+                            Auto-detect (recommended) searches all CSV fields for each image identifier.
+                        </p>
                         <div class="strategy-selector">
                             <label>
-                                <input type="radio" name="linkStrategy" value="filename_equals_sku" checked onchange="previewLinking()">
-                                <span>Filename = SKU</span>
-                                <small>Image filename (no ext) matches CSV SKU • product123.jpg → SKU "product123"</small>
+                                <input type="radio" name="linkStrategy" value="search_all_fields" checked onchange="previewLinking()">
+                                <span>Auto-detect (Search All Fields)</span>
+                                <small>Recommended default for mixed or unknown CSV formats</small>
                             </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="filename_contains_sku" onchange="previewLinking()">
-                                <span>Filename Contains SKU</span>
-                                <small>Extract SKU from filename • IMG_ABC-123_front.jpg → finds "ABC-123" in CSV SKU</small>
-                            </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="metadata_filename" onchange="previewLinking()">
-                                <span>CSV Has Image Column</span>
-                                <small>CSV has "filename", "product", or "image" column with image filenames</small>
-                            </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="fuzzy_name" onchange="previewLinking()">
-                                <span>Product Name Match</span>
-                                <small>Fuzzy match filename to CSV "name" field • handles variations & typos</small>
-                            </label>
-                            <label>
-                                <input type="radio" name="linkStrategy" value="search_all_fields" onchange="previewLinking()">
-                                <span>Search All Fields</span>
-                                <small>Check SKU, name, and all columns • catches edge cases like "SKU is name"</small>
-                            </label>
+                        </div>
+
+                        <div style="margin-top: 10px;">
+                            <button class="btn" id="toggleAdvancedLinkingBtn" onclick="toggleAdvancedLinking()" type="button" style="font-size: 12px; opacity: 0.8;">
+                                SHOW ADVANCED LINKING
+                            </button>
+                        </div>
+
+                        <div id="advancedLinkingOptions" style="display: none; margin-top: 10px;">
+                            <div class="strategy-selector">
+                                <label>
+                                    <input type="radio" name="linkStrategy" value="filename_equals_sku" onchange="previewLinking()">
+                                    <span>Filename = SKU</span>
+                                    <small>Image filename (no ext) matches CSV SKU</small>
+                                </label>
+                                <label>
+                                    <input type="radio" name="linkStrategy" value="filename_contains_sku" onchange="previewLinking()">
+                                    <span>Filename Contains SKU</span>
+                                    <small>Extract SKU from complex filenames</small>
+                                </label>
+                                <label>
+                                    <input type="radio" name="linkStrategy" value="metadata_filename" onchange="previewLinking()">
+                                    <span>CSV Has Image Column</span>
+                                    <small>CSV has explicit filename/image column</small>
+                                </label>
+                            </div>
                         </div>
 
                         <div id="patternConfig" style="display: none; margin-top: 15px;">
@@ -253,20 +262,11 @@
                     </div>
                 </div>
 
-                <!-- Column Preview Panel -->
-                <div id="columnPreviewPanel" style="margin-top: 20px; padding: 15px; border: 2px solid #000; background: #f5f0e6;">
-                    <h3>DETECTED COLUMNS</h3>
-                    <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">These columns will be available for weighted matching in the main app.</p>
-                    <div id="detectedColumnsContainer">
-                        <p style="color: #888; font-style: italic;">Import a CSV to see detected columns.</p>
-                    </div>
-                </div>
-
                 <!-- Data Preview Table -->
-                <div id="dataPreviewPanel" style="margin-top: 20px; display: none;">
+                <div id="dataPreviewPanel" style="margin-top: 12px; display: none;">
                     <h3>DATA PREVIEW</h3>
-                    <div style="max-height: 300px; overflow: auto; border: 2px solid #000;">
-                        <table class="data-table" id="previewTable">
+                    <div style="max-height: 300px; overflow: auto; border: 2px solid #000; white-space: nowrap;">
+                        <table class="data-table" id="previewTable" style="min-width: max-content;">
                             <thead id="previewTableHead"></thead>
                             <tbody id="previewTableBody"></tbody>
                         </table>
@@ -274,7 +274,7 @@
                     <p id="previewRowCount" style="margin-top: 5px; font-size: 0.9em; color: #666;"></p>
                 </div>
 
-                <div class="actions" style="margin-top: 20px;">
+                <div class="actions" style="margin-top: 12px;">
                     <button class="btn" onclick="goToStep(1)">BACK</button>
                     <button class="btn btn-primary" id="nextToExport" onclick="goToStep(3)">NEXT: EXPORT</button>
                 </div>
@@ -286,7 +286,7 @@
                     <h2>STEP 3: EXPORT</h2>
                     <button class="help-btn" onclick="toggleHelp('step3Help')">?</button>
                 </div>
-                <div class="help-text" id="step3Help" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="step3Help" style="display: none; margin-bottom: 12px;">
                     <p><strong>EXPORT YOUR CSV:</strong></p>
                     <p>1. Review the preview to verify filenames, categories, and metadata are correct</p>
                     <p>2. Download the CSV file or load directly to the main app</p>
@@ -298,11 +298,17 @@
 
                 <div class="export-options">
                     <h3>OPTIONS</h3>
-                    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                         <div class="option">
                             <label>
                                 <input type="checkbox" id="includeHeaders" checked>
                                 INCLUDE HEADERS
+                            </label>
+                        </div>
+                        <div class="option">
+                            <label>
+                                <input type="checkbox" id="includeEmptyFields" checked>
+                                INCLUDE EMPTY FIELDS
                             </label>
                         </div>
                         <div class="option">
@@ -316,16 +322,16 @@
                     </div>
                 </div>
 
-                <div class="preview" style="margin-top: 20px;">
+                <div class="preview" style="margin-top: 12px;">
                     <h3>CSV PREVIEW</h3>
                     <div class="preview-controls">
                         <button class="btn" onclick="refreshPreview()">REFRESH</button>
                         <span id="previewStats"></span>
                     </div>
-                    <pre id="csvPreviewContent" style="max-height: 300px; overflow: auto; background: #f5f0e6; padding: 15px; border: 2px solid #000;"></pre>
+                    <pre id="csvPreviewContent" style="max-height: 300px; overflow: auto; background: #f5f0e6; padding: 10px; border: 2px solid #000;"></pre>
                 </div>
 
-                <div class="actions" style="margin-top: 20px; flex-wrap: wrap; gap: 10px;">
+                <div class="actions" style="margin-top: 12px; flex-wrap: wrap; gap: 10px;">
                     <button class="btn" onclick="goToStep(2)">BACK</button>
                     <button class="btn btn-primary" id="loadToAppBtn" onclick="loadToApp()" style="display: none; font-size: 1.1em; padding: 12px 24px;">LOAD TO MAIN APP</button>
                     <button class="btn btn-primary" onclick="downloadCSV()">DOWNLOAD CSV</button>

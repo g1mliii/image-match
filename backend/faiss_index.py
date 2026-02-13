@@ -123,7 +123,7 @@ class FAISSIndexManager:
                     del self.product_ids[lru_key]
                     logger.debug(f"Evicted LRU index for category '{lru_key}' (cache full: {len(self.indexes)}/{self.cache_size})")
                 
-                logger.info(f"Built FAISS index for category '{cache_key}': {len(product_ids)} products, {dimension} dimensions (cache: {len(self.indexes)}/{self.cache_size})")
+                logger.debug(f"Built FAISS index for category '{cache_key}': {len(product_ids)} products, {dimension} dimensions (cache: {len(self.indexes)}/{self.cache_size})")
                 return True
                 
         except Exception as e:

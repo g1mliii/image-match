@@ -39,14 +39,18 @@ logger.info(f"Debug mode: {'ENABLED' if DEBUG_MODE else 'DISABLED'}")
 import secrets
 import json
 from datetime import datetime
-from pathlib import Path
+from urllib.parse import urlparse
 
 CONFIG_DIR = get_config_dir()
 MOBILE_CONFIG_FILE = os.path.join(CONFIG_DIR, 'mobile_config.json')
+MOBILE_NETWORK_CONFIG_FILE = os.path.join(CONFIG_DIR, 'mobile_network_config.json')
 
 # Cache for performance (avoid repeated file I/O)
 _mobile_password_cache = None
 _mobile_password_mtime = None
+_mobile_remote_url_cache = None
+_mobile_remote_url_mtime = None
+_mobile_remote_url_loaded = False
 
 def get_mobile_password():
     """Get or generate mobile upload password (6-digit PIN)
@@ -130,5 +134,93 @@ def validate_mobile_password(provided_password):
     except Exception as e:
         logger.error(f"Error validating password: {e}")
         return False
+
+# ============ Mobile Remote URL Configuration ============
+def _normalize_mobile_remote_url(remote_url):
+    """Normalize and validate remote mobile URL (HTTPS only)."""
+    if remote_url is None:
+        return None
+
+    value = str(remote_url).strip()
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != 'https' or not parsed.netloc:
+        raise ValueError("Remote URL must be a valid HTTPS URL")
+
+    # Default to /mobile when no path is provided
+    path = parsed.path if parsed.path else '/mobile'
+    cleaned = parsed._replace(path=path, params='', query='', fragment='')
+    normalized = cleaned.geturl()
+
+    # Preserve path but remove trailing slash for consistency
+    if normalized.endswith('/') and path != '/':
+        normalized = normalized[:-1]
+
+    return normalized
+
+
+def get_mobile_remote_url():
+    """Get optional remote mobile URL from env var or config file."""
+    global _mobile_remote_url_cache, _mobile_remote_url_mtime, _mobile_remote_url_loaded
+
+    # Environment variable takes precedence (ephemeral/ops-friendly)
+    env_url = os.environ.get('MOBILE_REMOTE_URL', '').strip()
+    if env_url:
+        try:
+            return _normalize_mobile_remote_url(env_url)
+        except ValueError as e:
+            logger.warning(f"Ignoring invalid MOBILE_REMOTE_URL: {e}")
+            return None
+
+    try:
+        if os.path.exists(MOBILE_NETWORK_CONFIG_FILE):
+            current_mtime = os.path.getmtime(MOBILE_NETWORK_CONFIG_FILE)
+
+            if _mobile_remote_url_loaded and _mobile_remote_url_mtime == current_mtime:
+                return _mobile_remote_url_cache
+
+            with open(MOBILE_NETWORK_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                raw_url = config.get('remote_url')
+                normalized = _normalize_mobile_remote_url(raw_url)
+                _mobile_remote_url_cache = normalized
+                _mobile_remote_url_mtime = current_mtime
+                _mobile_remote_url_loaded = True
+                return normalized
+
+        _mobile_remote_url_loaded = False
+        return None
+    except ValueError as e:
+        logger.warning(f"Invalid remote mobile URL in config: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading mobile network config: {e}")
+        return None
+
+
+def save_mobile_remote_url(remote_url):
+    """Persist optional remote mobile URL. Pass empty value to clear it."""
+    global _mobile_remote_url_cache, _mobile_remote_url_mtime, _mobile_remote_url_loaded
+
+    normalized = _normalize_mobile_remote_url(remote_url)
+
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        config = {
+            'remote_url': normalized,
+            'updated_at': datetime.now().isoformat()
+        }
+        with open(MOBILE_NETWORK_CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+
+        _mobile_remote_url_cache = normalized
+        _mobile_remote_url_mtime = os.path.getmtime(MOBILE_NETWORK_CONFIG_FILE)
+        _mobile_remote_url_loaded = True
+        logger.info("Mobile remote URL updated")
+    except Exception as e:
+        logger.error(f"Error saving mobile network config: {e}")
+        raise
 
 # ==================================================

@@ -79,19 +79,19 @@
                 if (result && result.csv_content) {
                     // Create a File object from CSV content
                     const blob = new Blob([result.csv_content], { type: 'text/csv' });
-                    const file = new File([blob], 'products.csv', { type: 'text/csv' });
+                    const file = new File([blob], `csv-builder-${result.product_count}-products.csv`, { type: 'text/csv' });
 
                     // Set the CSV in the appropriate section
                     if (section === 'historical') {
                         window.historicalCsv = file;
-                        document.getElementById('historicalFileLabel').textContent = `products.csv (${result.product_count} products from CSV Builder)`;
+                        document.getElementById('historicalFileLabel').textContent = `Loaded from CSV Builder (${result.product_count} products)`;
                         document.getElementById('processHistoricalBtn').disabled = false;
                         if (typeof removeWorkflowIndicators === 'function') {
                             removeWorkflowIndicators('historical');
                         }
                     } else if (section === 'new') {
                         window.newCsv = file;
-                        document.getElementById('newFileLabel').textContent = `products.csv (${result.product_count} products from CSV Builder)`;
+                        document.getElementById('newFileLabel').textContent = `Loaded from CSV Builder (${result.product_count} products)`;
                         document.getElementById('processNewBtn').disabled = false;
                         if (typeof removeWorkflowIndicators === 'function') {
                             removeWorkflowIndicators('new');
@@ -206,7 +206,7 @@
     <!-- Lucide Icons (latest stable version for modern features and bug fixes) -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
-<body>
+<body class="compact-ui">
     <div class="container">
         <header>
             <div class="header-content">
@@ -220,6 +220,8 @@
                         <span class="status-text">Checking GPU...</span>
                     </div>
                     <button onclick="openMobileModal(); return false;" class="btn-link" data-tooltip="Connect phone to upload photos and match products"><i data-lucide="smartphone" style="width: 16px; height: 16px; vertical-align: middle;"></i> PHONE</button>
+                    <button onclick="syncMobileResultsManual(); return false;" class="btn-link" data-tooltip="Manually check and load pending mobile matching results"><i data-lucide="refresh-cw" style="width: 16px; height: 16px; vertical-align: middle;"></i> SYNC MOBILE</button>
+                    <button onclick="showSaveDialog('manual_save'); return false;" class="btn-link" data-tooltip="Save a snapshot now without running matching"><i data-lucide="save" style="width: 16px; height: 16px; vertical-align: middle;"></i> SAVE SNAPSHOT</button>
                     <button onclick="openCatalogManager(); return false;" class="btn-link" data-tooltip="View and manage your product catalog, cleanup database"><i data-lucide="database" style="width: 16px; height: 16px; vertical-align: middle;"></i> CATALOG</button>
                     <button onclick="openCsvBuilder('historical'); return false;" class="btn-link" data-tooltip="Open CSV Builder tool to create product metadata files"><i data-lucide="file-spreadsheet" style="width: 16px; height: 16px; vertical-align: middle;"></i> CSV BUILDER</button>
                 </div>
@@ -228,7 +230,7 @@
 
         <main>
             <!-- Active Catalog Info Bar -->
-            <div class="catalog-info-bar" id="catalogInfoBar" style="display: none; padding: 12px 15px; background: #f5f0e6; border: 3px solid #000; margin-bottom: 20px;">
+            <div class="catalog-info-bar" id="catalogInfoBar" style="display: none; padding: 8px 10px; background: #f5f0e6; border: 3px solid #000; margin-bottom: 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                     <div id="activeCatalogInfo" style="display: flex; align-items: center; gap: 8px;">
                         <strong>ACTIVE CATALOG:</strong> <span id="activeCatalogSummary">Loading...</span>
@@ -281,8 +283,15 @@
                         <button class="mode-option" onclick="setMode('historical', 'hybrid')" data-tooltip="Images + CSV - Combined matching"><i data-lucide="git-merge" style="width: 14px; height: 14px; vertical-align: middle;"></i> HYBRID</button>
                     </div>
                     <button class="help-btn" onclick="toggleHelp('modeHelp1')">?</button>
+                    <button
+                        type="button"
+                        class="section-collapse-toggle"
+                        aria-expanded="true"
+                        aria-controls="historicalSection"
+                        onclick="toggleSectionCollapse('historicalSection')"
+                    >COLLAPSE</button>
                 </div>
-                <div class="help-text" id="modeHelp1" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="modeHelp1" style="display: none; margin-bottom: 12px;">
                     <p><strong>MATCHING MODES:</strong></p>
                     <p><strong>VISUAL MODE:</strong> Upload images only - AI visual similarity matching (color, shape, texture). Fast and simple.</p>
                     <p><strong>METADATA MODE:</strong> Upload CSV only (no images needed) - Match by SKU, name, category, price, performance history. Perfect for data-only workflows.</p>
@@ -290,7 +299,7 @@
                     <p><strong>Tip:</strong> Use Metadata Mode for testing your CSV files without needing product images!</p>
                 </div>                
                 <!-- Catalog Loading Options -->
-                <div class="catalog-options" id="catalogOptions" style="display: none; margin-bottom: 20px; padding: 15px; border: 2px solid #000; background: #f5f0e6;">
+                <div class="catalog-options" id="catalogOptions" style="display: none; margin-bottom: 12px; padding: 10px; border: 2px solid #000; background: #f5f0e6;">
                     <div class="catalog-stats" style="margin-bottom: 15px;">
                         <strong>EXISTING CATALOG:</strong> <span id="existingCatalogStats">Loading...</span>
                         <button onclick="openCatalogManager(); return false;" style="margin-left: 10px; font-size: 0.9em; background: none; border: none; text-decoration: underline; cursor: pointer; font-family: inherit;">MANAGE</button>
@@ -306,7 +315,7 @@
                         </label>
                         <label style="display: block; margin: 8px 0; cursor: pointer;">
                             <input type="radio" name="catalogLoadOption" value="replace">
-                            <strong>Replace catalog</strong> - Clear all and upload fresh
+                            <strong>Upload a new catalog instead</strong> - Replace existing catalog after automatic backup
                         </label>
                     </div>
 
@@ -354,7 +363,7 @@
                             <label>ADVANCED MODE: ADD PRODUCT DETAILS</label>
                             <button class="help-btn" onclick="toggleHelp('advancedHelp1')">?</button>
                         </div>
-                        <div class="help-text" id="advancedHelp1" style="display: none; margin-bottom: 20px;">
+                        <div class="help-text" id="advancedHelp1" style="display: none; margin-bottom: 12px;">
                             <p><strong>ADVANCED MODE FEATURES:</strong></p>
                             <p><strong>Dynamic Metadata Columns:</strong> Add any custom columns (brand, size, color, material, description, etc.) - they'll be auto-detected and available for filtering, sorting, and weighted matching!</p>
                             <p><strong>Weighted Matching:</strong> Each metadata column can be weighted differently - adjust how much each field (brand, category, name, price, etc.) influences match scores.</p>
@@ -406,8 +415,15 @@
                         <button class="mode-option" onclick="setMode('new', 'hybrid')" data-tooltip="Images + CSV - Combined matching"><i data-lucide="git-merge" style="width: 14px; height: 14px; vertical-align: middle;"></i> HYBRID</button>
                     </div>
                     <button class="help-btn" onclick="toggleHelp('modeHelp2')">?</button>
+                    <button
+                        type="button"
+                        class="section-collapse-toggle"
+                        aria-expanded="true"
+                        aria-controls="newSection"
+                        onclick="toggleSectionCollapse('newSection')"
+                    >COLLAPSE</button>
                 </div>
-                <div class="help-text" id="modeHelp2" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="modeHelp2" style="display: none; margin-bottom: 12px;">
                     <p><strong>MATCHING MODES:</strong></p>
                     <p><strong>VISUAL MODE:</strong> Upload images only - AI visual similarity matching (color, shape, texture). Fast and simple.</p>
                     <p><strong>METADATA MODE:</strong> Upload CSV only (no images needed) - Match by SKU, name, category, price, performance history. Perfect for data-only workflows.</p>
@@ -430,7 +446,7 @@
                         </label>
                         <label style="display: block; margin: 8px 0; cursor: pointer;">
                             <input type="radio" name="newCatalogLoadOption" value="replace">
-                            <strong>Replace new products</strong> - Clear all new products and upload fresh
+                            <strong>Upload a new set of new products instead</strong> - Replace existing new products after automatic backup
                         </label>
                     </div>
 
@@ -447,7 +463,7 @@
                 </div>
                 
                 <div class="upload-box">
-                    <div class="info folder-tip"></div>
+                    <div class="info folder-tip">
                         <div class="info-header">
                             <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
                             <button class="help-btn" onclick="toggleHelp('uploadHelp2')">?</button>
@@ -478,7 +494,7 @@
                             <label>ADVANCED MODE: ADD PRODUCT DETAILS</label>
                             <button class="help-btn" onclick="toggleHelp('advancedHelp2')">?</button>
                         </div>
-                        <div class="help-text" id="advancedHelp2" style="display: none; margin-bottom: 20px;">
+                        <div class="help-text" id="advancedHelp2" style="display: none; margin-bottom: 12px;">
                             <p><strong>ADVANCED MODE FEATURES:</strong></p>
                             <p><strong>Dynamic Metadata Columns:</strong> Add any custom columns (brand, size, color, material, description, etc.) - they'll be auto-detected and available for filtering, sorting, and weighted matching!</p>
                             <p><strong>Weighted Matching:</strong> Each metadata column can be weighted differently - adjust how much each field (brand, category, name, price, etc.) influences match scores.</p>
@@ -557,7 +573,7 @@
                         <h4>VISUAL SIMILARITY (CLIP AI)
                             <button class="help-btn" onclick="toggleHelp('clipHelp')">?</button>
                         </h4>
-                        <div class="help-text" id="clipHelp" style="display: none; margin-bottom: 20px;">
+                        <div class="help-text" id="clipHelp" style="display: none; margin-bottom: 12px;">
                             <p><strong>WHAT IS CLIP?</strong></p>
                             <p>CLIP (Contrastive Language-Image Pre-training) is an advanced AI model that understands images at a deep level, using 512-dimensional embeddings for superior accuracy and holistic understanding.</p>
                             <p><strong>Key Benefits:</strong></p>
@@ -581,7 +597,7 @@
                     <div id="metadataWeightsSection" style="display: none;">
                         <h4>METADATA MATCHING WEIGHTS</h4>
 
-                        <div style="padding: 15px; background: #f5f0e6; border: 2px solid #000; margin-bottom: 15px;">
+                        <div style="padding: 10px; background: #f5f0e6; border: 2px solid #000; margin-bottom: 10px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                                 <p style="margin: 0; font-weight: bold;">Column Weights:</p>
                                 <button onclick="equalizeMetadataWeights()"
@@ -592,7 +608,7 @@
 
                             <!-- Dynamic sliders container - populated by JS after CSV upload -->
                             <div id="dynamicMetadataWeightsContainer">
-                                <div style="padding: 20px; text-align: center; color: #666; font-style: italic;">
+                                <div style="padding: 12px; text-align: center; color: #666; font-style: italic;">
                                     Upload a CSV to see available columns for weighting.
                                 </div>
                             </div>
@@ -630,7 +646,7 @@
                         </div>
                         
                         <!-- Visual matching uses CLIP - no sub-weights needed -->
-                        <div class="info" style="margin-top: 20px; padding: 15px; border: 2px solid #000; background: #f5f0e6;">
+                        <div class="info" style="margin-top: 12px; padding: 10px; border: 2px solid #000; background: #f5f0e6;">
                             <p><strong>Visual Component: CLIP AI</strong></p>
                             <p>CLIP automatically analyzes all visual features (color, shape, texture, patterns) in a unified embedding. No manual tuning required!</p>
                         </div>
@@ -639,7 +655,7 @@
                             <summary style="cursor: pointer; font-weight: bold; padding: 10px; background: #ebe5d6; border: 2px solid #000;">
                                 METADATA SUB-WEIGHTS (Adjustable) ▼
                             </summary>
-                            <div style="padding: 15px; border: 2px solid #000; border-top: none; background: #f5f0e6;">
+                            <div style="padding: 10px; border: 2px solid #000; border-top: none; background: #f5f0e6;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                                     <p style="margin: 0; font-size: 13px; color: #666;">
                                         <em>Applied to the metadata component above:</em>
@@ -652,7 +668,7 @@
 
                                 <!-- Dynamic sliders container for hybrid mode -->
                                 <div id="dynamicHybridMetadataWeightsContainer">
-                                    <div style="padding: 15px; text-align: center; color: #666; font-style: italic; font-size: 12px;">
+                                    <div style="padding: 10px; text-align: center; color: #666; font-style: italic; font-size: 12px;">
                                         Upload a CSV to configure metadata weights.
                                     </div>
                                 </div>
@@ -666,7 +682,7 @@
                         </details>
                     </div>
                     
-                    <button class="btn" id="resetWeightsBtn" style="margin-top: 20px;">RESET</button>
+                    <button class="btn" id="resetWeightsBtn" style="margin-top: 12px;">RESET</button>
                 </div>
                 
                 <div class="progress" id="matchProgress"></div>
@@ -686,7 +702,7 @@
                         <button class="btn" id="resetBtn" data-tooltip="Clear all match results and start fresh"><i data-lucide="rotate-ccw" style="width: 16px; height: 16px; vertical-align: middle;"></i> RESET</button>
                     </div>
                 </div>
-                <div class="help-text" id="resultsHelp" style="display: none; margin-bottom: 20px;">
+                <div class="help-text" id="resultsHelp" style="display: none; margin-bottom: 12px;">
                     <p><strong>RESULTS & FILTERS:</strong></p>
                     <ul>
                         <li><strong>Search:</strong> Filter results by product name, SKU, or category</li>
@@ -717,7 +733,7 @@
                 <!-- Filters -->
                 <div class="filters">
                     <!-- Row 1: Primary Filters -->
-                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; width: 100%;">
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%;">
                         <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 150px;">
                             <input type="text" id="searchInput" placeholder="SEARCH..." class="input" style="flex: 1;" data-tooltip="Search by product name, SKU, or category">
                             <span id="searchStatus" class="search-status"></span>
@@ -729,7 +745,7 @@
                     </div>
 
                     <!-- Row 2: Secondary Controls -->
-                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; width: 100%; border-top: 2px solid #ccc; padding-top: 15px; margin-top: 15px;">
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%; border-top: 2px solid #ccc; padding-top: 10px; margin-top: 10px;">
                         <select id="sortBySelect" class="select" data-tooltip="Sort results by similarity score, category, or product name">
                             <option value="similarity">SIMILARITY</option>
                             <option value="category">CATEGORY</option>
@@ -863,14 +879,14 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
     <div id="saveDialog" class="modal">
         <div class="modal-content" style="max-width: 500px;">
             <span class="modal-close" onclick="closeSaveDialog()">×</span>
-            <h2 style="margin-top: 0; font-family: 'Courier New', monospace; margin-bottom: 20px;">SAVE SNAPSHOT</h2>
+            <h2 style="margin-top: 0; font-family: 'Courier New', monospace; margin-bottom: 12px;">SAVE SNAPSHOT</h2>
 
-            <div style="margin-bottom: 20px;">
+            <div style="margin-bottom: 12px;">
                 <label style="display: block; font-weight: bold; margin-bottom: 8px; font-family: 'Courier New', monospace;">SNAPSHOT NAME</label>
                 <input type="text" id="snapshotNameInput" placeholder="e.g., backup-2025-01-15" style="width: 100%; padding: 10px; border: 3px solid #000; font-family: 'Courier New', monospace; font-weight: bold; box-sizing: border-box;">
             </div>
 
-            <fieldset style="border: 3px solid #000; padding: 15px; margin-bottom: 20px;">
+            <fieldset style="border: 3px solid #000; padding: 10px; margin-bottom: 12px;">
                 <legend style="font-weight: bold; font-family: 'Courier New', monospace; padding: 0 10px;">SAVE TYPE</legend>
 
                 <div style="margin-bottom: 15px;">
@@ -909,14 +925,14 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
     <div id="crashRecoveryDialog" class="modal">
         <div class="modal-content" style="max-width: 600px;">
             <span class="modal-close" onclick="closeCrashRecoveryDialog()">×</span>
-            <h2 style="margin-top: 0; font-family: 'Courier New', monospace; margin-bottom: 20px; color: #c00;">CRASH RECOVERY</h2>
+            <h2 style="margin-top: 0; font-family: 'Courier New', monospace; margin-bottom: 12px; color: #c00;">CRASH RECOVERY</h2>
 
-            <div style="border: 3px solid #000; padding: 15px; margin-bottom: 20px; background: #ebe5d6;">
+            <div style="border: 3px solid #000; padding: 10px; margin-bottom: 12px; background: #ebe5d6;">
                 <p style="margin-top: 0; font-family: 'Courier New', monospace; font-weight: bold;">The application was not properly closed last time.</p>
                 <p style="margin-bottom: 0; font-family: 'Courier New', monospace; font-size: 12px;">A temporary session snapshot was saved. You can restore it or discard it.</p>
             </div>
 
-            <div style="border: 2px solid #000; padding: 15px; margin-bottom: 20px; background: #f5f0e6;">
+            <div style="border: 2px solid #000; padding: 10px; margin-bottom: 12px; background: #f5f0e6;">
                 <p style="margin-top: 0; font-weight: bold; font-family: 'Courier New', monospace;">RECOVERY SNAPSHOT</p>
                 <div id="recoveryDetails" style="font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6;">
                     <!-- Populated by JavaScript -->
@@ -934,20 +950,20 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
     <div id="mobileModal" class="modal">
         <div class="modal-content" style="max-width: 700px;">
             <span class="modal-close" onclick="closeMobileModal()">×</span>
-            <h2 style="margin-top: 0; font-family: 'Courier New', monospace; margin-bottom: 20px;">CONNECT PHONE</h2>
+            <h2 style="margin-top: 0; font-family: 'Courier New', monospace; margin-bottom: 12px;">CONNECT PHONE</h2>
 
             <!-- Instructions -->
-            <div style="border: 2px solid #000; padding: 15px; margin-bottom: 20px; background: #f5f0e6;">
+            <div style="border: 2px solid #000; padding: 10px; margin-bottom: 12px; background: #f5f0e6;">
                 <p style="margin-top: 0; font-weight: bold; font-family: 'Courier New', monospace;">On your phone:</p>
                 <ol style="margin: 10px 0; padding-left: 20px;">
-                    <li>Scan the QR code below, OR</li>
-                    <li>Visit: <strong id="mobileUrl" style="font-family: 'Courier New', monospace; word-break: break-all;">Loading...</strong></li>
-                    <li>Enter password: <strong id="mobilePassword" style="font-family: 'Courier New', monospace;">Loading...</strong></li>
+                    <li>Office WiFi/LAN: <strong id="localMobileUrl" style="font-family: 'Courier New', monospace; word-break: break-all;">Loading...</strong></li>
+                    <li id="remoteUrlRow" style="display: none;">Away from office (secure): <strong id="remoteMobileUrl" style="font-family: 'Courier New', monospace; word-break: break-all;">Not configured</strong></li>
+                    <li>Enter PIN: <strong id="mobilePassword" style="font-family: 'Courier New', monospace;">Loading...</strong></li>
                 </ol>
             </div>
 
             <!-- QR Code Section -->
-            <div style="border: 2px solid #000; padding: 20px; margin-bottom: 20px; background: #f5f0e6; text-align: center;">
+            <div style="border: 2px solid #000; padding: 12px; margin-bottom: 12px; background: #f5f0e6; text-align: center;">
                 <p style="margin-top: 0; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 15px;">SCAN TO CONNECT</p>
                 <div id="qrCodeContainer" style="display: flex; justify-content: center; align-items: center; min-height: 200px; background: #ebe5d6; border: 1px dashed #000;">
                     <p style="color: #999; font-size: 12px;">Generating QR code...</p>
@@ -955,7 +971,7 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
             </div>
 
             <!-- Manual Entry Section -->
-            <div style="border: 2px solid #000; padding: 15px; margin-bottom: 20px; background: #f5f0e6;">
+            <div style="border: 2px solid #000; padding: 10px; margin-bottom: 12px; background: #f5f0e6;">
                 <p style="margin-top: 0; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 10px;">MANUAL ENTRY</p>
                 <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                     <div style="flex: 1;">
@@ -965,6 +981,16 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
                             <button class="btn" onclick="copyToClipboard('ipAddressInput')"><i data-lucide="clipboard" style="width: 16px; height: 16px; vertical-align: middle;"></i> COPY</button>
                         </div>
                     </div>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <p style="margin: 0 0 5px 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">SECURE REMOTE URL (HTTPS)</p>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="remoteUrlInput" placeholder="https://xxxx-xx-xx-xx-xx.ngrok-free.app/mobile" style="flex: 1; padding: 8px; border: 2px solid #000; font-family: 'Courier New', monospace;">
+                        <button id="autoNgrokRemoteUrlBtn" class="btn" onclick="autoDetectNgrokRemoteUrl()"><i data-lucide="link" style="width: 16px; height: 16px; vertical-align: middle;"></i> AUTO NGROK</button>
+                        <button id="saveRemoteUrlBtn" class="btn" onclick="saveRemoteUrl()"><i data-lucide="save" style="width: 16px; height: 16px; vertical-align: middle;"></i> SAVE</button>
+                        <button id="clearRemoteUrlBtn" class="btn" onclick="clearRemoteUrl()"><i data-lucide="x-circle" style="width: 16px; height: 16px; vertical-align: middle;"></i> CLEAR</button>
+                    </div>
+                    <p id="remoteUrlStatus" style="margin: 6px 0 0 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">Start ngrok, then use AUTO NGROK or paste your HTTPS URL for off-site access.</p>
                 </div>
                 <div>
                     <p style="margin: 0 0 5px 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">PASSWORD (6 DIGITS)</p>
@@ -976,7 +1002,7 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
             </div>
 
             <!-- Password Management -->
-            <div style="border: 2px solid #000; padding: 15px; margin-bottom: 20px; background: #f5f0e6;">
+            <div style="border: 2px solid #000; padding: 10px; margin-bottom: 12px; background: #f5f0e6;">
                 <p style="margin-top: 0; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 10px;">PASSWORD MANAGEMENT</p>
                 <div style="display: flex; gap: 10px;">
                     <button class="btn" onclick="generateNewPassword()"><i data-lucide="key" style="width: 16px; height: 16px; vertical-align: middle;"></i> GENERATE NEW PASSWORD</button>

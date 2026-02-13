@@ -1470,20 +1470,21 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
         with get_snapshot_connection(db_path) as conn:
             cursor = conn.cursor()
 
-            # Check if metadata_schema exists
+            # Check if metadata_schema exists.
+            # Fallback to base columns when missing so snapshots still carry usable CSV data.
+            dynamic_columns = []
             cursor.execute('''
                 SELECT name FROM sqlite_master
                 WHERE type='table' AND name='metadata_schema'
             ''')
 
-            if not cursor.fetchone():
-                # No metadata_schema - return None
-                logger.debug(f"[CSV-EXTRACT] No metadata_schema in database, skipping {section_name} CSV extraction")
-                return None
-
-            # Get column definitions from metadata_schema
-            cursor.execute('SELECT column_name FROM metadata_schema ORDER BY rowid')
-            dynamic_columns = [row[0] for row in cursor.fetchall()]
+            if cursor.fetchone():
+                cursor.execute('SELECT column_name FROM metadata_schema ORDER BY rowid')
+                dynamic_columns = [row[0] for row in cursor.fetchall()]
+            else:
+                logger.debug(
+                    f"[CSV-EXTRACT] No metadata_schema in database, extracting {section_name} CSV with base columns only"
+                )
 
             # Base columns for CSV (filename, category, sku, name)
             base_columns = ['filename', 'category', 'sku', 'name']
@@ -1517,15 +1518,14 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
             for product in cursor:
                 image_path, category, sku, name, metadata_json = product
 
-                # Parse metadata JSON
+                # Parse metadata JSON only if dynamic columns are needed.
                 metadata = {}
-                if metadata_json:
+                if dynamic_columns and metadata_json:
                     try:
                         metadata = json.loads(metadata_json)
                     except (json.JSONDecodeError, ValueError) as e:
                         # Silently skip malformed JSON
                         logger.debug(f"Skipping malformed metadata JSON: {e}")
-                        pass
 
                 # Build CSV row with proper escaping
                 row = [
@@ -1556,7 +1556,7 @@ def extract_csv_from_db(db_path: str, is_historical: bool = True, max_size_mb: i
             # Safely extract and close buffer
             csv_content = csv_buffer.getvalue()
             final_size_mb = len(csv_content.encode('utf-8')) / (1024 * 1024)
-            logger.info(f"[CSV-EXTRACT] ✓ Extracted {section_name} CSV: {row_count} rows, {final_size_mb:.2f}MB")
+            logger.debug(f"[CSV-EXTRACT] ✓ Extracted {section_name} CSV: {row_count} rows, {final_size_mb:.2f}MB")
 
             return csv_content, row_count
 
@@ -1626,7 +1626,8 @@ def get_csv_from_snapshot(snapshot_path: str, is_historical: bool = True) -> Opt
 
 
 def save_main_db_as_snapshot(name: str, description: str = None,
-                             tags: List[str] = None, session_only: bool = False) -> Dict[str, Any]:
+                             tags: List[str] = None, session_only: bool = False,
+                             skip_if_empty: bool = False) -> Dict[str, Any]:
     """Save the current main database as a new snapshot
 
     This copies product_matching.db to a new snapshot file in catalogs/
@@ -1637,6 +1638,7 @@ def save_main_db_as_snapshot(name: str, description: str = None,
         description: Optional description
         tags: Optional list of tags
         session_only: If True, snapshot auto-deletes after 1 hour (for temporary saves)
+        skip_if_empty: If True, return success without creating a snapshot when products table is empty
 
     Returns:
         Dictionary with result
@@ -1644,6 +1646,26 @@ def save_main_db_as_snapshot(name: str, description: str = None,
     try:
         if not os.path.exists(DEFAULT_DB_PATH):
             return {'error': 'No main database found to save'}
+
+        total_products_in_main = None
+        if skip_if_empty:
+            try:
+                with sqlite3.connect(DEFAULT_DB_PATH) as check_conn:
+                    check_cursor = check_conn.cursor()
+                    check_cursor.execute('SELECT COUNT(*) FROM products')
+                    total_products_in_main = check_cursor.fetchone()[0]
+            except sqlite3.Error as e:
+                logger.warning(f"[SNAPSHOT-SAVE] Could not pre-check product count: {e}")
+
+            if total_products_in_main == 0:
+                logger.info(f"[SNAPSHOT-SAVE] Skipped snapshot '{name}' (main catalog is empty)")
+                return {
+                    'success': True,
+                    'skipped': True,
+                    'reason': 'empty_catalog',
+                    'name': name,
+                    'product_count': 0
+                }
         
         sanitized_name = sanitize_snapshot_name(name)
         db_filename = f"{sanitized_name}.db"
@@ -1724,12 +1746,15 @@ def save_main_db_as_snapshot(name: str, description: str = None,
                     cursor.execute('ALTER TABLE snapshot_metadata ADD COLUMN csv_uploaded_at TIMESTAMP')
 
             # Get product count
-            cursor.execute('SELECT COUNT(*) FROM products')
-            count = cursor.fetchone()[0]
+            if total_products_in_main is None:
+                cursor.execute('SELECT COUNT(*) FROM products')
+                count = cursor.fetchone()[0]
+            else:
+                count = total_products_in_main
 
             # Extract BOTH historical and new CSVs from main database for auto-load
             # Keep them separate to preserve schema integrity for each section
-            logger.info(f"[SNAPSHOT-SAVE] Extracting CSVs from main database for snapshot '{name}'...")
+            logger.debug(f"[SNAPSHOT-SAVE] Extracting CSVs from main database for snapshot '{name}'...")
             csv_historical_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=True)
             csv_new_result = extract_csv_from_db(DEFAULT_DB_PATH, is_historical=False)
 
@@ -1740,9 +1765,9 @@ def save_main_db_as_snapshot(name: str, description: str = None,
             if csv_historical_result:
                 csv_historical_content, csv_historical_row_count = csv_historical_result
                 csv_historical_filename = f"historical-{datetime.now().strftime('%Y%m%d')}.csv"
-                logger.info(f"[SNAPSHOT-SAVE] ✓ Historical CSV extracted: {csv_historical_filename} ({csv_historical_row_count} rows)")
+                logger.debug(f"[SNAPSHOT-SAVE] ✓ Historical CSV extracted: {csv_historical_filename} ({csv_historical_row_count} rows)")
             else:
-                logger.info(f"[SNAPSHOT-SAVE] No historical CSV to extract (no products or no metadata schema)")
+                logger.debug(f"[SNAPSHOT-SAVE] No historical CSV to extract (no products in historical section)")
 
             # Prepare new CSV data
             csv_new_content = None
@@ -1751,9 +1776,9 @@ def save_main_db_as_snapshot(name: str, description: str = None,
             if csv_new_result:
                 csv_new_content, csv_new_row_count = csv_new_result
                 csv_new_filename = f"new-{datetime.now().strftime('%Y%m%d')}.csv"
-                logger.info(f"[SNAPSHOT-SAVE] ✓ New CSV extracted: {csv_new_filename} ({csv_new_row_count} rows)")
+                logger.debug(f"[SNAPSHOT-SAVE] ✓ New CSV extracted: {csv_new_filename} ({csv_new_row_count} rows)")
             else:
-                logger.info(f"[SNAPSHOT-SAVE] No new CSV to extract (no products or no metadata schema)")
+                logger.debug(f"[SNAPSHOT-SAVE] No new CSV to extract (no products in new section)")
 
             # Clear existing metadata and insert new
             cursor.execute('DELETE FROM snapshot_metadata')
@@ -1806,14 +1831,14 @@ def save_main_db_as_snapshot(name: str, description: str = None,
         #             shutil.copy2(src, dst)
         
         save_type = "Session" if session_only else "Persistent"
-        logger.info(f"[SNAPSHOT-SAVE] Saved snapshot metadata to database")
+        logger.debug(f"[SNAPSHOT-SAVE] Saved snapshot metadata to database")
         logger.info(f"[SNAPSHOT-SAVE] ✓ COMPLETE: ONE {save_type} Snapshot '{name}' with BOTH CSVs")
-        logger.info(f"[SNAPSHOT-SAVE]   - File: {db_filename}")
-        logger.info(f"[SNAPSHOT-SAVE]   - Total Products: {count}")
-        logger.info(f"[SNAPSHOT-SAVE]   - Historical CSV: {'✓ Yes' if csv_historical_content else '✗ No'} ({csv_historical_row_count or 0} rows)")
-        logger.info(f"[SNAPSHOT-SAVE]   - New CSV: {'✓ Yes' if csv_new_content else '✗ No'} ({csv_new_row_count or 0} rows)")
+        logger.debug(f"[SNAPSHOT-SAVE]   - File: {db_filename}")
+        logger.debug(f"[SNAPSHOT-SAVE]   - Total Products: {count}")
+        logger.debug(f"[SNAPSHOT-SAVE]   - Historical CSV: {'✓ Yes' if csv_historical_content else '✗ No'} ({csv_historical_row_count or 0} rows)")
+        logger.debug(f"[SNAPSHOT-SAVE]   - New CSV: {'✓ Yes' if csv_new_content else '✗ No'} ({csv_new_row_count or 0} rows)")
         if session_only:
-            logger.info(f"[SNAPSHOT-SAVE]   - Expires: 1 hour from now (session snapshot)")
+            logger.debug(f"[SNAPSHOT-SAVE]   - Expires: 1 hour from now (session snapshot)")
 
         return {
             'success': True,

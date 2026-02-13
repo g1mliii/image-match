@@ -10,7 +10,7 @@ const state = {
     undoStack: [],
     redoStack: [],
     autoSaveTimer: null,
-    linkingStrategy: 'filename_equals_sku',
+    linkingStrategy: 'search_all_fields',
     skuPattern: '[A-Z]+-\\d+'
 };
 
@@ -382,6 +382,13 @@ function initializeStep1() {
  * Handle direct CSV upload from Step 1
  */
 function handleDirectCsvUpload(file) {
+    state.linkedProducts = [];
+
+    const csvUploadSection = document.getElementById('csvUploadSection');
+    const toggleBtn = document.getElementById('toggleCsvImportBtn');
+    if (csvUploadSection) csvUploadSection.style.display = 'block';
+    if (toggleBtn) toggleBtn.textContent = 'HIDE CSV IMPORT';
+
     // Show immediate feedback that upload started
     console.log('[CSV-BUILDER] Processing CSV file:', file.name);
     showToast(`Processing ${file.name}...`, 'info');
@@ -433,8 +440,20 @@ function handleDirectCsvUpload(file) {
     reader.readAsText(file);
 }
 
+function toggleCsvImportSection() {
+    const section = document.getElementById('csvUploadSection');
+    const toggleBtn = document.getElementById('toggleCsvImportBtn');
+    if (!section || !toggleBtn) return;
+
+    const willShow = section.style.display === 'none' || section.style.display === '';
+    section.style.display = willShow ? 'block' : 'none';
+    toggleBtn.textContent = willShow ? 'HIDE CSV IMPORT' : 'SHOW CSV IMPORT';
+}
+
 
 function handleImageFiles(files) {
+    state.linkedProducts = [];
+
     const imageFiles = files.filter(f => f.type.startsWith('image/'));
 
     if (imageFiles.length === 0) {
@@ -559,6 +578,9 @@ function importFromClipboard() {
 }
 
 function parseImportedData(content, source) {
+    // Reset linked results when new import arrives
+    state.linkedProducts = [];
+
     // Handle null/undefined content
     if (!content || typeof content !== 'string') {
         showToast('No data found or invalid format', 'error');
@@ -768,7 +790,8 @@ function parseImportedData(content, source) {
 
     // Show linking panel
     document.getElementById('linkingPanel').style.display = 'block';
-    document.getElementById('skipLinkingActions').style.display = 'none';
+    const skipEl = document.getElementById('skipLinkingActions');
+    if (skipEl) skipEl.style.display = 'none';
 
     // Auto-preview with default strategy
     previewLinking();
@@ -1225,6 +1248,16 @@ function validateImportedData(products) {
     return warnings;
 }
 
+function toggleAdvancedLinking() {
+    const panel = document.getElementById('advancedLinkingOptions');
+    const button = document.getElementById('toggleAdvancedLinkingBtn');
+    if (!panel || !button) return;
+
+    const willShow = panel.style.display === 'none' || panel.style.display === '';
+    panel.style.display = willShow ? 'block' : 'none';
+    button.textContent = willShow ? 'HIDE ADVANCED LINKING' : 'SHOW ADVANCED LINKING';
+}
+
 function previewLinking() {
     const strategy = document.querySelector('input[name="linkStrategy"]:checked').value;
     state.linkingStrategy = strategy;
@@ -1540,42 +1573,49 @@ function linkByNameEqualsFilename(product) {
 function linkBySearchAllFields(product) {
     if (!product || !product.filename) return null;
 
-    const cleanFilename = product.filename
-        .replace(/\.[^.]+$/, '')
-        .trim()
-        .toLowerCase();
-
+    const cleanFilename = product.filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
+    const cleanFilenameWithExt = product.filename.trim().toLowerCase();
     if (!cleanFilename) return null;
 
-    // Find first metadata row where ANY field matches the filename
-    return state.importedData.find(data => {
+    const priorityKeys = [
+        'sku', 'item', 'product', 'product_id', 'item_number',
+        'image', 'filename', 'file', 'photo', 'name', 'product_name'
+    ];
+
+    const valuesMatch = (rawValue) => {
+        if (!rawValue) return false;
+        const fieldValue = String(rawValue).trim().toLowerCase();
+        if (!fieldValue) return false;
+
+        if (fieldValue === cleanFilename || fieldValue === cleanFilenameWithExt) {
+            return true;
+        }
+
+        const fieldWithoutExt = fieldValue.replace(/\.[^.]+$/, '');
+        if (fieldWithoutExt === cleanFilename) {
+            return true;
+        }
+
+        if (fieldValue.includes(cleanFilename) || cleanFilename.includes(fieldValue)) {
+            const minLength = Math.min(fieldValue.length, cleanFilename.length);
+            return minLength >= 3;
+        }
+
+        return false;
+    };
+
+    return state.importedData.find((data) => {
         if (!data) return false;
 
-        // Check all fields in this metadata row
+        for (const key of priorityKeys) {
+            if (Object.prototype.hasOwnProperty.call(data, key) && valuesMatch(data[key])) {
+                return true;
+            }
+        }
+
         for (const [key, value] of Object.entries(data)) {
-            if (!value) continue;
-
-            const fieldValue = String(value).trim().toLowerCase();
-
-            // Exact match
-            if (fieldValue === cleanFilename) {
-                return true;
-            }
-
-            // Without extension match
-            const fieldWithoutExt = fieldValue.replace(/\.[^.]+$/, '');
-            if (fieldWithoutExt === cleanFilename) {
-                return true;
-            }
-
-            // Contains match (for cases like "IMG_ABC-123_final.jpg" matching "ABC-123")
-            if (fieldValue.includes(cleanFilename) || cleanFilename.includes(fieldValue)) {
-                // Only match if substantial overlap (avoid false positives)
-                const minLength = Math.min(fieldValue.length, cleanFilename.length);
-                if (minLength >= 3) {  // Require at least 3 chars
-                    return true;
-                }
-            }
+            if (priorityKeys.includes(key)) continue;
+            if (valuesMatch(value)) return true;
         }
 
         return false;
@@ -1801,6 +1841,10 @@ function finalizeLinking(matches) {
             }
         }
     });
+
+    // Keep a snapshot of linked output for preview rendering.
+    state.linkedProducts = state.products.map(product => ({ ...product }));
+    updateDataPreviewTable();
     
     // Store unmatched for manual linking
     state.unmatchedImages = matches.results
@@ -1824,8 +1868,17 @@ function finalizeLinking(matches) {
 }
 
 function showManualLinking() {
-    document.getElementById('linkingPanel').style.display = 'none';
-    document.getElementById('manualLinkingPanel').style.display = 'block';
+    const linkingPanel = document.getElementById('linkingPanel');
+    const manualPanel = document.getElementById('manualLinkingPanel');
+
+    if (linkingPanel) linkingPanel.style.display = 'none';
+    if (!manualPanel) {
+        showToast('Some products are unmatched. Continuing to export with current links.', 'warning');
+        goToStep(3);
+        return;
+    }
+
+    manualPanel.style.display = 'block';
     
     renderUnmatchedImages();
     renderAvailableProducts();
@@ -2372,7 +2425,7 @@ function refreshPreview() {
 function generateCSV() {
     const separator = document.getElementById('separatorSelect').value.replace('\\t', '\t');
     const includeHeaders = document.getElementById('includeHeaders').checked;
-    const includeEmpty = document.getElementById('includeEmptyFields').checked;
+    const includeEmpty = document.getElementById('includeEmptyFields')?.checked ?? true;
     
     let csv = '';
     
@@ -2586,8 +2639,10 @@ function updateDataPreviewTable() {
 
     if (!panel || !thead || !tbody) return;
 
-    // Use imported data or products
-    const data = state.importedData.length > 0 ? state.importedData : state.products;
+    // Prefer linked output when available, otherwise imported data, then raw products.
+    const data = state.linkedProducts.length > 0
+        ? state.linkedProducts
+        : (state.importedData.length > 0 ? state.importedData : state.products);
 
     if (data.length === 0) {
         panel.style.display = 'none';
