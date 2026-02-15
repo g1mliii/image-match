@@ -36,6 +36,9 @@ Each payload is a complete standalone app with:
 ✅ **GPU auto-detection** - Uses existing `detect_gpu()` function from `gpu/setup_gpu.py`
 ✅ **CLIP model bundled** - Each payload includes cached model (~350MB)
 ✅ **intel-extension optional** - Intel build tries to use it, falls back to CPU
+✅ **Remote access ready** - ngrok auto-start is supported when ngrok is available
+
+⚠ **ngrok redistribution requires policy check** - if we bundle ngrok binaries, distribution model must follow ngrok Terms
 
 ## Summary: What Gets Packaged
 
@@ -47,6 +50,74 @@ Each payload is a complete standalone app with:
 | **CLIP Model** | ✅ Yes (identical) | ~350MB | Same for all 4 builds, no GPU variants |
 | **App Code** | ✅ Yes | ~50MB | Backend, frontend, static files |
 | **Total per payload** | | **600MB (NVIDIA/Intel) to 400MB (CPU)** | Includes PyTorch + Dependencies + CLIP |
+
+---
+
+## ngrok Remote Access Packaging Plan (Windows + macOS)
+
+### Decision Gate (Required Before Release)
+
+Choose one model and document it in release notes:
+
+1. **External ngrok install (recommended for first release)**
+   - Do not bundle ngrok binary.
+   - App auto-starts ngrok if `ngrok` is found in PATH.
+   - User performs one-time in-app setup: `CONNECT PHONE` -> `SETUP TOKEN`.
+2. **Bundled ngrok agent (later release)**
+   - Ship ngrok binaries inside app package for each OS.
+   - Use bundled binary path first, then fallback to PATH.
+   - Requires internal legal/compliance check against ngrok Terms for redistribution model.
+
+### Streamlined User Experience Target
+
+1. Install app
+2. Open `CONNECT PHONE`
+3. Paste token once and click `SETUP TOKEN`
+4. Click `AUTO NGROK` (or app auto-starts on next launch)
+5. Share URL + PIN with authorized user
+
+### Platform Packaging Targets
+
+- **Windows**
+  - Optional bundled binary path: `third_party/ngrok/windows/ngrok.exe`
+  - Launcher output: `ProductMatcher_Setup.exe`
+- **macOS**
+  - Optional bundled binary path: `third_party/ngrok/macos/ngrok`
+  - Launcher output: `ProductMatcher_Setup.app` (or signed `.dmg` installer)
+  - Ensure executable bit: `chmod +x third_party/ngrok/macos/ngrok`
+  - Ensure codesign/notarization if bundled in distributed app
+
+### Runtime Resolution Order (for bundled mode)
+
+When app starts, resolve ngrok in this order:
+
+1. `NGROK_PATH` environment variable (override)
+2. Bundled platform binary inside app payload
+3. System PATH (`ngrok`)
+
+### Bundled Mode: PyInstaller Inputs
+
+If bundled mode is chosen, include ngrok binary in platform build inputs:
+
+```python
+# Windows build
+binaries=[
+    ('third_party/ngrok/windows/ngrok.exe', 'third_party/ngrok/windows'),
+]
+
+# macOS build
+binaries=[
+    ('third_party/ngrok/macos/ngrok', 'third_party/ngrok/macos'),
+]
+```
+
+Runtime should compute bundled path from `sys._MEIPASS` (PyInstaller extraction dir) when available.
+
+### Operational Ports (No Conflict)
+
+- App server: `127.0.0.1:8000`
+- ngrok local API: `127.0.0.1:4040`
+- Public ngrok URL forwards to app port `8000`
 
 ---
 
@@ -551,6 +622,18 @@ if __name__ == "__main__":
 
 ---
 
+### Phase 3A: Cross-Platform Launcher Outputs
+
+- **Windows release artifact:** `ProductMatcher_Setup.exe`
+- **macOS release artifact:** `ProductMatcher_Setup.app` (preferred) or `ProductMatcher_Setup.dmg`
+- Both launchers should preserve same first-run flow:
+  - detect environment
+  - install/unpack payload
+  - run app
+  - support ngrok auto-start behavior
+
+---
+
 ## Phase 4: Build Launcher Executable
 
 ```bash
@@ -737,6 +820,8 @@ coll = COLLECT(
   - `app_cpu.zip` (~400MB - includes CLIP)
 - [ ] Build launcher: `pyinstaller launcher.py --onefile --name ProductMatcher_Setup`
 - [ ] Verify `dist/ProductMatcher_Setup.exe` (~6MB)
+- [ ] Decide ngrok distribution mode (`external` or `bundled`) and document decision
+- [ ] If bundled mode: stage ngrok binaries for both Windows/macOS and validate executable permissions
 
 ### Test Each Payload
 For each zip file (app_nvidia.zip, app_amd.zip, etc.):
@@ -752,6 +837,16 @@ For each zip file (app_nvidia.zip, app_amd.zip, etc.):
 4. App should launch automatically
 5. Run again - should launch instantly (already installed)
 
+### Test ngrok Remote Access
+1. Launch app and confirm no crash if ngrok is missing
+2. In app: `CONNECT PHONE` -> paste token -> `SETUP TOKEN`
+3. Confirm tunnel starts immediately (no restart required)
+4. Confirm subsequent app launch auto-starts tunnel
+5. In app: `CONNECT PHONE` -> `AUTO NGROK`
+6. Confirm remote URL is saved and QR uses remote URL
+7. Confirm ports: app `8000`, ngrok API `4040`, no conflicts
+8. Repeat on Windows and macOS builds
+
 ---
 
 ## Success Criteria
@@ -766,3 +861,5 @@ For each zip file (app_nvidia.zip, app_amd.zip, etc.):
 ✅ All dependencies bundled
 ✅ CLIP model included (instant first use)
 ✅ Subsequent launches instant
+✅ ngrok path defined for release model (external or bundled)
+✅ Remote mobile flow tested on Windows + macOS

@@ -983,6 +983,15 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
                     </div>
                 </div>
                 <div style="margin-bottom: 10px;">
+                    <p style="margin: 0 0 5px 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">NGROK TOKEN (ONE-TIME SETUP)</p>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="password" id="ngrokTokenInput" placeholder="Paste ngrok authtoken once" style="flex: 1; padding: 8px; border: 2px solid #000; font-family: 'Courier New', monospace;">
+                        <button id="saveNgrokTokenBtn" class="btn" onclick="saveNgrokToken()"><i data-lucide="key" style="width: 16px; height: 16px; vertical-align: middle;"></i> SETUP TOKEN</button>
+                        <button id="clearNgrokTokenBtn" class="btn" onclick="clearNgrokToken()"><i data-lucide="trash-2" style="width: 16px; height: 16px; vertical-align: middle;"></i> CLEAR TOKEN</button>
+                    </div>
+                    <p id="ngrokTokenStatus" style="margin: 6px 0 0 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">Paste token once, then use AUTO NGROK.</p>
+                </div>
+                <div style="margin-bottom: 10px;">
                     <p style="margin: 0 0 5px 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">SECURE REMOTE URL (HTTPS)</p>
                     <div style="display: flex; gap: 5px;">
                         <input type="text" id="remoteUrlInput" placeholder="https://xxxx-xx-xx-xx-xx.ngrok-free.app/mobile" style="flex: 1; padding: 8px; border: 2px solid #000; font-family: 'Courier New', monospace;">
@@ -990,7 +999,7 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
                         <button id="saveRemoteUrlBtn" class="btn" onclick="saveRemoteUrl()"><i data-lucide="save" style="width: 16px; height: 16px; vertical-align: middle;"></i> SAVE</button>
                         <button id="clearRemoteUrlBtn" class="btn" onclick="clearRemoteUrl()"><i data-lucide="x-circle" style="width: 16px; height: 16px; vertical-align: middle;"></i> CLEAR</button>
                     </div>
-                    <p id="remoteUrlStatus" style="margin: 6px 0 0 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">Start ngrok, then use AUTO NGROK or paste your HTTPS URL for off-site access.</p>
+                    <p id="remoteUrlStatus" style="margin: 6px 0 0 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">Set ngrok token once, then click AUTO NGROK or paste your HTTPS URL.</p>
                 </div>
                 <div>
                     <p style="margin: 0 0 5px 0; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">PASSWORD (6 DIGITS)</p>

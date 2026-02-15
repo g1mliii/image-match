@@ -44,6 +44,7 @@ from urllib.parse import urlparse
 CONFIG_DIR = get_config_dir()
 MOBILE_CONFIG_FILE = os.path.join(CONFIG_DIR, 'mobile_config.json')
 MOBILE_NETWORK_CONFIG_FILE = os.path.join(CONFIG_DIR, 'mobile_network_config.json')
+MOBILE_NGROK_CONFIG_FILE = os.path.join(CONFIG_DIR, 'ngrok_config.json')
 
 # Cache for performance (avoid repeated file I/O)
 _mobile_password_cache = None
@@ -51,6 +52,9 @@ _mobile_password_mtime = None
 _mobile_remote_url_cache = None
 _mobile_remote_url_mtime = None
 _mobile_remote_url_loaded = False
+_mobile_ngrok_token_cache = None
+_mobile_ngrok_token_mtime = None
+_mobile_ngrok_token_loaded = False
 
 def get_mobile_password():
     """Get or generate mobile upload password (6-digit PIN)
@@ -221,6 +225,104 @@ def save_mobile_remote_url(remote_url):
         logger.info("Mobile remote URL updated")
     except Exception as e:
         logger.error(f"Error saving mobile network config: {e}")
+        raise
+
+# ============ ngrok Token Configuration ============
+def _normalize_ngrok_authtoken(token):
+    """Normalize/validate ngrok auth token."""
+    if token is None:
+        return None
+
+    value = str(token).strip()
+    if not value:
+        return None
+
+    if any(ch.isspace() for ch in value):
+        raise ValueError("ngrok token must not contain spaces")
+    if len(value) < 20:
+        raise ValueError("ngrok token appears too short")
+    if len(value) > 300:
+        raise ValueError("ngrok token appears too long")
+
+    return value
+
+
+def get_ngrok_authtoken():
+    """Get ngrok auth token from env var or config file."""
+    global _mobile_ngrok_token_cache, _mobile_ngrok_token_mtime, _mobile_ngrok_token_loaded
+
+    env_token = os.environ.get('NGROK_AUTHTOKEN', '').strip()
+    if env_token:
+        try:
+            return _normalize_ngrok_authtoken(env_token)
+        except ValueError as e:
+            logger.warning(f"Ignoring invalid NGROK_AUTHTOKEN: {e}")
+            return None
+
+    try:
+        if os.path.exists(MOBILE_NGROK_CONFIG_FILE):
+            current_mtime = os.path.getmtime(MOBILE_NGROK_CONFIG_FILE)
+
+            if _mobile_ngrok_token_loaded and _mobile_ngrok_token_mtime == current_mtime:
+                return _mobile_ngrok_token_cache
+
+            with open(MOBILE_NGROK_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                raw_token = config.get('authtoken')
+                normalized = _normalize_ngrok_authtoken(raw_token)
+                _mobile_ngrok_token_cache = normalized
+                _mobile_ngrok_token_mtime = current_mtime
+                _mobile_ngrok_token_loaded = True
+                return normalized
+
+        _mobile_ngrok_token_loaded = False
+        return None
+    except ValueError as e:
+        logger.warning(f"Invalid ngrok token in config: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading ngrok config: {e}")
+        return None
+
+
+def save_ngrok_authtoken(token):
+    """Persist ngrok auth token."""
+    global _mobile_ngrok_token_cache, _mobile_ngrok_token_mtime, _mobile_ngrok_token_loaded
+
+    normalized = _normalize_ngrok_authtoken(token)
+    if not normalized:
+        raise ValueError("ngrok token is required")
+
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        payload = {
+            'authtoken': normalized,
+            'updated_at': datetime.now().isoformat()
+        }
+        with open(MOBILE_NGROK_CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=2)
+
+        _mobile_ngrok_token_cache = normalized
+        _mobile_ngrok_token_mtime = os.path.getmtime(MOBILE_NGROK_CONFIG_FILE)
+        _mobile_ngrok_token_loaded = True
+        logger.info("ngrok token updated")
+    except Exception as e:
+        logger.error(f"Error saving ngrok config: {e}")
+        raise
+
+
+def clear_ngrok_authtoken():
+    """Clear persisted ngrok auth token."""
+    global _mobile_ngrok_token_cache, _mobile_ngrok_token_mtime, _mobile_ngrok_token_loaded
+    try:
+        if os.path.exists(MOBILE_NGROK_CONFIG_FILE):
+            os.remove(MOBILE_NGROK_CONFIG_FILE)
+        _mobile_ngrok_token_cache = None
+        _mobile_ngrok_token_mtime = None
+        _mobile_ngrok_token_loaded = True
+        logger.info("ngrok token cleared")
+    except Exception as e:
+        logger.error(f"Error clearing ngrok config: {e}")
         raise
 
 # ==================================================

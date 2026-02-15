@@ -11,11 +11,8 @@ python main.py
 ## ngrok Auto-Start (Desktop Mode)
 
 - The app now auto-starts ngrok when launching `main.py` (best effort).
-- One-time requirement:
-
-```bash
-ngrok config add-authtoken <YOUR_TOKEN>
-```
+- One-time requirement in app:
+  - `CONNECT PHONE` -> paste token in `NGROK TOKEN` -> click `SETUP TOKEN`
 
 ## Ports
 

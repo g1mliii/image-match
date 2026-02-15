@@ -31,10 +31,10 @@ python main.py
 
 For Desktop Mode, ngrok now auto-starts in the background when the app launches (best effort).
 
-One-time setup on host machine:
-```bash
-ngrok config add-authtoken <YOUR_TOKEN>
-```
+One-time setup in app:
+1. Open `CONNECT PHONE`
+2. Paste token in `NGROK TOKEN`
+3. Click `SETUP TOKEN` (the app stores token and attempts tunnel start)
 
 Port mapping:
 - App server: `127.0.0.1:8000`
@@ -43,7 +43,7 @@ Port mapping:
 
 In the app:
 1. Open `CONNECT PHONE`
-2. Click `AUTO NGROK`
+2. Click `AUTO NGROK` (or `SETUP TOKEN` once if first run)
 3. Share remote URL + PIN
 
 Optional: disable ngrok auto-start

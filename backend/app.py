@@ -18,6 +18,7 @@ import time
 import threading
 import secrets
 import ipaddress
+import subprocess
 import urllib.request
 import urllib.error
 from typing import Optional, List
@@ -370,6 +371,16 @@ def cleanup_on_shutdown():
         logger.warning(f"Failed to clear in-process caches: {e}")
 
     try:
+        # Stop backend-managed ngrok process to avoid orphan background tunnel.
+        stopped, stop_error = _stop_ngrok_tunnel_for_backend()
+        if stopped:
+            logger.info("✓ Backend ngrok tunnel stopped")
+        elif stop_error and 'No app-managed ngrok process' not in str(stop_error):
+            logger.warning(f"Failed to stop backend ngrok tunnel: {stop_error}")
+    except Exception as e:
+        logger.warning(f"Failed to stop backend ngrok tunnel: {e}")
+
+    try:
         # Close all database connections
         from database import close_all_db_connections
         close_all_db_connections()
@@ -678,6 +689,9 @@ _mobile_auth_failures = {}
 _mobile_auth_failures_lock = threading.Lock()
 _mobile_last_session_sweep_ts = 0.0
 _mobile_last_auth_sweep_ts = 0.0
+_ngrok_process = None
+_ngrok_started_by_app = False
+_ngrok_process_lock = threading.Lock()
 
 
 def _is_loopback_ip(value):
@@ -927,16 +941,17 @@ def _build_mobile_connection_info(include_password=False):
     return payload
 
 
-def _discover_ngrok_public_url():
+def _discover_ngrok_public_url(timeout_seconds=0.8):
     """Discover active ngrok HTTPS public URL from the local ngrok agent API."""
     api_url = (os.environ.get('NGROK_API_URL') or 'http://127.0.0.1:4040/api/tunnels').strip()
+    timeout_seconds = max(0.2, min(float(timeout_seconds), 5.0))
 
     try:
         request_obj = urllib.request.Request(
             api_url,
             headers={'Accept': 'application/json'}
         )
-        with urllib.request.urlopen(request_obj, timeout=2.5) as response:
+        with urllib.request.urlopen(request_obj, timeout=timeout_seconds) as response:
             if response.status != 200:
                 return None, f"ngrok API returned HTTP {response.status}"
             payload = json.loads(response.read().decode('utf-8', errors='replace'))
@@ -963,6 +978,169 @@ def _discover_ngrok_public_url():
         return None, "No HTTPS ngrok tunnel found. Start ngrok with HTTPS enabled."
 
     return https_url.rstrip('/'), None
+
+
+def _resolve_ngrok_binary_path():
+    """Resolve ngrok binary path using env override, bundled path, then PATH."""
+    env_path = (os.environ.get('NGROK_PATH') or '').strip().strip('"').strip("'")
+    if env_path and os.path.isfile(env_path):
+        return env_path, 'env'
+
+    project_root = os.path.dirname(BACKEND_DIR)
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else None
+    meipass_dir = getattr(sys, '_MEIPASS', None)
+
+    if sys.platform == 'win32':
+        bundled_rel = os.path.join('third_party', 'ngrok', 'windows', 'ngrok.exe')
+    elif sys.platform == 'darwin':
+        bundled_rel = os.path.join('third_party', 'ngrok', 'macos', 'ngrok')
+    else:
+        bundled_rel = os.path.join('third_party', 'ngrok', 'linux', 'ngrok')
+
+    candidates = [os.path.join(project_root, bundled_rel)]
+    if meipass_dir:
+        candidates.append(os.path.join(meipass_dir, bundled_rel))
+    if exe_dir:
+        candidates.append(os.path.join(exe_dir, bundled_rel))
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate, 'bundled'
+
+    path_binary = shutil.which('ngrok')
+    if path_binary:
+        return path_binary, 'path'
+
+    return None, None
+
+
+def _apply_ngrok_authtoken_to_agent(token):
+    """Persist token into ngrok config for better first-run reliability."""
+    ngrok_binary, _ = _resolve_ngrok_binary_path()
+    if not ngrok_binary:
+        return False, 'ngrok binary not found'
+
+    try:
+        command = [ngrok_binary, 'config', 'add-authtoken', token]
+        run_kwargs = {
+            'check': False,
+            'capture_output': True,
+            'text': True
+        }
+        if sys.platform == 'win32':
+            run_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run(command, **run_kwargs)
+        if result.returncode != 0:
+            stderr_text = (result.stderr or '').strip()
+            return False, stderr_text or 'ngrok returned a non-zero exit code'
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def _start_ngrok_tunnel_for_backend(port):
+    """Start ngrok tunnel for this local backend and return public URL."""
+    global _ngrok_process, _ngrok_started_by_app
+
+    public_url, _ = _discover_ngrok_public_url(timeout_seconds=0.4)
+    if public_url:
+        return public_url, None
+
+    # Give an existing external/startup ngrok a brief grace window to expose API URL.
+    for _ in range(6):
+        public_url, _ = _discover_ngrok_public_url(timeout_seconds=0.3)
+        if public_url:
+            return public_url, None
+        time.sleep(0.15)
+
+    ngrok_binary, binary_source = _resolve_ngrok_binary_path()
+    if not ngrok_binary:
+        return None, 'ngrok binary not found. Install ngrok or bundle it with the app.'
+
+    from config import get_ngrok_authtoken
+    token = get_ngrok_authtoken()
+    if not token:
+        return None, 'ngrok token is not configured. Use SETUP TOKEN first.'
+
+    with _ngrok_process_lock:
+        process_running = (_ngrok_process is not None and _ngrok_process.poll() is None)
+    if process_running:
+        for _ in range(24):
+            public_url, _ = _discover_ngrok_public_url(timeout_seconds=0.3)
+            if public_url:
+                return public_url, None
+            time.sleep(0.25)
+        return None, 'ngrok process is running but public URL is not ready yet'
+
+    with _ngrok_process_lock:
+        # Another request may have started ngrok while we were waiting above.
+        if _ngrok_process is not None and _ngrok_process.poll() is None:
+            process_running = True
+        else:
+            process_running = False
+
+        if process_running:
+            # Fast path: let the running process expose URL without launching a duplicate.
+            pass
+        else:
+            command = [ngrok_binary, 'http', f'http://127.0.0.1:{port}']
+            child_env = os.environ.copy()
+            child_env['NGROK_AUTHTOKEN'] = token
+
+            popen_kwargs = {
+                'stdout': subprocess.DEVNULL,
+                'stderr': subprocess.STDOUT,
+                'env': child_env
+            }
+            if sys.platform == 'win32':
+                popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
+            try:
+                _ngrok_process = subprocess.Popen(command, **popen_kwargs)
+                _ngrok_started_by_app = True
+                logger.info(f"Started ngrok tunnel ({binary_source}) for local port {port}")
+            except Exception as e:
+                _ngrok_process = None
+                _ngrok_started_by_app = False
+                return None, f'Failed to start ngrok: {e}'
+
+    for _ in range(30):
+        if _ngrok_process is not None and _ngrok_process.poll() is not None:
+            return None, 'ngrok exited immediately. Check token validity and ngrok version.'
+        public_url, _ = _discover_ngrok_public_url(timeout_seconds=0.3)
+        if public_url:
+            return public_url, None
+        time.sleep(0.25)
+
+    return None, 'ngrok started but URL is not ready yet'
+
+
+def _stop_ngrok_tunnel_for_backend():
+    """Stop ngrok process started by this backend instance."""
+    global _ngrok_process, _ngrok_started_by_app
+
+    with _ngrok_process_lock:
+        if not _ngrok_started_by_app or _ngrok_process is None:
+            return False, 'No app-managed ngrok process to stop'
+
+        process = _ngrok_process
+        _ngrok_process = None
+        _ngrok_started_by_app = False
+
+    if process.poll() is not None:
+        return True, None
+
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+        return True, None
+    except Exception:
+        try:
+            process.kill()
+            process.wait(timeout=2)
+            return True, None
+        except Exception as e:
+            return False, str(e)
 
 
 @app.route('/api/network/local-ip', methods=['GET'])
@@ -1026,9 +1204,105 @@ def mobile_remote_url_management():
         return create_error_response('REMOTE_URL_ERROR', 'Failed to save remote URL', status_code=500)
 
 
+@app.route('/api/mobile/ngrok/status', methods=['GET'])
+def mobile_ngrok_status():
+    """Local-only ngrok status for desktop modal setup UX."""
+    local_only_error = _require_localhost_request()
+    if local_only_error:
+        return local_only_error
+
+    from config import get_ngrok_authtoken
+
+    ngrok_binary, binary_source = _resolve_ngrok_binary_path()
+    token = get_ngrok_authtoken()
+    token_source = 'env' if (os.environ.get('NGROK_AUTHTOKEN') or '').strip() else ('config' if token else None)
+    public_url, _ = _discover_ngrok_public_url()
+
+    process_running = False
+    with _ngrok_process_lock:
+        process_running = (_ngrok_process is not None and _ngrok_process.poll() is None)
+
+    return jsonify({
+        'ngrok_installed': bool(ngrok_binary),
+        'ngrok_binary_source': binary_source,
+        'ngrok_binary_path': ngrok_binary,
+        'has_token': bool(token),
+        'token_source': token_source,
+        'public_url': public_url,
+        'tunnel_running': bool(public_url or process_running),
+        'managed_by_app': bool(_ngrok_started_by_app),
+        'auto_start_enabled': str(os.environ.get('AUTO_START_NGROK', 'true')).strip().lower() not in ('0', 'false', 'no', 'off')
+    }), 200
+
+
+@app.route('/api/mobile/ngrok/token', methods=['POST'])
+def mobile_ngrok_token_management():
+    """Local-only: save ngrok token and optionally start tunnel immediately."""
+    local_only_error = _require_localhost_request()
+    if local_only_error:
+        return local_only_error
+
+    from config import get_ngrok_authtoken, save_ngrok_authtoken, clear_ngrok_authtoken, save_mobile_remote_url, get_mobile_remote_url
+
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        action = str(data.get('action', 'save')).strip().lower()
+
+        if action == 'clear':
+            try:
+                clear_ngrok_authtoken()
+                stopped, stop_error = _stop_ngrok_tunnel_for_backend()
+                return jsonify({
+                    'success': True,
+                    'has_token': False,
+                    'ngrok_stopped': bool(stopped),
+                    'warning': stop_error
+                }), 200
+            except Exception as e:
+                logger.error(f"Failed clearing ngrok token: {e}", exc_info=True)
+                return create_error_response('NGROK_TOKEN_CLEAR_ERROR', 'Failed to clear ngrok token', status_code=500)
+
+        token = str(data.get('authtoken', '')).strip()
+        if not token:
+            return create_error_response('MISSING_NGROK_TOKEN', 'ngrok token is required', status_code=400)
+
+        try:
+            save_ngrok_authtoken(token)
+        except ValueError as e:
+            return create_error_response('INVALID_NGROK_TOKEN', str(e), status_code=400)
+        except Exception:
+            return create_error_response('NGROK_TOKEN_SAVE_ERROR', 'Failed to save ngrok token', status_code=500)
+
+        configured, configure_error = _apply_ngrok_authtoken_to_agent(token)
+        if not configured:
+            logger.warning(f"ngrok token saved but ngrok config command failed: {configure_error}")
+
+        start_now = bool(data.get('start_now', True))
+        public_url = None
+        start_error = None
+        if start_now:
+            port = int(request.environ.get('SERVER_PORT', 8000) or 8000)
+            public_url, start_error = _start_ngrok_tunnel_for_backend(port)
+            if public_url and not (os.environ.get('MOBILE_REMOTE_URL') or '').strip():
+                try:
+                    save_mobile_remote_url(public_url)
+                except Exception as e:
+                    logger.warning(f"Could not save auto-detected ngrok URL: {e}")
+
+        return jsonify({
+            'success': True,
+            'has_token': bool(get_ngrok_authtoken()),
+            'ngrok_configured': bool(configured),
+            'warning': configure_error,
+            'public_url': public_url,
+            'start_error': start_error,
+            'remote_url': get_mobile_remote_url()
+        }), 200
+
+
 @app.route('/api/mobile/remote-url/auto-ngrok', methods=['POST'])
 def mobile_remote_url_auto_ngrok():
-    """Local-only: auto-detect ngrok HTTPS URL and save as mobile remote URL."""
+    """Local-only: detect (or start) ngrok HTTPS URL and save as mobile remote URL."""
     local_only_error = _require_localhost_request()
     if local_only_error:
         return local_only_error
@@ -1045,10 +1319,17 @@ def mobile_remote_url_auto_ngrok():
 
     ngrok_public_url, discover_error = _discover_ngrok_public_url()
     if not ngrok_public_url:
+        port = int(request.environ.get('SERVER_PORT', 8000) or 8000)
+        ngrok_public_url, start_error = _start_ngrok_tunnel_for_backend(port)
+
+        if not ngrok_public_url and start_error:
+            discover_error = start_error
+
+    if not ngrok_public_url:
         return create_error_response(
             'NGROK_DISCOVERY_FAILED',
             discover_error or 'Unable to detect ngrok URL',
-            suggestion='Start ngrok and try AUTO NGROK URL again',
+            suggestion='Configure ngrok token, then click AUTO NGROK again',
             status_code=503
         )
 

@@ -8504,14 +8504,36 @@ async function loadMobileConnectionInfo() {
             source: 'config',
             editable: true
         };
+        let ngrokStatus = {
+            ngrok_installed: false,
+            has_token: false,
+            token_source: null,
+            tunnel_running: false,
+            public_url: null
+        };
+        const [remoteResult, ngrokResult] = await Promise.allSettled([
+            fetch('/api/mobile/remote-url'),
+            fetch('/api/mobile/ngrok/status')
+        ]);
 
-        try {
-            const remoteResponse = await fetch('/api/mobile/remote-url');
-            if (remoteResponse.ok) {
-                remoteConfig = await remoteResponse.json();
+        if (remoteResult.status === 'fulfilled') {
+            try {
+                if (remoteResult.value.ok) {
+                    remoteConfig = await remoteResult.value.json();
+                }
+            } catch (_) {
+                // Keep graceful fallback to connectionData.remote_url
             }
-        } catch (_) {
-            // Keep graceful fallback to connectionData.remote_url
+        }
+
+        if (ngrokResult.status === 'fulfilled') {
+            try {
+                if (ngrokResult.value.ok) {
+                    ngrokStatus = await ngrokResult.value.json();
+                }
+            } catch (_) {
+                // Keep graceful fallback defaults
+            }
         }
 
         const password = connectionData.password || '000000';
@@ -8532,6 +8554,10 @@ async function loadMobileConnectionInfo() {
         const saveBtn = document.getElementById('saveRemoteUrlBtn');
         const clearBtn = document.getElementById('clearRemoteUrlBtn');
         const autoNgrokBtn = document.getElementById('autoNgrokRemoteUrlBtn');
+        const ngrokTokenInput = document.getElementById('ngrokTokenInput');
+        const saveNgrokTokenBtn = document.getElementById('saveNgrokTokenBtn');
+        const clearNgrokTokenBtn = document.getElementById('clearNgrokTokenBtn');
+        const ngrokTokenStatus = document.getElementById('ngrokTokenStatus');
 
         if (remoteInput) remoteInput.value = remoteUrl;
         if (remoteText) remoteText.textContent = remoteUrl || 'Not configured';
@@ -8543,13 +8569,39 @@ async function loadMobileConnectionInfo() {
         if (clearBtn) clearBtn.disabled = !editable;
         if (autoNgrokBtn) autoNgrokBtn.disabled = !editable;
 
+        const tokenManagedByEnv = ngrokStatus.token_source === 'env';
+        if (ngrokTokenInput) {
+            ngrokTokenInput.disabled = tokenManagedByEnv;
+            ngrokTokenInput.value = '';
+        }
+        if (saveNgrokTokenBtn) saveNgrokTokenBtn.disabled = tokenManagedByEnv;
+        if (clearNgrokTokenBtn) clearNgrokTokenBtn.disabled = tokenManagedByEnv || !ngrokStatus.has_token;
+
+        if (ngrokTokenStatus) {
+            if (!ngrokStatus.ngrok_installed) {
+                ngrokTokenStatus.textContent = 'ngrok binary not found. Install ngrok or bundle it in app package.';
+            } else if (tokenManagedByEnv) {
+                ngrokTokenStatus.textContent = 'Token managed by NGROK_AUTHTOKEN environment variable.';
+            } else if (ngrokStatus.has_token) {
+                if (ngrokStatus.public_url) {
+                    ngrokTokenStatus.textContent = `Token configured. Tunnel live: ${ngrokStatus.public_url}`;
+                } else {
+                    ngrokTokenStatus.textContent = 'Token configured. Click AUTO NGROK to start or refresh tunnel URL.';
+                }
+            } else {
+                ngrokTokenStatus.textContent = 'Token not configured. Paste token once, then click SETUP TOKEN.';
+            }
+        }
+
         if (remoteStatus) {
             if (!editable && remoteConfig.source === 'env') {
                 remoteStatus.textContent = 'Managed by MOBILE_REMOTE_URL environment variable (read-only here).';
             } else if (remoteUrl) {
                 remoteStatus.textContent = 'Remote URL configured. Use this secure URL outside office.';
+            } else if (!ngrokStatus.has_token) {
+                remoteStatus.textContent = 'Set ngrok token once, then click AUTO NGROK.';
             } else {
-                remoteStatus.textContent = 'Start ngrok, then click AUTO NGROK or paste HTTPS URL.';
+                remoteStatus.textContent = 'Click AUTO NGROK to start tunnel and save remote URL.';
             }
         }
 
@@ -8674,6 +8726,82 @@ async function saveRemoteUrl() {
     } catch (error) {
         console.error('Error saving remote URL:', error);
         showToast(error.message || 'Failed to save remote URL', 'error');
+    }
+}
+
+async function saveNgrokToken() {
+    const input = document.getElementById('ngrokTokenInput');
+    if (!input) return;
+
+    const token = input.value.trim();
+    if (!token) {
+        showToast('Paste ngrok token first', 'error');
+        return;
+    }
+
+    const saveBtn = document.getElementById('saveNgrokTokenBtn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/mobile/ngrok/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                authtoken: token,
+                start_now: true
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || data.suggestion || 'Failed to save ngrok token');
+        }
+
+        input.value = '';
+        if (data.public_url) {
+            showToast('Token saved and tunnel started', 'success', 2500);
+        } else if (data.start_error) {
+            showToast(`Token saved. ${data.start_error}`, 'warning', 3500);
+        } else {
+            showToast('Token saved', 'success', 2500);
+        }
+        await loadMobileConnectionInfo();
+    } catch (error) {
+        console.error('Error saving ngrok token:', error);
+        showToast(error.message || 'Failed to save ngrok token', 'error');
+    } finally {
+        const refreshBtn = document.getElementById('saveNgrokTokenBtn');
+        if (refreshBtn) refreshBtn.disabled = false;
+    }
+}
+
+async function clearNgrokToken() {
+    const clearBtn = document.getElementById('clearNgrokTokenBtn');
+    if (clearBtn) clearBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/mobile/ngrok/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'clear' })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to clear ngrok token');
+        }
+
+        const input = document.getElementById('ngrokTokenInput');
+        if (input) input.value = '';
+
+        showToast('ngrok token cleared', 'success', 2200);
+        await loadMobileConnectionInfo();
+    } catch (error) {
+        console.error('Error clearing ngrok token:', error);
+        showToast(error.message || 'Failed to clear ngrok token', 'error');
+    } finally {
+        const refreshBtn = document.getElementById('clearNgrokTokenBtn');
+        if (refreshBtn) refreshBtn.disabled = false;
     }
 }
 

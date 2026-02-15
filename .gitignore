@@ -54,6 +54,7 @@ env/
 
 # Debug configuration (local settings only)
 backend/debug.conf
+backend/config/ngrok_config.json
 
 # Kiro AI files (internal use only)
 .kiro/
@@ -113,3 +114,4 @@ sample-data/MODE2_TEST_EXPECTED_RESULTS.md
 # Claude Code guidance files (local development only)
 CLAUDE.md
 tasks/
+FINAL_PACKAGING_PLAN.md

@@ -14,8 +14,9 @@ This is the easiest off-site setup when you do not own a Cloudflare/domain setup
 
 1. Install ngrok
    - https://ngrok.com/download
-2. Add auth token (one time)
-   - `ngrok config add-authtoken <YOUR_TOKEN>`
+2. In app, open `CONNECT PHONE`
+3. Paste token in `NGROK TOKEN`
+4. Click `SETUP TOKEN`
 
 ## Daily Use (Very Simple)
 

@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 from backend.app import app
 from path_manager import get_staging_dir, get_downloads_dir
+from config import get_ngrok_authtoken
 
 # Global reference to main window
 main_window = None
@@ -478,11 +479,12 @@ def _should_auto_start_ngrok():
     return _is_truthy_env(raw)
 
 
-def _discover_ngrok_https_url():
+def _discover_ngrok_https_url(timeout_seconds=0.6):
     api_url = (os.environ.get('NGROK_API_URL') or 'http://127.0.0.1:4040/api/tunnels').strip()
+    timeout_seconds = max(0.2, min(float(timeout_seconds), 5.0))
     try:
         req = urllib.request.Request(api_url, headers={'Accept': 'application/json'})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
             if resp.status != 200:
                 return None
             payload = json.loads(resp.read().decode('utf-8', errors='replace'))
@@ -498,6 +500,40 @@ def _discover_ngrok_https_url():
         if public_url.startswith('https://'):
             return public_url.rstrip('/')
     return None
+
+
+def _resolve_ngrok_binary_path():
+    """Resolve ngrok from env override, bundled app paths, then PATH."""
+    env_path = (os.environ.get('NGROK_PATH') or '').strip().strip('"').strip("'")
+    if env_path and os.path.isfile(env_path):
+        return env_path, 'env'
+
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else None
+    meipass_dir = getattr(sys, '_MEIPASS', None)
+
+    if sys.platform == 'win32':
+        bundled_rel = os.path.join('third_party', 'ngrok', 'windows', 'ngrok.exe')
+    elif sys.platform == 'darwin':
+        bundled_rel = os.path.join('third_party', 'ngrok', 'macos', 'ngrok')
+    else:
+        bundled_rel = os.path.join('third_party', 'ngrok', 'linux', 'ngrok')
+
+    bundled_candidates = [os.path.join(app_dir, bundled_rel)]
+    if meipass_dir:
+        bundled_candidates.append(os.path.join(meipass_dir, bundled_rel))
+    if exe_dir:
+        bundled_candidates.append(os.path.join(exe_dir, bundled_rel))
+
+    for candidate in bundled_candidates:
+        if os.path.isfile(candidate):
+            return candidate, 'bundled'
+
+    path_binary = shutil.which('ngrok')
+    if path_binary:
+        return path_binary, 'path'
+
+    return None, None
 
 
 def _auto_configure_remote_url_from_ngrok(port):
@@ -535,20 +571,28 @@ def start_ngrok_tunnel(port):
         print("[NGROK] Auto-start disabled (AUTO_START_NGROK=false)")
         return False
 
-    if _discover_ngrok_https_url():
+    if _discover_ngrok_https_url(timeout_seconds=0.35):
         print("[NGROK] Existing tunnel detected; using running ngrok instance")
         _auto_configure_remote_url_from_ngrok(port)
         return True
 
-    ngrok_path = shutil.which('ngrok')
+    ngrok_path, ngrok_source = _resolve_ngrok_binary_path()
     if not ngrok_path:
-        print("[NGROK] Not installed or not in PATH; skipping auto-start")
+        print("[NGROK] ngrok binary not found (PATH/bundled); skipping auto-start")
+        return False
+
+    token = get_ngrok_authtoken()
+    if not token:
+        print("[NGROK] Token not configured yet. Use CONNECT PHONE -> SETUP TOKEN once.")
         return False
 
     cmd = [ngrok_path, 'http', f'http://127.0.0.1:{port}']
+    child_env = os.environ.copy()
+    child_env['NGROK_AUTHTOKEN'] = token
     popen_kwargs = {
         'stdout': subprocess.DEVNULL,
-        'stderr': subprocess.STDOUT
+        'stderr': subprocess.STDOUT,
+        'env': child_env
     }
     if sys.platform == 'win32':
         popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
@@ -556,7 +600,7 @@ def start_ngrok_tunnel(port):
     try:
         ngrok_process = subprocess.Popen(cmd, **popen_kwargs)
         ngrok_started_by_app = True
-        print("[NGROK] Starting tunnel in background...")
+        print(f"[NGROK] Starting tunnel in background ({ngrok_source})...")
     except Exception as e:
         print(f"[NGROK] Failed to start: {e}")
         ngrok_process = None
@@ -568,7 +612,7 @@ def start_ngrok_tunnel(port):
     for _ in range(20):
         if ngrok_process and ngrok_process.poll() is not None:
             break
-        ready_url = _discover_ngrok_https_url()
+        ready_url = _discover_ngrok_https_url(timeout_seconds=0.3)
         if ready_url:
             break
         time.sleep(0.25)

@@ -1,14 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 from pathlib import Path
 
 home_dir = str(Path.home())
 CLIP_CACHE_PATH = os.path.join(home_dir, '.cache', 'clip-models')
 
+ngrok_binaries = []
+if os.name == 'nt':
+    ngrok_win = os.path.join('third_party', 'ngrok', 'windows', 'ngrok.exe')
+    if os.path.exists(ngrok_win):
+        ngrok_binaries.append((ngrok_win, os.path.join('third_party', 'ngrok', 'windows')))
+elif os.name == 'posix':
+    if sys.platform == 'darwin':
+        ngrok_macos = os.path.join('third_party', 'ngrok', 'macos', 'ngrok')
+        if os.path.exists(ngrok_macos):
+            ngrok_binaries.append((ngrok_macos, os.path.join('third_party', 'ngrok', 'macos')))
+    else:
+        ngrok_linux = os.path.join('third_party', 'ngrok', 'linux', 'ngrok')
+        if os.path.exists(ngrok_linux):
+            ngrok_binaries.append((ngrok_linux, os.path.join('third_party', 'ngrok', 'linux')))
+
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=ngrok_binaries,
     datas=[
         ('backend/static', 'backend/static'),
         # CRITICAL: Bundle CLIP model (~350MB) - downloaded at ~/.cache/clip-models/
