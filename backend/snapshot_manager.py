@@ -32,6 +32,71 @@ DEFAULT_DB_PATH = get_database_path()
 os.makedirs(CATALOGS_DIR, exist_ok=True)
 os.makedirs(CONFIG_DIR, exist_ok=True)
 
+# PERFORMANCE: TTL cache for list_snapshots to avoid opening every .db on each page load
+import time as _time
+_snapshot_list_cache: Optional[Dict[str, Any]] = None
+_snapshot_list_cache_time: float = 0.0
+_SNAPSHOT_LIST_CACHE_TTL = 10.0  # seconds
+
+
+def invalidate_snapshot_list_cache() -> None:
+    """Invalidate the snapshot list cache after mutations (create, delete, load)."""
+    global _snapshot_list_cache, _snapshot_list_cache_time
+    _snapshot_list_cache = None
+    _snapshot_list_cache_time = 0.0
+
+
+def _is_truthy_env(var_name: str) -> bool:
+    return str(os.environ.get(var_name, '')).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _show_internal_snapshots() -> bool:
+    """Allow internal/debug snapshots to be listed when explicitly enabled."""
+    return _is_truthy_env('SHOW_INTERNAL_SNAPSHOTS')
+
+
+def _allow_internal_snapshot_load() -> bool:
+    """Allow loading internal/debug snapshots when explicitly enabled."""
+    return _is_truthy_env('ALLOW_INTERNAL_SNAPSHOT_LOAD')
+
+
+def _is_internal_snapshot(snapshot_file: str, info: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Identify developer/internal snapshots that should stay out of normal UI flow.
+    """
+    def norm(value: str) -> str:
+        return str(value or '').strip().lower().replace('_', '-').replace(' ', '-')
+
+    file_key = norm(snapshot_file)
+    name_key = norm(info.get('name', '')) if info else ''
+    tags = [str(tag).strip().lower() for tag in (info.get('tags') or [])] if info else []
+
+    keys = [file_key, name_key]
+    prefixes = (
+        'debug-',
+        'debugsnapshot',
+        'debug-snapshot',
+        'data-preservation-test',
+    )
+    markers = (
+        'debug-snapshot',
+        'data-preservation-test',
+    )
+
+    for key in keys:
+        if not key:
+            continue
+        if any(key.startswith(prefix) for prefix in prefixes):
+            return True
+        if any(marker in key for marker in markers):
+            return True
+
+    internal_tags = {'internal', 'debug', 'debug-snapshot', 'test-temp'}
+    if any(tag in internal_tags for tag in tags):
+        return True
+
+    return False
+
 
 def sanitize_snapshot_name(name: str) -> str:
     """Sanitize snapshot name for use as filename
@@ -213,6 +278,11 @@ def init_snapshot_db(snapshot_path: str, name: str, is_historical: bool = True,
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_is_historical ON products(is_historical)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_category_historical ON products(category, is_historical)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_created_at ON products(created_at DESC)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_historical_created_at ON products(is_historical, created_at DESC)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_category_created_at ON products(category, created_at DESC)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_name ON products(product_name)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_features_product_id ON features(product_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_matches_new_product ON matches(new_product_id, similarity_score DESC)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_price_history_product_id ON price_history(product_id)')
@@ -260,7 +330,9 @@ def create_snapshot(name: str, is_historical: bool = True,
         # Initialize the database
         if not init_snapshot_db(db_path, name, is_historical, description, tags, session_only, created_by_operation):
             return {'error': 'Failed to initialize snapshot database'}
-        
+
+        invalidate_snapshot_list_cache()
+
         return {
             'success': True,
             'snapshot_file': db_filename,
@@ -268,7 +340,7 @@ def create_snapshot(name: str, is_historical: bool = True,
             'path': db_path,
             'is_historical': is_historical
         }
-        
+
     except Exception as e:
         logger.error(f"Error creating snapshot: {e}")
         return {'error': str(e)}
@@ -277,9 +349,18 @@ def create_snapshot(name: str, is_historical: bool = True,
 def list_snapshots() -> Dict[str, Any]:
     """List all available snapshots with metadata
 
+    PERFORMANCE: Uses a 10-second TTL cache to avoid opening every .db file
+    on each request. Cache is invalidated on snapshot create/delete/load.
+
     Returns:
         Dictionary with historical and new snapshot lists (excludes expired session snapshots)
     """
+    global _snapshot_list_cache, _snapshot_list_cache_time
+
+    now_ts = _time.time()
+    if _snapshot_list_cache is not None and (now_ts - _snapshot_list_cache_time) < _SNAPSHOT_LIST_CACHE_TTL:
+        return _snapshot_list_cache
+
     try:
         historical = []
         new_products = []
@@ -299,6 +380,10 @@ def list_snapshots() -> Dict[str, Any]:
                 info = get_snapshot_info(filename)
 
                 if info and not info.get('error'):
+                    # Hide internal/debug snapshots from normal catalog UI.
+                    if _is_internal_snapshot(filename, info) and not _show_internal_snapshots():
+                        continue
+
                     # Skip expired session snapshots
                     if info.get('session_only'):
                         expires_at = info.get('expires_at')
@@ -322,10 +407,16 @@ def list_snapshots() -> Dict[str, Any]:
         historical.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         new_products.sort(key=lambda x: x.get('created_at', ''), reverse=True)
 
-        return {
+        result = {
             'historical': historical,
             'new': new_products
         }
+
+        # Store in TTL cache
+        _snapshot_list_cache = result
+        _snapshot_list_cache_time = _time.time()
+
+        return result
 
     except Exception as e:
         logger.error(f"Error listing snapshots: {e}")
@@ -604,6 +695,26 @@ def save_snapshot_with_dialog_choice(
         if not os.path.exists(source_db):
             return {'error': f'Main database not found: {source_db}'}
 
+        # DISK SPACE CHECK: Warn if not enough free space for the snapshot copy
+        source_size_bytes = os.path.getsize(source_db)
+        source_size_mb = round(source_size_bytes / (1024 * 1024), 1)
+        try:
+            import shutil
+            disk_usage = shutil.disk_usage(CATALOGS_DIR)
+            free_mb = round(disk_usage.free / (1024 * 1024), 1)
+            # Need at least 2x the DB size for safe copy (temp space + final file)
+            required_mb = source_size_mb * 2
+            if free_mb < required_mb:
+                return {
+                    'error': f'Insufficient disk space. Need ~{required_mb:.0f} MB free, only {free_mb:.0f} MB available. '
+                             f'Database is {source_size_mb:.0f} MB.',
+                    'error_code': 'INSUFFICIENT_DISK_SPACE'
+                }
+            if source_size_mb > 500:
+                logger.warning(f"Large database snapshot: {source_size_mb:.0f} MB. Free disk space: {free_mb:.0f} MB")
+        except Exception as disk_check_error:
+            logger.debug(f"Could not check disk space: {disk_check_error}")
+
         # Generate snapshot name
         if session_only:
             # Auto-generate session name
@@ -618,8 +729,16 @@ def save_snapshot_with_dialog_choice(
         db_filename = f"{sanitized_name}.db"
         db_path = get_snapshot_db_path(sanitized_name)
 
-        # Copy the main database to snapshot location
-        shutil.copy2(source_db, db_path)
+        # Copy main DB using SQLite backup API so WAL data is included.
+        # File-level copy can miss recent writes that are still in -wal.
+        with sqlite3.connect(source_db) as source_conn:
+            try:
+                source_conn.execute('PRAGMA wal_checkpoint(PASSIVE)')
+            except sqlite3.Error:
+                # Best-effort checkpoint; backup() still provides a consistent copy.
+                pass
+            with sqlite3.connect(db_path) as target_conn:
+                source_conn.backup(target_conn)
 
         # Add/update metadata table in the snapshot
         with get_snapshot_connection(db_path) as conn:
@@ -701,6 +820,8 @@ def save_snapshot_with_dialog_choice(
         # Create uploads directory for this snapshot (but don't copy files to save space)
         uploads_dir = get_snapshot_uploads_dir(db_path)
         os.makedirs(uploads_dir, exist_ok=True)
+
+        invalidate_snapshot_list_cache()
 
         action_type = 'session' if session_only else 'persistent'
         logger.info(f"✓ Created {action_type} snapshot: {final_name} (category: {section})")
@@ -827,9 +948,10 @@ def delete_snapshot(snapshot_file: str) -> Dict[str, Any]:
         if os.path.exists(parent_dir) and not os.listdir(parent_dir):
             os.rmdir(parent_dir)
         
+        invalidate_snapshot_list_cache()
         logger.info(f"Deleted snapshot: {snapshot_file}")
         return {'success': True, 'deleted': snapshot_file}
-        
+
     except Exception as e:
         logger.error(f"Error deleting snapshot {snapshot_file}: {e}")
         return {'error': str(e)}
@@ -901,6 +1023,7 @@ def rename_snapshot(old_name: str, new_name: str) -> Dict[str, Any]:
             if updated:
                 set_active_catalogs(active['active_historical'], active['active_new'])
         
+        invalidate_snapshot_list_cache()
         logger.info(f"Renamed snapshot {old_name} to {new_filename}")
         return {
             'success': True,
@@ -908,7 +1031,7 @@ def rename_snapshot(old_name: str, new_name: str) -> Dict[str, Any]:
             'new_name': new_filename,
             'display_name': new_name
         }
-        
+
     except Exception as e:
         logger.error(f"Error renaming snapshot: {e}")
         return {'error': str(e)}
@@ -949,34 +1072,117 @@ def merge_snapshots(snapshot_files: List[str], new_name: str,
         
         with get_snapshot_connection(new_db_path) as new_conn:
             new_cursor = new_conn.cursor()
-            
+
             for snapshot_file in snapshot_files:
                 if not snapshot_file.endswith('.db'):
                     snapshot_file = f"{snapshot_file}.db"
-                    
+
                 source_path = os.path.join(CATALOGS_DIR, snapshot_file)
-                
+
                 if not os.path.exists(source_path):
                     logger.warning(f"Snapshot not found during merge: {snapshot_file}")
                     continue
-                
-                with get_snapshot_connection(source_path) as source_conn:
-                    source_cursor = source_conn.cursor()
-                    
-                    # Copy products
-                    source_cursor.execute('SELECT * FROM products')
-                    products = source_cursor.fetchall()
-                    
-                    for product in products:
-                        # Copy image file if exists
-                        old_image_path = product['image_path']
-                        new_image_path = old_image_path
-                        
-                        if old_image_path and os.path.exists(old_image_path):
+
+                # PERFORMANCE: Use ATTACH + bulk INSERT...SELECT to avoid N+1 queries
+                # For 50k products this reduces 200k+ queries to ~4 bulk operations
+                attach_alias = 'source_snap'
+                new_cursor.execute(f"ATTACH DATABASE ? AS {attach_alias}", (source_path,))
+
+                try:
+                    # Get current max product ID in target (for ID offset mapping)
+                    new_cursor.execute('SELECT COALESCE(MAX(id), 0) FROM products')
+                    id_offset = new_cursor.fetchone()[0]
+
+                    # Bulk copy products (image paths copied as-is; file copy done after)
+                    new_cursor.execute(f'''
+                        INSERT INTO products (image_path, category, product_name, sku, is_historical, metadata)
+                        SELECT image_path, category, product_name, sku, ?, metadata
+                        FROM {attach_alias}.products
+                    ''', (is_historical,))
+                    snapshot_product_count = new_cursor.rowcount
+
+                    # Build old_id -> new_id mapping using the known offset
+                    # New IDs are (id_offset + 1) through (id_offset + snapshot_product_count)
+                    # We need to map source IDs to new IDs; source products are inserted in rowid order
+                    new_cursor.execute(f'''
+                        SELECT id FROM {attach_alias}.products ORDER BY id ASC
+                    ''')
+                    source_ids = [row[0] for row in new_cursor.fetchall()]
+
+                    # Map old source IDs to new sequential IDs
+                    id_map = {}
+                    for seq, old_id in enumerate(source_ids, start=id_offset + 1):
+                        id_map[old_id] = seq
+
+                    # Bulk copy features using ID mapping (batch with executemany)
+                    new_cursor.execute(f'''
+                        SELECT product_id, color_features, shape_features, texture_features,
+                               embedding_type, embedding_version
+                        FROM {attach_alias}.features
+                    ''')
+                    features_batch = []
+                    while True:
+                        rows = new_cursor.fetchmany(1000)
+                        if not rows:
+                            break
+                        for row in rows:
+                            new_pid = id_map.get(row[0])
+                            if new_pid:
+                                features_batch.append((new_pid, row[1], row[2], row[3], row[4], row[5]))
+                        if features_batch:
+                            new_cursor.executemany('''
+                                INSERT INTO features
+                                (product_id, color_features, shape_features, texture_features,
+                                 embedding_type, embedding_version)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            ''', features_batch)
+                            features_batch = []
+
+                    # Bulk copy price history
+                    new_cursor.execute(f'''
+                        SELECT product_id, date, price, currency
+                        FROM {attach_alias}.price_history
+                    ''')
+                    price_batch = []
+                    for row in new_cursor.fetchall():
+                        new_pid = id_map.get(row[0])
+                        if new_pid:
+                            price_batch.append((new_pid, row[1], row[2], row[3]))
+                    if price_batch:
+                        new_cursor.executemany('''
+                            INSERT INTO price_history (product_id, date, price, currency)
+                            VALUES (?, ?, ?, ?)
+                        ''', price_batch)
+
+                    # Bulk copy performance history
+                    new_cursor.execute(f'''
+                        SELECT product_id, date, sales, views, conversion_rate, revenue
+                        FROM {attach_alias}.performance_history
+                    ''')
+                    perf_batch = []
+                    for row in new_cursor.fetchall():
+                        new_pid = id_map.get(row[0])
+                        if new_pid:
+                            perf_batch.append((new_pid, row[1], row[2], row[3], row[4], row[5]))
+                    if perf_batch:
+                        new_cursor.executemany('''
+                            INSERT INTO performance_history
+                            (product_id, date, sales, views, conversion_rate, revenue)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', perf_batch)
+
+                    # Copy image files (still need file-by-file for dedup)
+                    new_cursor.execute(f'''
+                        SELECT id, image_path FROM {attach_alias}.products
+                        WHERE image_path IS NOT NULL
+                    ''')
+                    for row in new_cursor.fetchall():
+                        old_image_path = row[1]
+                        new_pid = id_map.get(row[0])
+                        if old_image_path and os.path.exists(old_image_path) and new_pid:
                             filename = os.path.basename(old_image_path)
                             new_image_path = os.path.join(new_uploads_dir, filename)
-                            
-                            # Handle duplicate filenames
+
                             counter = 1
                             while os.path.exists(new_image_path):
                                 name, ext = os.path.splitext(filename)
@@ -984,77 +1190,20 @@ def merge_snapshots(snapshot_files: List[str], new_name: str,
                                     new_uploads_dir, f"{name}_{counter}{ext}"
                                 )
                                 counter += 1
-                            
+
                             shutil.copy2(old_image_path, new_image_path)
-                        
-                        # Insert product
-                        new_cursor.execute('''
-                            INSERT INTO products 
-                            (image_path, category, product_name, sku, is_historical, metadata)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (
-                            new_image_path,
-                            product['category'],
-                            product['product_name'],
-                            product['sku'],
-                            is_historical,
-                            product['metadata']
-                        ))
-                        
-                        new_product_id = new_cursor.lastrowid
-                        old_product_id = product['id']
-                        
-                        # Copy features
-                        source_cursor.execute(
-                            'SELECT * FROM features WHERE product_id = ?',
-                            (old_product_id,)
-                        )
-                        features = source_cursor.fetchone()
-                        
-                        if features:
-                            new_cursor.execute('''
-                                INSERT INTO features 
-                                (product_id, color_features, shape_features, texture_features,
-                                 embedding_type, embedding_version)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            ''', (
-                                new_product_id,
-                                features['color_features'],
-                                features['shape_features'],
-                                features['texture_features'],
-                                features['embedding_type'],
-                                features['embedding_version']
-                            ))
-                        
-                        # Copy price history
-                        source_cursor.execute(
-                            'SELECT * FROM price_history WHERE product_id = ?',
-                            (old_product_id,)
-                        )
-                        for price in source_cursor.fetchall():
-                            new_cursor.execute('''
-                                INSERT INTO price_history 
-                                (product_id, date, price, currency)
-                                VALUES (?, ?, ?, ?)
-                            ''', (new_product_id, price['date'], price['price'], price['currency']))
-                        
-                        # Copy performance history
-                        source_cursor.execute(
-                            'SELECT * FROM performance_history WHERE product_id = ?',
-                            (old_product_id,)
-                        )
-                        for perf in source_cursor.fetchall():
-                            new_cursor.execute('''
-                                INSERT INTO performance_history 
-                                (product_id, date, sales, views, conversion_rate, revenue)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            ''', (
-                                new_product_id, perf['date'], perf['sales'],
-                                perf['views'], perf['conversion_rate'], perf['revenue']
-                            ))
-                        
-                        total_products += 1
-            
+
+                            # Update the image_path in the new DB
+                            new_cursor.execute(
+                                'UPDATE products SET image_path = ? WHERE id = ?',
+                                (new_image_path, new_pid)
+                            )
+
+                    total_products += snapshot_product_count
+
+                finally:
+                    new_cursor.execute(f"DETACH DATABASE {attach_alias}")
+
             # Update product count in metadata
             new_cursor.execute('''
                 UPDATE snapshot_metadata SET product_count = ?
@@ -1183,14 +1332,15 @@ def import_snapshot(zip_path: str) -> Dict[str, Any]:
         # Get info about imported snapshot
         info = get_snapshot_info(db_filename)
         
+        invalidate_snapshot_list_cache()
         logger.info(f"Imported snapshot from {zip_path} as {db_filename}")
-        
+
         return {
             'success': True,
             'snapshot_file': db_filename,
             'info': info
         }
-        
+
     except Exception as e:
         logger.error(f"Error importing snapshot: {e}")
         return {'error': str(e)}
@@ -1675,8 +1825,16 @@ def save_main_db_as_snapshot(name: str, description: str = None,
         if os.path.exists(db_path):
             return {'error': f'Snapshot "{sanitized_name}" already exists'}
         
-        # Copy the main database
-        shutil.copy2(DEFAULT_DB_PATH, db_path)
+        # Copy main DB using SQLite backup API so WAL data is included.
+        # File-level copy can miss recent writes that are still in -wal.
+        with sqlite3.connect(DEFAULT_DB_PATH) as source_conn:
+            try:
+                source_conn.execute('PRAGMA wal_checkpoint(PASSIVE)')
+            except sqlite3.Error:
+                # Best-effort checkpoint; backup() still provides a consistent copy.
+                pass
+            with sqlite3.connect(db_path) as target_conn:
+                source_conn.backup(target_conn)
         
         # Add/update metadata table
         with get_snapshot_connection(db_path) as conn:
@@ -1840,6 +1998,8 @@ def save_main_db_as_snapshot(name: str, description: str = None,
         if session_only:
             logger.debug(f"[SNAPSHOT-SAVE]   - Expires: 1 hour from now (session snapshot)")
 
+        invalidate_snapshot_list_cache()
+
         return {
             'success': True,
             'snapshot_file': db_filename,
@@ -1872,24 +2032,62 @@ def load_snapshot_to_main_db(snapshot_file: str) -> Dict[str, Any]:
         
         if not os.path.exists(snapshot_path):
             return {'error': f'Snapshot not found: {snapshot_file}'}
-        
+
+        # DISK SPACE CHECK: Ensure enough space to replace main DB
+        try:
+            snapshot_size_mb = round(os.path.getsize(snapshot_path) / (1024 * 1024), 1)
+            disk_usage = shutil.disk_usage(os.path.dirname(DEFAULT_DB_PATH))
+            free_mb = round(disk_usage.free / (1024 * 1024), 1)
+            required_mb = snapshot_size_mb * 2  # backup + new copy
+            if free_mb < required_mb:
+                return {
+                    'error': f'Insufficient disk space to load snapshot. Need ~{required_mb:.0f} MB free, only {free_mb:.0f} MB available.',
+                    'error_code': 'INSUFFICIENT_DISK_SPACE'
+                }
+        except Exception as disk_check_error:
+            logger.debug(f"Could not check disk space before snapshot load: {disk_check_error}")
+
         # Get snapshot info before loading
         info = get_snapshot_info(snapshot_file)
-        
-        # Backup current main db (optional safety measure)
-        if os.path.exists(DEFAULT_DB_PATH):
-            backup_path = DEFAULT_DB_PATH + '.backup'
-            shutil.copy2(DEFAULT_DB_PATH, backup_path)
-        
-        # Copy snapshot to main database
-        shutil.copy2(snapshot_path, DEFAULT_DB_PATH)
 
-        # CRITICAL: Close all database connections after replacing the database file
-        # This prevents "database disk image is malformed" errors when the connection pool
-        # holds stale connections to the old database file
+        # Safety guard: avoid accidentally promoting internal/debug snapshots to active catalog.
+        if _is_internal_snapshot(snapshot_file, info) and not _allow_internal_snapshot_load():
+            return {
+                'error': f'Loading internal/debug snapshots is disabled: {snapshot_file}',
+                'error_code': 'INTERNAL_SNAPSHOT_BLOCKED'
+            }
+        
+        # CRITICAL: Close all pooled DB connections before replacing main DB.
+        # This avoids stale handles and WAL sidecar inconsistencies.
         from database import close_all_db_connections
         close_all_db_connections()
-        logger.info("Closed all database connections after snapshot load")
+        logger.info("Closed all database connections before snapshot load")
+
+        # Backup current main DB with SQLite backup API (WAL-safe).
+        if os.path.exists(DEFAULT_DB_PATH):
+            backup_path = DEFAULT_DB_PATH + '.backup'
+            try:
+                if os.path.exists(backup_path):
+                    os.remove(backup_path)
+                with sqlite3.connect(DEFAULT_DB_PATH) as source_conn:
+                    with sqlite3.connect(backup_path) as target_conn:
+                        source_conn.backup(target_conn)
+            except Exception as backup_error:
+                logger.warning(f"Could not create main DB backup before snapshot load: {backup_error}")
+
+        # Remove stale SQLite sidecar files so old WAL state cannot override loaded data.
+        for suffix in ('-wal', '-shm'):
+            sidecar_path = DEFAULT_DB_PATH + suffix
+            if os.path.exists(sidecar_path):
+                try:
+                    os.remove(sidecar_path)
+                except Exception as sidecar_error:
+                    logger.debug(f"Could not remove stale sidecar file {sidecar_path}: {sidecar_error}")
+
+        # Restore snapshot into main database using SQLite backup API (WAL-safe).
+        with sqlite3.connect(snapshot_path) as source_conn:
+            with sqlite3.connect(DEFAULT_DB_PATH) as target_conn:
+                source_conn.backup(target_conn)
 
         # NOTE: Image copying/management disabled
         # All snapshots share the same backend/uploads/ folder to save space.
@@ -1908,8 +2106,9 @@ def load_snapshot_to_main_db(snapshot_file: str) -> Dict[str, Any]:
         with open(ACTIVE_CATALOGS_FILE, 'w') as f:
             json.dump(config, f, indent=2)
         
+        invalidate_snapshot_list_cache()
         logger.info(f"Loaded snapshot {snapshot_file} to main database")
-        
+
         return {
             'success': True,
             'snapshot_file': snapshot_file,

@@ -14,7 +14,13 @@
         }
 
         // Open Catalog Manager - opens in child window (webview) or navigates (browser)
+        // Double-click guard: prevents opening multiple windows from rapid clicks
+        let _catalogManagerOpening = false;
         function openCatalogManager() {
+            if (_catalogManagerOpening) return false;
+            _catalogManagerOpening = true;
+            setTimeout(() => { _catalogManagerOpening = false; }, 1000);
+
             console.log('[NAV] isWebview:', isWebview());
             if (isWebview()) {
                 console.log('[NAV] Opening Catalog Manager in child window...');
@@ -23,6 +29,7 @@
                     return false; // Prevent any default behavior
                 } catch (e) {
                     console.error('[NAV] Error opening catalog manager:', e);
+                    _catalogManagerOpening = false;
                 }
             } else {
                 console.log('[NAV] Webview not available, falling back to browser navigation');
@@ -33,7 +40,13 @@
         }
 
         // Open CSV Builder - opens in child window (webview) or navigates (browser)
+        // Double-click guard: prevents opening multiple windows from rapid clicks
+        let _csvBuilderOpening = false;
         function openCsvBuilder(section = 'historical', windowId = null) {
+            if (_csvBuilderOpening) return;
+            _csvBuilderOpening = true;
+            setTimeout(() => { _csvBuilderOpening = false; }, 1000);
+
             if (isWebview()) {
                 const mode = window.historicalMode || 'visual'; // Get current mode from app.js
                 console.log('[NAV] Opening CSV Builder in child window for', section, 'mode:', mode, 'windowId:', windowId);
@@ -234,11 +247,11 @@
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                     <div id="activeCatalogInfo" style="display: flex; align-items: center; gap: 8px;">
                         <strong>ACTIVE CATALOG:</strong> <span id="activeCatalogSummary">Loading...</span>
-                        <button class="help-btn" onclick="toggleHelp('catalogInfoHelp')">?</button>
+                        <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('catalogInfoHelp')">?</button>
                     </div>
                     <div style="display: flex; gap: 10px;">
                         <button class="btn" onclick="openCatalogManager(); return false;" data-tooltip="Open Catalog Manager to change active snapshots"><i data-lucide="folder-open" style="width: 16px; height: 16px; vertical-align: middle;"></i> CHANGE CATALOG</button>
-                        <button class="btn" onclick="refreshCatalogInfo(); return false;" data-tooltip="Refresh catalog information"><i data-lucide="refresh-cw" style="width: 16px; height: 16px; vertical-align: middle;"></i></button>
+                        <button class="btn" onclick="refreshCatalogInfo(); return false;" data-tooltip="Refresh catalog information" aria-label="Refresh catalog information"><i data-lucide="refresh-cw" style="width: 16px; height: 16px; vertical-align: middle;"></i></button>
                     </div>
                 </div>
                 <div class="help-text" id="catalogInfoHelp" style="display: none; margin-top: 15px;">
@@ -282,7 +295,7 @@
                         <button class="mode-option" onclick="setMode('historical', 'metadata')" data-tooltip="CSV only - Metadata matching (no images needed)"><i data-lucide="file-text" style="width: 14px; height: 14px; vertical-align: middle;"></i> METADATA</button>
                         <button class="mode-option" onclick="setMode('historical', 'hybrid')" data-tooltip="Images + CSV - Combined matching"><i data-lucide="git-merge" style="width: 14px; height: 14px; vertical-align: middle;"></i> HYBRID</button>
                     </div>
-                    <button class="help-btn" onclick="toggleHelp('modeHelp1')">?</button>
+                    <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('modeHelp1')">?</button>
                     <button
                         type="button"
                         class="section-collapse-toggle"
@@ -335,7 +348,7 @@
                     <div class="info folder-tip">
                         <div class="info-header">
                             <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
-                            <button class="help-btn" onclick="toggleHelp('uploadHelp1')">?</button>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('uploadHelp1')">?</button>
                         </div>
                         <div class="help-text" id="uploadHelp1" style="display: none; margin-top: 15px;">
                             <p><strong>HOW TO ORGANIZE YOUR FOLDERS:</strong></p>
@@ -361,7 +374,7 @@
                     <div class="csv-box advanced" id="historicalCsvBox" style="display: none;">
                         <div class="csv-header">
                             <label>ADVANCED MODE: ADD PRODUCT DETAILS</label>
-                            <button class="help-btn" onclick="toggleHelp('advancedHelp1')">?</button>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('advancedHelp1')">?</button>
                         </div>
                         <div class="help-text" id="advancedHelp1" style="display: none; margin-bottom: 12px;">
                             <p><strong>ADVANCED MODE FEATURES:</strong></p>
@@ -371,13 +384,17 @@
                             <p><strong>Comprehensive Filtering:</strong> Filter and sort results by any metadata column. Dynamic filters appear based on your CSV columns.</p>
                             <p><strong>Detailed Reports:</strong> Export comprehensive CSV reports with all match data and metadata for further analysis.</p>
                         </div>
-                        <div class="csv-info-box">
+                        <div class="csv-info-compact">
+                            <span>Upload a CSV with product details for metadata matching</span>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('csvInfoHelp1')" data-tooltip="Learn about CSV format and supported columns">?</button>
+                        </div>
+                        <div class="help-text" id="csvInfoHelp1" style="display: none; margin-bottom: 8px;">
                             <p><strong>CSV enables metadata matching. Include:</strong></p>
                             <p>• filename (required - links CSV rows to images)</p>
                             <p>• Core fields: category, sku, name, price (all optional)</p>
                             <p>• Custom metadata: brand, size, color, type, description - add ANY columns you need!</p>
                             <p>• Columns auto-detected and available for weighted matching</p>
-                            <p style="margin-top: 10px;"><strong>Note:</strong> Images are optional in Metadata Mode. Upload images for visual matching, or skip for metadata-only analysis.</p>
+                            <p style="margin-top: 6px;"><strong>Note:</strong> Images are optional in Metadata Mode. Upload images for visual matching, or skip for metadata-only analysis.</p>
                         </div>
                         <div class="csv-actions">
                             <div class="file-input-wrapper">
@@ -414,7 +431,7 @@
                         <button class="mode-option" onclick="setMode('new', 'metadata')" data-tooltip="CSV only - Metadata matching (no images needed)"><i data-lucide="file-text" style="width: 14px; height: 14px; vertical-align: middle;"></i> METADATA</button>
                         <button class="mode-option" onclick="setMode('new', 'hybrid')" data-tooltip="Images + CSV - Combined matching"><i data-lucide="git-merge" style="width: 14px; height: 14px; vertical-align: middle;"></i> HYBRID</button>
                     </div>
-                    <button class="help-btn" onclick="toggleHelp('modeHelp2')">?</button>
+                    <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('modeHelp2')">?</button>
                     <button
                         type="button"
                         class="section-collapse-toggle"
@@ -466,7 +483,7 @@
                     <div class="info folder-tip">
                         <div class="info-header">
                             <strong>TIP:</strong> Put all category folders (placemats, dinnerware, etc.) inside ONE parent folder, then upload that parent folder
-                            <button class="help-btn" onclick="toggleHelp('uploadHelp2')">?</button>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('uploadHelp2')">?</button>
                         </div>
                         <div class="help-text" id="uploadHelp2" style="display: none; margin-top: 15px;">
                             <p><strong>HOW TO ORGANIZE YOUR FOLDERS:</strong></p>
@@ -492,7 +509,7 @@
                     <div class="csv-box advanced" id="newCsvBox" style="display: none;">
                         <div class="csv-header">
                             <label>ADVANCED MODE: ADD PRODUCT DETAILS</label>
-                            <button class="help-btn" onclick="toggleHelp('advancedHelp2')">?</button>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('advancedHelp2')">?</button>
                         </div>
                         <div class="help-text" id="advancedHelp2" style="display: none; margin-bottom: 12px;">
                             <p><strong>ADVANCED MODE FEATURES:</strong></p>
@@ -502,13 +519,17 @@
                             <p><strong>Comprehensive Filtering:</strong> Filter and sort results by any metadata column. Dynamic filters appear based on your CSV columns.</p>
                             <p><strong>Detailed Reports:</strong> Export comprehensive CSV reports with all match data and metadata for further analysis.</p>
                         </div>
-                        <div class="csv-info-box">
+                        <div class="csv-info-compact">
+                            <span>Upload a CSV with product details for metadata matching</span>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('csvInfoHelp2')" data-tooltip="Learn about CSV format and supported columns">?</button>
+                        </div>
+                        <div class="help-text" id="csvInfoHelp2" style="display: none; margin-bottom: 8px;">
                             <p><strong>CSV enables metadata matching. Include:</strong></p>
                             <p>• filename (required - links CSV rows to images)</p>
                             <p>• Core fields: category, sku, name, price (all optional)</p>
                             <p>• Custom metadata: brand, size, color, type, description - add ANY columns you need!</p>
                             <p>• Columns auto-detected and available for weighted matching</p>
-                            <p style="margin-top: 10px;"><strong>Note:</strong> Images are optional in Metadata Mode. Upload images for visual matching, or skip for metadata-only analysis.</p>
+                            <p style="margin-top: 6px;"><strong>Note:</strong> Images are optional in Metadata Mode. Upload images for visual matching, or skip for metadata-only analysis.</p>
                         </div>
                         <div class="csv-actions">
                             <div class="file-input-wrapper">
@@ -571,7 +592,7 @@
                     <!-- Visual Matching - CLIP embeddings, no weight tuning needed -->
                     <div id="visualWeightsSection">
                         <h4>VISUAL SIMILARITY (CLIP AI)
-                            <button class="help-btn" onclick="toggleHelp('clipHelp')">?</button>
+                            <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('clipHelp')">?</button>
                         </h4>
                         <div class="help-text" id="clipHelp" style="display: none; margin-bottom: 12px;">
                             <p><strong>WHAT IS CLIP?</strong></p>
@@ -692,7 +713,7 @@
             <section class="section" id="resultsSection" style="display: none;">
                 <div class="section-header">
                     <h2><i data-lucide="bar-chart-3" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;"></i>RESULTS</h2>
-                    <button class="help-btn" onclick="toggleHelp('resultsHelp')">?</button>
+                    <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('resultsHelp')">?</button>
                     <div class="actions">
                         <button class="btn" id="exportCsvBtn" data-tooltip="Export match results to CSV file with all data"><i data-lucide="file-down" style="width: 16px; height: 16px; vertical-align: middle;"></i> CSV</button>
                         <button class="btn" id="exportWithImagesBtn" data-tooltip="Export results with images in a ZIP file"><i data-lucide="package" style="width: 16px; height: 16px; vertical-align: middle;"></i> EXPORT+IMG</button>
@@ -792,7 +813,7 @@
                 <div class="format-box">
                     <div class="format-header">
                         <h3>1. BASIC FORMAT</h3>
-                        <button class="help-btn" onclick="toggleHelp('help1')">?</button>
+                        <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('help1')">?</button>
                     </div>
                     <div class="help-text" id="help1" style="display: none;">
                         <p><strong>HOW TO FORMAT:</strong></p>
@@ -810,7 +831,7 @@ product2.jpg,dinnerware,DW-002,White Plate</pre>
                 <div class="format-box">
                     <div class="format-header">
                         <h3>2. WITH CURRENT PRICE</h3>
-                        <button class="help-btn" onclick="toggleHelp('help2')">?</button>
+                        <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('help2')">?</button>
                     </div>
                     <div class="help-text" id="help2" style="display: none;">
                         <p><strong>HOW TO FORMAT:</strong></p>
@@ -827,7 +848,7 @@ product2.jpg,dinnerware,DW-002,White Plate,45.00</pre>
                 <div class="format-box">
                     <div class="format-header">
                         <h3>3. WITH CUSTOM METADATA</h3>
-                        <button class="help-btn" onclick="toggleHelp('help3')">?</button>
+                        <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('help3')">?</button>
                     </div>
                     <div class="help-text" id="help3" style="display: none;">
                         <p><strong>HOW TO FORMAT:</strong></p>
@@ -844,7 +865,7 @@ product2.jpg,dinnerware,DW-002,White Plate,45.00,TableCraft,White,Ceramic</pre>
                 <div class="format-box">
                     <div class="format-header">
                         <h3>4. FULL EXAMPLE</h3>
-                        <button class="help-btn" onclick="toggleHelp('help4')">?</button>
+                        <button class="help-btn" aria-label="Toggle help" onclick="toggleHelp('help4')">?</button>
                     </div>
                     <div class="help-text" id="help4" style="display: none;">
                         <p><strong>COMPREHENSIVE EXAMPLE:</strong></p>
@@ -1030,7 +1051,10 @@ glass-set.jpg,glassware,GW-003,Crystal Wine Glass,24.99,ClearView,250ml,Clear,Le
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.core.js"></script>
+    <script src="/static/app.results.js"></script>
+    <script src="/static/app.catalog.js"></script>
+    <script src="/static/app.mobile.js"></script>
 
     <!-- Initialize Lucide Icons using IconManager -->
     <script>

@@ -351,6 +351,19 @@ header .btn-link[data-tooltip]:hover::before {
     font-weight: bold;
 }
 
+.csv-info-compact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: #666;
+}
+
+.csv-info-compact .help-btn {
+    flex-shrink: 0;
+}
+
 .csv-actions {
     display: flex;
     gap: 10px;

@@ -229,11 +229,17 @@ class WebViewAPI:
             target_section: Which section to load CSV into ('historical' or 'new')
             staging_window_id: Optional window ID for fetching staged file data
         Returns:
-            Window ID for tracking
+            Window ID for tracking, or None if one is already open
         """
         global child_windows
 
         try:
+            # Guard: prevent duplicate CSV Builder windows
+            for wid, win in list(child_windows.items()):
+                if wid.startswith('csv_builder_'):
+                    print(f"[WINDOW] CSV Builder already open: {wid}")
+                    return wid
+
             port = APP_PORT
             window_id = staging_window_id or f"csv_builder_{uuid.uuid4().hex[:8]}"
 
@@ -251,6 +257,12 @@ class WebViewAPI:
                 js_api=ChildWindowAPI(window_id, 'csv_builder'),
             )
 
+            # Clean up tracking when window is closed via X button
+            def on_close(wid=window_id):
+                child_windows.pop(wid, None)
+                print(f"[WINDOW] CSV Builder closed: {wid}")
+            child_window.events.closed += on_close
+
             child_windows[window_id] = child_window
             print(f"[WINDOW] Opened CSV Builder: {window_id}")
             return window_id
@@ -263,11 +275,17 @@ class WebViewAPI:
         """
         Open Catalog Manager in a new child window.
         Returns:
-            Window ID for tracking
+            Window ID for tracking, or existing ID if one is already open
         """
         global child_windows
 
         try:
+            # Guard: prevent duplicate Catalog Manager windows
+            for wid, win in list(child_windows.items()):
+                if wid.startswith('catalog_manager_'):
+                    print(f"[WINDOW] Catalog Manager already open: {wid}")
+                    return wid
+
             port = APP_PORT
             window_id = f"catalog_manager_{uuid.uuid4().hex[:8]}"
 
@@ -283,6 +301,12 @@ class WebViewAPI:
                 text_select=True,
                 js_api=ChildWindowAPI(window_id, 'catalog_manager'),
             )
+
+            # Clean up tracking when window is closed via X button
+            def on_close(wid=window_id):
+                child_windows.pop(wid, None)
+                print(f"[WINDOW] Catalog Manager closed: {wid}")
+            child_window.events.closed += on_close
 
             child_windows[window_id] = child_window
             print(f"[WINDOW] Opened Catalog Manager: {window_id}")

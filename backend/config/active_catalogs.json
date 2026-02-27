@@ -2,7 +2,5 @@
   "active_historical": [
     "default-catalog.db"
   ],
-  "active_new": [],
-  "loaded_snapshot": "default-catalog.db",
-  "loaded_at": "2026-02-13T15:28:07.798747"
+  "active_new": []
 }

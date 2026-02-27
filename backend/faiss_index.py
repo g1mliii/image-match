@@ -26,6 +26,7 @@ import numpy as np
 from typing import List, Tuple, Optional, Dict
 import logging
 import threading
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class FAISSIndexManager:
         self.lock = threading.Lock()  # Thread safety for concurrent requests
         self.lazy_load = lazy_load
         self.cache_size = cache_size
-        self.access_order = []  # Track access order for LRU eviction
+        self._access_order = OrderedDict()  # Track access order for LRU eviction (O(1) ops, no duplicates)
         logger.info(f"FAISS Index Manager initialized (CPU mode, lazy_load={lazy_load}, cache_size={cache_size})")
     
     def _get_cache_key(self, category: Optional[str]) -> str:
@@ -91,18 +92,31 @@ class FAISSIndexManager:
             with self.lock:
                 # Ensure embeddings are float32 (FAISS requirement)
                 embeddings = embeddings.astype('float32')
-                
+
                 # Normalize embeddings for cosine similarity
                 # After normalization, inner product = cosine similarity
                 faiss.normalize_L2(embeddings)
-                
-                # Create FAISS index
-                # IndexFlatIP = brute force inner product (exact search, not approximate)
-                # For 10K-100K products, exact search is fast enough on CPU
-                # For 1M+ products, consider IndexIVFFlat or IndexHNSWFlat
+
                 dimension = embeddings.shape[1]
-                index = faiss.IndexFlatIP(dimension)
-                
+                n_vectors = embeddings.shape[0]
+
+                # PERFORMANCE: Auto-select index type based on catalog size
+                # - < 10,000: IndexFlatIP (exact brute force, fast enough)
+                # - >= 10,000: IndexIVFFlat (approximate, ~50x faster search)
+                IVF_THRESHOLD = 10000
+                if n_vectors >= IVF_THRESHOLD:
+                    # IVF index: partition vectors into clusters, only search nearby clusters
+                    # nlist = sqrt(n) is a good heuristic; nprobe controls accuracy/speed tradeoff
+                    nlist = max(int(np.sqrt(n_vectors)), 16)
+                    quantizer = faiss.IndexFlatIP(dimension)
+                    index = faiss.IndexIVFFlat(quantizer, dimension, nlist, faiss.METRIC_INNER_PRODUCT)
+                    index.train(embeddings)
+                    index.nprobe = max(nlist // 10, 4)  # Search ~10% of clusters for good recall
+                    logger.info(f"Built IVF index for {n_vectors} vectors (nlist={nlist}, nprobe={index.nprobe})")
+                else:
+                    # Exact brute force for smaller categories
+                    index = faiss.IndexFlatIP(dimension)
+
                 # Add embeddings to index
                 index.add(embeddings)
                 
@@ -111,14 +125,13 @@ class FAISSIndexManager:
                 self.indexes[cache_key] = index
                 self.product_ids[cache_key] = product_ids
                 
-                # Track access order for LRU eviction
-                if cache_key in self.access_order:
-                    self.access_order.remove(cache_key)
-                self.access_order.append(cache_key)
-                
+                # Track access order for LRU eviction (O(1) via OrderedDict)
+                self._access_order[cache_key] = True  # move_to_end implicitly by re-inserting
+                self._access_order.move_to_end(cache_key)
+
                 # MEMORY OPTIMIZATION: Evict least-recently-used indexes if cache is full
                 if self.lazy_load and len(self.indexes) > self.cache_size:
-                    lru_key = self.access_order.pop(0)  # Remove oldest
+                    lru_key, _ = self._access_order.popitem(last=False)  # Remove oldest
                     del self.indexes[lru_key]
                     del self.product_ids[lru_key]
                     logger.debug(f"Evicted LRU index for category '{lru_key}' (cache full: {len(self.indexes)}/{self.cache_size})")
@@ -155,10 +168,9 @@ class FAISSIndexManager:
                 logger.debug(f"FAISS index not available for category '{cache_key}'")
                 return None, None
             
-            # Track access for LRU eviction (lazy-load optimization)
-            if cache_key in self.access_order:
-                self.access_order.remove(cache_key)
-            self.access_order.append(cache_key)
+            # Track access for LRU eviction (O(1) via OrderedDict)
+            self._access_order[cache_key] = True
+            self._access_order.move_to_end(cache_key)
             
             index = self.indexes[cache_key]
             product_id_list = self.product_ids[cache_key]
@@ -201,6 +213,13 @@ class FAISSIndexManager:
         cache_key = self._get_cache_key(category)
         with self.lock:
             return cache_key in self.indexes
+
+    def get_index_size(self, category: Optional[str]) -> int:
+        """Get number of product vectors in a category index (0 if index missing)."""
+        cache_key = self._get_cache_key(category)
+        with self.lock:
+            product_id_list = self.product_ids.get(cache_key)
+            return len(product_id_list) if product_id_list is not None else 0
     
     def invalidate(self, category: Optional[str] = None) -> None:
         """
@@ -252,7 +271,7 @@ class FAISSIndexManager:
 
             self.indexes.clear()
             self.product_ids.clear()
-            self.access_order.clear()
+            self._access_order.clear()
 
             logger.info(f"✓ Cleared FAISS indexes ({num_indexes} indexes, {num_products} products freed from memory)")
 

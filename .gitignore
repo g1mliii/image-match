@@ -12,6 +12,12 @@ build/
 release/
 *.egg-info/
 
+# Local client packaging artifacts
+CatalogMatch_Client/
+CatalogMatch_Client_*/
+CatalogMatch_Client.zip
+CatalogMatch_Client_*.zip
+
 # Database
 *.db
 *.db-shm
@@ -115,3 +121,10 @@ sample-data/MODE2_TEST_EXPECTED_RESULTS.md
 CLAUDE.md
 tasks/
 FINAL_PACKAGING_PLAN.md
+backend/.app.lock
+backend/product_matching.db.backup
+backend/tmp_snapshot_block.txt
+backend/config/active_catalogs.json
+backend/product_matching.db.backup
+backend/.app.lock
+backend/product_matching.db.backup

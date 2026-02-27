@@ -53,7 +53,7 @@ function initCountdown() {
   if (!windowsCountdown || !macosCountdown) return;
 
   // Set launch date to February 31, 2026 at midnight
-  const launchDate = new Date('2026-02-31T00:00:00').getTime();
+  const launchDate = new Date('2026-04-31T00:00:00').getTime();
   
   function updateCountdown() {
     const now = new Date().getTime();

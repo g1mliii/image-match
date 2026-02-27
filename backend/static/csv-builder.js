@@ -3,6 +3,9 @@ const state = {
     currentStep: 1,
     products: [],
     importedData: [],
+    linkIndexes: null,
+    availableLinkFields: [],
+    linkFieldDisplayMap: {},
     linkedProducts: [],
     unmatchedImages: [],
     unmatchedData: [],
@@ -11,13 +14,19 @@ const state = {
     redoStack: [],
     autoSaveTimer: null,
     linkingStrategy: 'search_all_fields',
-    skuPattern: '[A-Z]+-\\d+'
+    skuPattern: '[A-Z]+-\\d+',
+    skuLinkField: '__auto__'
 };
 
 // MEMORY OPTIMIZATION: Limits to prevent unbounded state growth (200-500MB possible)
 const MAX_PRODUCTS = 50000;  // Maximum products in state
 const MAX_UNDO_STACK = 10;   // Maximum undo history items
 const MAX_REDO_STACK = 10;   // Maximum redo history items
+const MAX_LINK_INDEX_TOKEN_CANDIDATES = 400;
+const MAX_SEARCH_FALLBACK_SCAN = 10000;
+const CSV_PREVIEW_MAX_ROWS = 200;
+const CSV_TABLE_PAGE_SIZE = 200;
+let csvTableCurrentPage = 1;
 
 // Expose state to window for loadToApp function (defined in html)
 window.state = state;
@@ -213,9 +222,13 @@ function cleanupResources() {
     // Clear unmatched arrays to free memory
     state.unmatchedImages = [];
     state.unmatchedData = [];
+    state.availableLinkFields = [];
+    state.linkFieldDisplayMap = {};
+    state.skuLinkField = '__auto__';
 
     // Clear fuzzy index
     state.fuzzyIndex = {};
+    state.linkIndexes = null;
 }
 
 // Native folder selection helper for pywebview (same as app.js)
@@ -616,6 +629,7 @@ function parseImportedData(content, source) {
     const headers = rows[0].map(h => (h || '').toLowerCase().trim());
     const commonHeaders = ['filename', 'sku', 'name', 'price', 'category', 'product_name', 'product_id'];
     const hasHeaders = headers.some(h => commonHeaders.some(ch => h.includes(ch)));
+    const headerDisplayMap = {};
 
     // Track which standard fields were found in headers
     const foundFields = {
@@ -631,10 +645,20 @@ function parseImportedData(content, source) {
     if (hasHeaders) {
         headers.forEach(header => {
             const normalized = normalizeHeaderName(header);
+            if (normalized && !headerDisplayMap[normalized]) {
+                headerDisplayMap[normalized] = header;
+            }
             if (normalized in foundFields) {
                 foundFields[normalized] = true;
             }
         });
+    } else {
+        // Positional fallback headers
+        headerDisplayMap.filename = 'filename';
+        headerDisplayMap.category = 'category';
+        headerDisplayMap.sku = 'sku';
+        headerDisplayMap.name = 'name';
+        headerDisplayMap.price = 'price';
     }
 
     const dataRows = hasHeaders ? rows.slice(1) : rows;
@@ -717,9 +741,15 @@ function parseImportedData(content, source) {
         return obj;
     }).filter(obj => obj !== null);
 
+    state.linkFieldDisplayMap = headerDisplayMap;
+    updateAvailableLinkFields();
+    updateSkuLinkFieldSelector();
+    state.linkIndexes = null;
+
     // Build fuzzy index for faster fuzzy matching (after CSV import)
     if (state.importedData.length > 0) {
         buildFuzzyIndex();
+        buildLinkIndexes();
     }
 
     // Build status message
@@ -1115,10 +1145,19 @@ function processCompletedTemplate(content) {
     let hasPriceHistory = false;
     let hasPerformanceHistory = false;
 
+    // O(1) filename lookup for large imports.
+    const productByFilename = new Map();
+    for (let i = 0; i < state.products.length; i++) {
+        const product = state.products[i];
+        if (!product || !product.filename) continue;
+        const key = String(product.filename).toLowerCase();
+        if (!productByFilename.has(key)) {
+            productByFilename.set(key, product);
+        }
+    }
+
     importedProducts.forEach(imported => {
-        const product = state.products.find(p =>
-            p.filename.toLowerCase() === imported.filename.toLowerCase()
-        );
+        const product = productByFilename.get(String(imported.filename).toLowerCase());
 
         if (product) {
             // Update product with imported data
@@ -1258,10 +1297,79 @@ function toggleAdvancedLinking() {
     button.textContent = willShow ? 'HIDE ADVANCED LINKING' : 'SHOW ADVANCED LINKING';
 }
 
+const SKU_LINK_STRATEGIES = new Set([
+    'filename_equals_sku',
+    'filename_contains_sku',
+    'folder_equals_sku',
+    'sku_equals_filename'
+]);
+
+function getSkuFieldOptionLabel(fieldKey) {
+    if (!fieldKey) return '';
+    if (fieldKey === 'sku') return 'sku (standard)';
+    const displayName = state.linkFieldDisplayMap[fieldKey];
+    if (displayName && normalizeLookupValue(displayName) !== normalizeLookupValue(fieldKey)) {
+        return `${displayName} (${fieldKey})`;
+    }
+    return fieldKey;
+}
+
+function updateAvailableLinkFields() {
+    const fieldSet = new Set();
+    state.importedData.forEach((data) => {
+        if (!data || typeof data !== 'object') return;
+        Object.keys(data).forEach((key) => {
+            if (key && key.trim()) {
+                fieldSet.add(key);
+            }
+        });
+    });
+
+    // Keep deterministic ordering; keep SKU near top.
+    const fields = Array.from(fieldSet).sort((a, b) => a.localeCompare(b));
+    if (fields.includes('sku')) {
+        fields.splice(fields.indexOf('sku'), 1);
+        fields.unshift('sku');
+    }
+
+    state.availableLinkFields = fields;
+    if (state.skuLinkField !== '__auto__' && !state.availableLinkFields.includes(state.skuLinkField)) {
+        state.skuLinkField = '__auto__';
+    }
+}
+
+function updateSkuLinkFieldSelector() {
+    const select = document.getElementById('skuLinkFieldSelect');
+    if (!select) return;
+
+    const previousValue = state.skuLinkField || '__auto__';
+    const options = [`<option value="__auto__">Auto-detect (use SKU headers)</option>`];
+
+    state.availableLinkFields.forEach((fieldKey) => {
+        options.push(`<option value="${escapeHtml(fieldKey)}">${escapeHtml(getSkuFieldOptionLabel(fieldKey))}</option>`);
+    });
+
+    select.innerHTML = options.join('');
+    if (previousValue !== '__auto__' && state.availableLinkFields.includes(previousValue)) {
+        select.value = previousValue;
+        state.skuLinkField = previousValue;
+    } else {
+        select.value = '__auto__';
+        state.skuLinkField = '__auto__';
+    }
+}
+
+function handleSkuLinkFieldChange() {
+    const select = document.getElementById('skuLinkFieldSelect');
+    state.skuLinkField = select && select.value ? select.value : '__auto__';
+    state.linkIndexes = null;
+    previewLinking();
+}
+
 function previewLinking() {
     const strategy = document.querySelector('input[name="linkStrategy"]:checked').value;
     state.linkingStrategy = strategy;
-    
+
     // Show/hide pattern config
     const patternConfig = document.getElementById('patternConfig');
     if (strategy === 'filename_contains_sku') {
@@ -1269,6 +1377,17 @@ function previewLinking() {
         state.skuPattern = document.getElementById('skuPattern').value;
     } else {
         patternConfig.style.display = 'none';
+    }
+
+    // Show/hide SKU field selector for SKU-based strategies
+    const skuFieldConfig = document.getElementById('skuFieldConfig');
+    if (skuFieldConfig) {
+        if (SKU_LINK_STRATEGIES.has(strategy)) {
+            skuFieldConfig.style.display = 'block';
+            updateSkuLinkFieldSelector();
+        } else {
+            skuFieldConfig.style.display = 'none';
+        }
     }
     
     // Perform linking
@@ -1348,43 +1467,182 @@ function performLinking(strategy) {
     return { linked, unlinked, results };
 }
 
+const LINK_FILENAME_FIELDS = ['filename', 'product', 'image', 'image_name', 'file', 'photo', 'picture'];
+const LINK_PRIORITY_FIELDS = [
+    'sku', 'item', 'product', 'product_id', 'item_number',
+    'image', 'filename', 'file', 'photo', 'name', 'product_name'
+];
+
+function getActiveSkuFields() {
+    const fields = [];
+    if (state.skuLinkField && state.skuLinkField !== '__auto__') {
+        fields.push(state.skuLinkField);
+    }
+    if (!fields.includes('sku')) {
+        fields.push('sku');
+    }
+    return fields;
+}
+
+function normalizeLookupValue(value) {
+    if (value === undefined || value === null) return '';
+    return String(value).trim().toLowerCase();
+}
+
+function stripExtension(value) {
+    if (!value) return '';
+    return value.replace(/\.[^.]+$/, '');
+}
+
+function normalizeNameLookup(value) {
+    return normalizeLookupValue(value)
+        .replace(/[_-]/g, ' ')
+        .replace(/\s+/g, ' ');
+}
+
+function tokenizeLookupValue(value) {
+    if (!value) return [];
+    return value
+        .split(/[^a-z0-9]+/)
+        .map(token => token.trim())
+        .filter(token => token.length >= 3);
+}
+
+function setFirstMapValue(map, key, data) {
+    if (!key) return;
+    if (!map.has(key)) {
+        map.set(key, data);
+    }
+}
+
+function addTokenCandidate(tokenMap, token, dataIndex) {
+    if (!token) return;
+
+    let candidates = tokenMap.get(token);
+    if (!candidates) {
+        candidates = [];
+        tokenMap.set(token, candidates);
+    }
+
+    if (candidates.length >= MAX_LINK_INDEX_TOKEN_CANDIDATES) return;
+    if (candidates[candidates.length - 1] === dataIndex) return;
+    if (candidates.includes(dataIndex)) return;
+    candidates.push(dataIndex);
+}
+
+function buildLinkIndexes() {
+    const indexes = {
+        skuMap: new Map(),
+        skuNoExtMap: new Map(),
+        nameMap: new Map(),
+        filenameFieldMap: new Map(),
+        searchExactMap: new Map(),
+        searchTokenMap: new Map(),
+        sourceSize: state.importedData.length
+    };
+
+    state.importedData.forEach((data, dataIndex) => {
+        if (!data || typeof data !== 'object') return;
+
+        const skuFields = getActiveSkuFields();
+        const seenSkuValues = new Set();
+        for (const skuField of skuFields) {
+            const sku = normalizeLookupValue(data[skuField]);
+            if (!sku || seenSkuValues.has(sku)) continue;
+
+            seenSkuValues.add(sku);
+            const skuNoExt = stripExtension(sku);
+            setFirstMapValue(indexes.skuMap, sku, data);
+            setFirstMapValue(indexes.skuMap, skuNoExt, data);
+            setFirstMapValue(indexes.skuNoExtMap, skuNoExt, data);
+            setFirstMapValue(indexes.searchExactMap, sku, data);
+            setFirstMapValue(indexes.searchExactMap, skuNoExt, data);
+        }
+
+        const normalizedName = normalizeNameLookup(data.name);
+        if (normalizedName) {
+            const nameNoExt = stripExtension(normalizedName);
+            setFirstMapValue(indexes.nameMap, normalizedName, data);
+            setFirstMapValue(indexes.nameMap, nameNoExt, data);
+            setFirstMapValue(indexes.searchExactMap, normalizedName, data);
+            setFirstMapValue(indexes.searchExactMap, nameNoExt, data);
+        }
+
+        for (const field of LINK_FILENAME_FIELDS) {
+            const fieldValue = normalizeLookupValue(data[field]);
+            if (!fieldValue) continue;
+            setFirstMapValue(indexes.filenameFieldMap, fieldValue, data);
+            setFirstMapValue(indexes.filenameFieldMap, stripExtension(fieldValue), data);
+        }
+
+        for (const [fieldKey, rawValue] of Object.entries(data)) {
+            if (rawValue === undefined || rawValue === null || rawValue === '') continue;
+
+            const normalizedValue = normalizeLookupValue(rawValue);
+            if (!normalizedValue) continue;
+
+            const normalizedNoExt = stripExtension(normalizedValue);
+            setFirstMapValue(indexes.searchExactMap, normalizedValue, data);
+            setFirstMapValue(indexes.searchExactMap, normalizedNoExt, data);
+
+            // Build token index for high-cardinality fallback search.
+            const shouldTokenize = LINK_PRIORITY_FIELDS.includes(fieldKey) || normalizedValue.length <= 80;
+            if (shouldTokenize) {
+                const tokens = tokenizeLookupValue(normalizedNoExt);
+                tokens.forEach(token => addTokenCandidate(indexes.searchTokenMap, token, dataIndex));
+            }
+        }
+    });
+
+    state.linkIndexes = indexes;
+    console.log(
+        `✓ Built link indexes: sku=${indexes.skuMap.size}, name=${indexes.nameMap.size}, ` +
+        `filename=${indexes.filenameFieldMap.size}, search=${indexes.searchExactMap.size}`
+    );
+}
+
+function ensureLinkIndexes() {
+    if (!state.linkIndexes || state.linkIndexes.sourceSize !== state.importedData.length) {
+        buildLinkIndexes();
+    }
+    return state.linkIndexes;
+}
+
 function linkByFilenameEqualsSKU(product) {
     if (!product || !product.filename) return null;
 
-    // Get both versions of filename
-    const filenameWithExt = product.filename.trim().toLowerCase();
-    const filenameNoExt = product.filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
+    const indexes = ensureLinkIndexes();
+    const filenameWithExt = normalizeLookupValue(product.filename);
+    const filenameNoExt = stripExtension(filenameWithExt);
 
     if (!filenameNoExt) return null;
 
-    return state.importedData.find(data => {
-        if (!data || !data.sku) return false;
-        const dataSKU = String(data.sku).trim().toLowerCase();
-
-        // Try both with and without extension automatically
-        return dataSKU === filenameNoExt || dataSKU === filenameWithExt;
-    });
+    return (
+        indexes.skuMap.get(filenameNoExt) ||
+        indexes.skuMap.get(filenameWithExt) ||
+        indexes.skuNoExtMap.get(filenameNoExt) ||
+        indexes.skuNoExtMap.get(filenameWithExt) ||
+        null
+    );
 }
 
 function linkByFilenameContainsSKU(product) {
     if (!product || !product.filename) return null;
 
     try {
+        const indexes = ensureLinkIndexes();
         const pattern = new RegExp(state.skuPattern, 'i');
         const match = product.filename.match(pattern);
         if (match) {
-            const extractedSKU = match[0].trim().toLowerCase();
-            return state.importedData.find(data => {
-                if (!data || !data.sku) return false;
-
-                // Try matching SKU with and without extension
-                const dataSKU = String(data.sku).trim().toLowerCase();
-                const dataSKUNoExt = dataSKU.replace(/\.[^.]+$/, '').toLowerCase();
-
-                return dataSKU === extractedSKU ||
-                       dataSKUNoExt === extractedSKU ||
-                       dataSKU === extractedSKU.replace(/\.[^.]+$/, '');
-            });
+            const extractedSKU = normalizeLookupValue(match[0]);
+            const extractedNoExt = stripExtension(extractedSKU);
+            return (
+                indexes.skuMap.get(extractedSKU) ||
+                indexes.skuMap.get(extractedNoExt) ||
+                indexes.skuNoExtMap.get(extractedSKU) ||
+                indexes.skuNoExtMap.get(extractedNoExt) ||
+                null
+            );
         }
     } catch (e) {
         console.error('Invalid regex pattern:', e);
@@ -1396,22 +1654,19 @@ function linkByFilenameContainsSKU(product) {
 function linkByFolderEqualsSKU(product) {
     if (!product || !product.category) return null;
 
-    const folderName = String(product.category).trim().toLowerCase();
-    const folderNameNoExt = folderName.replace(/\.[^.]+$/, '').toLowerCase();
+    const indexes = ensureLinkIndexes();
+    const folderName = normalizeLookupValue(product.category);
+    const folderNameNoExt = stripExtension(folderName);
 
     if (!folderName) return null;
 
-    return state.importedData.find(data => {
-        if (!data || !data.sku) return false;
-        const dataSKU = String(data.sku).trim().toLowerCase();
-        const dataSKUNoExt = dataSKU.replace(/\.[^.]+$/, '').toLowerCase();
-
-        // Try all combinations automatically
-        return dataSKU === folderName ||
-               dataSKU === folderNameNoExt ||
-               dataSKUNoExt === folderName ||
-               dataSKUNoExt === folderNameNoExt;
-    });
+    return (
+        indexes.skuMap.get(folderName) ||
+        indexes.skuMap.get(folderNameNoExt) ||
+        indexes.skuNoExtMap.get(folderName) ||
+        indexes.skuNoExtMap.get(folderNameNoExt) ||
+        null
+    );
 }
 
 function linkByFuzzyName(product) {
@@ -1469,26 +1724,7 @@ function normalizeForFuzzyMatch(str) {
  * Automatically handles with/without extensions
  */
 function linkBySKUEqualsFilename(product) {
-    if (!product || !product.filename) return null;
-
-    // Get both versions of the filename
-    const filenameWithExt = product.filename.trim().toLowerCase();
-    const filenameNoExt = product.filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
-
-    if (!filenameNoExt) return null;
-
-    // Find metadata where SKU matches the image filename (try both versions)
-    return state.importedData.find(data => {
-        if (!data || !data.sku) return false;
-        const dataSKU = String(data.sku).trim().toLowerCase();
-        const dataSKUNoExt = dataSKU.replace(/\.[^.]+$/, '').toLowerCase();
-
-        // Try all combinations - be smart about extensions
-        return dataSKU === filenameNoExt ||
-               dataSKU === filenameWithExt ||
-               dataSKUNoExt === filenameNoExt ||
-               dataSKUNoExt === filenameWithExt;
-    });
+    return linkByFilenameEqualsSKU(product);
 }
 
 /**
@@ -1499,35 +1735,15 @@ function linkBySKUEqualsFilename(product) {
 function linkByMetadataFilename(product) {
     if (!product || !product.filename) return null;
 
-    const imageFilename = product.filename.toLowerCase();
+    const indexes = ensureLinkIndexes();
+    const imageFilename = normalizeLookupValue(product.filename);
+    const imageFilenameNoExt = stripExtension(imageFilename);
 
-    // Try common column names for filename (ordered by likelihood)
-    const filenameFields = ['filename', 'product', 'image', 'image_name', 'file', 'photo', 'picture'];
-
-    return state.importedData.find(data => {
-        if (!data) return false;
-
-        // Check all possible filename fields
-        for (const field of filenameFields) {
-            if (data[field]) {
-                let metadataFilename = String(data[field]).trim().toLowerCase();
-
-                // Try exact match
-                if (metadataFilename === imageFilename) {
-                    return true;
-                }
-
-                // Try without extension on metadata side
-                const metadataWithoutExt = metadataFilename.replace(/\.[^.]+$/, '');
-                const imageWithoutExt = imageFilename.replace(/\.[^.]+$/, '');
-                if (metadataWithoutExt === imageWithoutExt) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    });
+    return (
+        indexes.filenameFieldMap.get(imageFilename) ||
+        indexes.filenameFieldMap.get(imageFilenameNoExt) ||
+        null
+    );
 }
 
 /**
@@ -1539,30 +1755,17 @@ function linkByMetadataFilename(product) {
 function linkByNameEqualsFilename(product) {
     if (!product || !product.filename) return null;
 
-    // Normalize filename both with and without extension
-    const normalizeString = (str) => str
-        .trim()
-        .toLowerCase()
-        .replace(/[_-]/g, ' ')
-        .replace(/\s+/g, ' ');
-
-    const filenameWithExt = normalizeString(product.filename);
-    const filenameNoExt = normalizeString(product.filename.replace(/\.[^.]+$/, ''));
+    const indexes = ensureLinkIndexes();
+    const filenameWithExt = normalizeNameLookup(product.filename);
+    const filenameNoExt = normalizeNameLookup(stripExtension(product.filename));
 
     if (!filenameNoExt) return null;
 
-    return state.importedData.find(data => {
-        if (!data || !data.name) return false;
-
-        const cleanName = normalizeString(String(data.name));
-        const cleanNameNoExt = normalizeString(String(data.name).replace(/\.[^.]+$/, ''));
-
-        // Try all combinations automatically
-        return cleanName === filenameNoExt ||
-               cleanName === filenameWithExt ||
-               cleanNameNoExt === filenameNoExt ||
-               cleanNameNoExt === filenameWithExt;
-    });
+    return (
+        indexes.nameMap.get(filenameNoExt) ||
+        indexes.nameMap.get(filenameWithExt) ||
+        null
+    );
 }
 
 /**
@@ -1573,25 +1776,28 @@ function linkByNameEqualsFilename(product) {
 function linkBySearchAllFields(product) {
     if (!product || !product.filename) return null;
 
-    const cleanFilename = product.filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
-    const cleanFilenameWithExt = product.filename.trim().toLowerCase();
+    const indexes = ensureLinkIndexes();
+    const cleanFilenameWithExt = normalizeLookupValue(product.filename);
+    const cleanFilename = stripExtension(cleanFilenameWithExt);
     if (!cleanFilename) return null;
 
-    const priorityKeys = [
-        'sku', 'item', 'product', 'product_id', 'item_number',
-        'image', 'filename', 'file', 'photo', 'name', 'product_name'
-    ];
+    // Fast exact lookup first (O(1)).
+    const exactMatch =
+        indexes.searchExactMap.get(cleanFilenameWithExt) ||
+        indexes.searchExactMap.get(cleanFilename) ||
+        null;
+    if (exactMatch) return exactMatch;
 
     const valuesMatch = (rawValue) => {
         if (!rawValue) return false;
-        const fieldValue = String(rawValue).trim().toLowerCase();
+        const fieldValue = normalizeLookupValue(rawValue);
         if (!fieldValue) return false;
 
         if (fieldValue === cleanFilename || fieldValue === cleanFilenameWithExt) {
             return true;
         }
 
-        const fieldWithoutExt = fieldValue.replace(/\.[^.]+$/, '');
+        const fieldWithoutExt = stripExtension(fieldValue);
         if (fieldWithoutExt === cleanFilename) {
             return true;
         }
@@ -1604,17 +1810,39 @@ function linkBySearchAllFields(product) {
         return false;
     };
 
-    return state.importedData.find((data) => {
+    // Token-indexed candidate narrowing for large catalogs.
+    const tokenCandidates = new Set();
+    const filenameTokens = tokenizeLookupValue(cleanFilename);
+    filenameTokens.forEach((token) => {
+        const candidateIndexes = indexes.searchTokenMap.get(token);
+        if (!candidateIndexes) return;
+        candidateIndexes.forEach((candidateIndex) => tokenCandidates.add(candidateIndex));
+    });
+
+    let candidatePool;
+    if (tokenCandidates.size > 0) {
+        candidatePool = Array.from(tokenCandidates)
+            .map(idx => state.importedData[idx])
+            .filter(Boolean);
+    } else if (state.importedData.length <= MAX_SEARCH_FALLBACK_SCAN) {
+        // Preserve previous behavior for smaller catalogs.
+        candidatePool = state.importedData;
+    } else {
+        // Avoid full O(n) scan on very large catalogs when no indexed candidates exist.
+        return null;
+    }
+
+    return candidatePool.find((data) => {
         if (!data) return false;
 
-        for (const key of priorityKeys) {
+        for (const key of LINK_PRIORITY_FIELDS) {
             if (Object.prototype.hasOwnProperty.call(data, key) && valuesMatch(data[key])) {
                 return true;
             }
         }
 
         for (const [key, value] of Object.entries(data)) {
-            if (priorityKeys.includes(key)) continue;
+            if (LINK_PRIORITY_FIELDS.includes(key)) continue;
             if (valuesMatch(value)) return true;
         }
 
@@ -1851,9 +2079,15 @@ function finalizeLinking(matches) {
         .map((result, index) => ({ ...state.products[index], index }))
         .filter((_, i) => !matches.results[i].matched);
     
-    state.unmatchedData = state.importedData.filter(data => {
-        return !matches.results.some(result => result.matched && result.data === data);
-    });
+    // O(n) unmatched detection: avoid nested some() scan on large catalogs.
+    const matchedDataSet = new Set();
+    for (let i = 0; i < matches.results.length; i++) {
+        const result = matches.results[i];
+        if (result.matched && result.data) {
+            matchedDataSet.add(result.data);
+        }
+    }
+    state.unmatchedData = state.importedData.filter(data => !matchedDataSet.has(data));
     
     if (state.unmatchedImages.length > 0) {
         // Show manual linking panel
@@ -2033,10 +2267,84 @@ function skipLinking() {
 
 
 // ===== STEP 3: Add Metadata =====
+function getCsvTableTotalPages() {
+    return Math.max(1, Math.ceil(state.products.length / CSV_TABLE_PAGE_SIZE));
+}
+
+function ensureProductsTablePager() {
+    const table = document.getElementById('productsTable');
+    if (!table || !table.parentNode) return null;
+
+    let pager = document.getElementById('productsTablePager');
+    if (pager) return pager;
+
+    pager = document.createElement('div');
+    pager.id = 'productsTablePager';
+    pager.style.display = 'flex';
+    pager.style.justifyContent = 'space-between';
+    pager.style.alignItems = 'center';
+    pager.style.margin = '10px 0';
+    pager.style.gap = '10px';
+    pager.innerHTML = `
+        <button type="button" class="btn btn-small" id="productsTablePrevBtn" onclick="goToProductsTablePage(csvTableCurrentPage - 1)">Previous</button>
+        <span id="productsTablePageInfo" style="font-size: 12px; color: #555;"></span>
+        <button type="button" class="btn btn-small" id="productsTableNextBtn" onclick="goToProductsTablePage(csvTableCurrentPage + 1)">Next</button>
+    `;
+
+    table.parentNode.insertBefore(pager, table);
+    return pager;
+}
+
+function updateProductsTablePager() {
+    const pager = ensureProductsTablePager();
+    if (!pager) return;
+
+    const totalPages = getCsvTableTotalPages();
+    const pageInfo = document.getElementById('productsTablePageInfo');
+    const prevBtn = document.getElementById('productsTablePrevBtn');
+    const nextBtn = document.getElementById('productsTableNextBtn');
+
+    if (!pageInfo || !prevBtn || !nextBtn) return;
+
+    if (state.products.length === 0) {
+        pageInfo.textContent = 'No products';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+    }
+
+    const startIndex = (csvTableCurrentPage - 1) * CSV_TABLE_PAGE_SIZE + 1;
+    const endIndex = Math.min(csvTableCurrentPage * CSV_TABLE_PAGE_SIZE, state.products.length);
+    pageInfo.textContent = `Showing ${startIndex.toLocaleString()}-${endIndex.toLocaleString()} of ${state.products.length.toLocaleString()} (Page ${csvTableCurrentPage}/${totalPages})`;
+    prevBtn.disabled = csvTableCurrentPage <= 1;
+    nextBtn.disabled = csvTableCurrentPage >= totalPages;
+}
+
+function goToProductsTablePage(page) {
+    const totalPages = getCsvTableTotalPages();
+    const nextPage = Math.min(Math.max(1, page), totalPages);
+    if (nextPage === csvTableCurrentPage) return;
+    csvTableCurrentPage = nextPage;
+    renderProductsTable();
+}
+
 function renderProductsTable() {
     const tbody = document.getElementById('productsTableBody');
-    
-    tbody.innerHTML = state.products.map((product, index) => `
+
+    if (!tbody) return;
+
+    const totalPages = getCsvTableTotalPages();
+    if (csvTableCurrentPage > totalPages) {
+        csvTableCurrentPage = totalPages;
+    }
+
+    const startIndex = (csvTableCurrentPage - 1) * CSV_TABLE_PAGE_SIZE;
+    const endIndex = Math.min(startIndex + CSV_TABLE_PAGE_SIZE, state.products.length);
+    const visibleProducts = state.products.slice(startIndex, endIndex);
+
+    tbody.innerHTML = visibleProducts.map((product, idx) => {
+        const index = startIndex + idx;
+        return `
         <tr data-index="${index}" class="${product.selected ? 'row-selected' : ''}">
             <td><input type="checkbox" ${product.selected ? 'checked' : ''} onchange="toggleProductSelection(${index})"></td>
             <td>${escapeHtml(product.filename)}</td>
@@ -2049,7 +2357,10 @@ function renderProductsTable() {
                 <button class="btn-icon delete" onclick="deleteProduct(${index})" title="Delete">DELETE</button>
             </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
+
+    updateProductsTablePager();
 }
 
 function updateProduct(index, field, value) {
@@ -2411,52 +2722,86 @@ function skipHistory() {
 
 // ===== STEP 4: Export =====
 function refreshPreview() {
-    const csv = generateCSV();
-    document.getElementById('csvPreviewContent').textContent = csv;
-    
-    const lines = csv.split('\n').length;
+    const preview = generateCSVPreview(CSV_PREVIEW_MAX_ROWS);
+    document.getElementById('csvPreviewContent').textContent = preview.text;
+
     const includeHeaders = document.getElementById('includeHeaders').checked;
-    const dataLines = includeHeaders ? lines - 1 : lines;
-    
+    const dataLines = state.products.length;
+
     document.getElementById('previewStats').textContent = 
         `${dataLines} data row${dataLines !== 1 ? 's' : ''}, ${state.products.length} product${state.products.length !== 1 ? 's' : ''}`;
+}
+
+function generateCSVPreview(maxRows = CSV_PREVIEW_MAX_ROWS) {
+    const separator = document.getElementById('separatorSelect').value.replace('\\t', '\t');
+    const includeHeaders = document.getElementById('includeHeaders').checked;
+    const includeEmpty = document.getElementById('includeEmptyFields')?.checked ?? true;
+
+    const rows = [];
+
+    if (includeHeaders) {
+        rows.push(['filename', 'category', 'sku', 'name', 'price', 'price_history', 'performance_history'].join(separator));
+    }
+
+    const previewRows = state.products.slice(0, maxRows);
+    previewRows.forEach(product => {
+        const row = [];
+        row.push(quoteCSVField(product.filename, separator));
+        row.push(quoteCSVField(product.category || (includeEmpty ? '' : ''), separator));
+        row.push(quoteCSVField(product.sku || (includeEmpty ? '' : ''), separator));
+        row.push(quoteCSVField(product.name || (includeEmpty ? '' : ''), separator));
+        row.push(product.price || (includeEmpty ? '' : ''));
+        row.push(quoteCSVField(formatPriceHistory(product.priceHistory), separator));
+        row.push(quoteCSVField(formatPerformanceHistory(product.performanceHistory), separator));
+        rows.push(row.join(separator));
+    });
+
+    if (state.products.length > maxRows) {
+        rows.push(`... (${state.products.length - maxRows} more rows not shown in preview)`);
+    }
+
+    return {
+        text: `${rows.join('\n')}\n`,
+        shownRows: previewRows.length
+    };
 }
 
 function generateCSV() {
     const separator = document.getElementById('separatorSelect').value.replace('\\t', '\t');
     const includeHeaders = document.getElementById('includeHeaders').checked;
     const includeEmpty = document.getElementById('includeEmptyFields')?.checked ?? true;
-    
-    let csv = '';
-    
+
+    // Build rows then join once (linear-time) for large catalogs.
+    const rows = [];
+
     // Headers
     if (includeHeaders) {
-        csv += ['filename', 'category', 'sku', 'name', 'price', 'price_history', 'performance_history'].join(separator) + '\n';
+        rows.push(['filename', 'category', 'sku', 'name', 'price', 'price_history', 'performance_history'].join(separator));
     }
-    
+
     // Data rows
     state.products.forEach(product => {
         const row = [];
-        
+
         // Basic fields
         row.push(quoteCSVField(product.filename, separator));
         row.push(quoteCSVField(product.category || (includeEmpty ? '' : ''), separator));
         row.push(quoteCSVField(product.sku || (includeEmpty ? '' : ''), separator));
         row.push(quoteCSVField(product.name || (includeEmpty ? '' : ''), separator));
         row.push(product.price || (includeEmpty ? '' : ''));
-        
+
         // Price history
         const priceHistory = formatPriceHistory(product.priceHistory);
         row.push(quoteCSVField(priceHistory, separator));
-        
+
         // Performance history
         const performanceHistory = formatPerformanceHistory(product.performanceHistory);
         row.push(quoteCSVField(performanceHistory, separator));
-        
-        csv += row.join(separator) + '\n';
+
+        rows.push(row.join(separator));
     });
-    
-    return csv;
+
+    return `${rows.join('\n')}\n`;
 }
 
 function quoteCSVField(field, separator) {
@@ -2767,6 +3112,8 @@ function enforceStateLimits() {
     // Limit imported data
     if (state.importedData.length > MAX_PRODUCTS) {
         state.importedData = state.importedData.slice(-MAX_PRODUCTS);
+        buildFuzzyIndex();
+        buildLinkIndexes();
     }
 }
 
@@ -3243,6 +3590,14 @@ function clearCsvBuilderUpload() {
     
     // Clear state
     state.products = [];
+    state.importedData = [];
+    state.linkedProducts = [];
+    state.unmatchedImages = [];
+    state.unmatchedData = [];
+    state.availableLinkFields = [];
+    state.linkFieldDisplayMap = {};
+    state.skuLinkField = '__auto__';
+    state.linkIndexes = null;
     state.selectedProductIndex = null;
     state.currentStep = 1;
     state.mainAppSource = null;
@@ -3254,6 +3609,11 @@ function clearCsvBuilderUpload() {
     
     // Reset file input
     document.getElementById('imageInput').value = '';
+    const skuFieldSelect = document.getElementById('skuLinkFieldSelect');
+    if (skuFieldSelect) {
+        skuFieldSelect.innerHTML = '<option value="__auto__">Auto-detect (use SKU headers)</option>';
+        skuFieldSelect.value = '__auto__';
+    }
     
     // Go back to step 1
     goToStep(1);

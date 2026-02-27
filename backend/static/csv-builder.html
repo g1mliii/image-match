@@ -246,6 +246,16 @@
                             <input type="text" id="skuPattern" value="[A-Z]+-\d+" placeholder="e.g., [A-Z]+-\d+ or \d{4,}">
                             <button class="btn" onclick="previewLinking()">APPLY</button>
                         </div>
+
+                        <div id="skuFieldConfig" style="display: none; margin-top: 15px;">
+                            <label for="skuLinkFieldSelect">Metadata field for SKU matching:</label>
+                            <select id="skuLinkFieldSelect" onchange="handleSkuLinkFieldChange()" style="display: block; width: 100%; max-width: 420px; margin-top: 6px;">
+                                <option value="__auto__">Auto-detect (use SKU headers)</option>
+                            </select>
+                            <small style="display: block; margin-top: 6px; color: #666;">
+                                Use this when your CSV uses a custom identifier header (for example: product_code, vendor_item, UPC).
+                            </small>
+                        </div>
                     </div>
 
                     <div class="linking-preview">

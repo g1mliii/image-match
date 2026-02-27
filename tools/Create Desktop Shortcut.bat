@@ -12,14 +12,15 @@ echo ===========================================================================
 echo.
 
 REM Get current directory
-set "SCRIPT_DIR=%~dp0"
-set "BAT_FILE=%SCRIPT_DIR%Launch CatalogMatch.bat"
+set "TOOLS_DIR=%~dp0"
+for %%I in ("%TOOLS_DIR%..") do set "APP_DIR=%%~fI"
+set "BAT_FILE=%APP_DIR%\RUN.bat"
 
 REM Get desktop path
 set "DESKTOP=%USERPROFILE%\Desktop"
 
 REM Create shortcut using PowerShell
-powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%DESKTOP%\CatalogMatch.lnk'); $Shortcut.TargetPath = '%BAT_FILE%'; $Shortcut.WorkingDirectory = '%SCRIPT_DIR%'; $Shortcut.IconLocation = 'imageres.dll,3'; $Shortcut.Description = 'CatalogMatch - Product Matching System'; $Shortcut.Save()"
+powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%DESKTOP%\CatalogMatch.lnk'); $Shortcut.TargetPath = '%BAT_FILE%'; $Shortcut.WorkingDirectory = '%APP_DIR%'; $Shortcut.IconLocation = 'imageres.dll,3'; $Shortcut.Description = 'CatalogMatch - Product Matching System'; $Shortcut.Save()"
 
 if %errorlevel% equ 0 (
     echo.
@@ -39,7 +40,7 @@ if %errorlevel% equ 0 (
     echo.
     echo Could not create desktop shortcut.
     echo Please create it manually:
-    echo 1. Right-click "Launch CatalogMatch.bat"
+    echo 1. Right-click "RUN.bat"
     echo 2. Send to ^> Desktop (create shortcut)
     echo.
 )

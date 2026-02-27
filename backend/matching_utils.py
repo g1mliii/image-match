@@ -2,6 +2,7 @@
 Matching utilities - Extracted common patterns from product_matching.py
 """
 
+import json
 import numpy as np
 from typing import Dict, Optional, Any
 import logging
@@ -207,8 +208,28 @@ def create_match_result(
         'has_missing_metadata': len(missing_fields) > 0 if missing_fields else False,
         'missing_fields': missing_fields if missing_fields else None,
         # Include all metadata for dynamic sorting/filtering in frontend
-        'metadata_values': dict(candidate_product) if candidate_product else {}
+        'metadata_values': _pre_parse_metadata_values(candidate_product)
     }
 
 
+def _pre_parse_metadata_values(candidate_product) -> dict:
+    """
+    Pre-parse metadata JSON string from DB row into a dict.
 
+    The products table stores metadata as a JSON TEXT column. Without pre-parsing,
+    downstream consumers like calculate_summary_stats() receive a string they can't
+    flatten, causing Mode 1 match stats to miss nested metadata fields (brand, material, etc.).
+
+    Pre-parsing here means metadata is parsed ONCE when the match is created, not
+    re-parsed by every consumer.
+    """
+    if not candidate_product:
+        return {}
+    values = dict(candidate_product)
+    raw_meta = values.get('metadata')
+    if isinstance(raw_meta, str) and raw_meta.strip():
+        try:
+            values['metadata'] = json.loads(raw_meta)
+        except (json.JSONDecodeError, ValueError):
+            pass  # Leave as-is if not valid JSON
+    return values

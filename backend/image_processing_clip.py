@@ -24,6 +24,7 @@ import numpy as np
 import os
 import logging
 import shutil
+import threading
 from typing import Optional, List, Tuple, Dict, Any, Callable
 from pathlib import Path
 import json
@@ -98,6 +99,7 @@ _clip_model = None
 _clip_device = None
 _clip_model_name = 'clip-ViT-B-32'
 _detected_device_cache: Optional[str] = None
+_clip_model_lock = threading.Lock()  # Thread-safe model loading
 
 # Available CLIP models
 AVAILABLE_MODELS = {
@@ -279,7 +281,7 @@ def clear_model_cache(keep_config: bool = True) -> Dict[str, Any]:
     if keep_config and config_file.exists():
         try:
             config_backup = load_clip_config()
-        except:
+        except Exception:
             pass
     
     # Clear cache directory
@@ -306,7 +308,7 @@ def clear_model_cache(keep_config: bool = True) -> Dict[str, Any]:
         if keep_config and config_backup:
             try:
                 save_clip_config(config_backup)
-            except:
+            except Exception:
                 pass
         
         logger.info(f"Cache cleared: {files_deleted} items deleted, {size_before['total_size_mb']} MB freed")
@@ -385,7 +387,7 @@ def detect_device() -> str:
                         return _detected_device_cache
                     else:
                         logger.error(f"Invalid device index {device_idx}, falling back to auto-detection")
-                except:
+                except (ValueError, IndexError):
                     logger.error(f"Invalid FORCE_GPU_DEVICE format, falling back to auto-detection")
             else:
                 logger.error("CUDA not available, ignoring FORCE_GPU_DEVICE")
@@ -400,7 +402,7 @@ def detect_device() -> str:
             try:
                 gpu_name = torch.xpu.get_device_name(0)
                 logger.info(f"Intel GPU: {gpu_name} (Intel Extension for PyTorch)")
-            except:
+            except Exception:
                 logger.info("Intel GPU: Device 0 (Intel Extension for PyTorch)")
         else:
             # Multiple Intel GPUs - use first one
@@ -408,7 +410,7 @@ def detect_device() -> str:
             try:
                 gpu_name = torch.xpu.get_device_name(0)
                 logger.info(f"Selected Intel GPU: Device 0 - {gpu_name}")
-            except:
+            except Exception:
                 logger.info("Selected Intel GPU: Device 0")
     
     elif torch.cuda.is_available():
@@ -424,7 +426,7 @@ def detect_device() -> str:
                     logger.info(f"GPU detected: {gpu_name} ({vram_gb:.1f}GB VRAM) (AMD ROCm via CUDA)")
                 else:
                     logger.info(f"GPU detected: {gpu_name} ({vram_gb:.1f}GB VRAM) (NVIDIA CUDA)")
-            except:
+            except Exception:
                 logger.info(f"GPU detected: CUDA device 0 available")
         else:
             # Multiple GPUs - select the best one (discrete over integrated)
@@ -466,7 +468,7 @@ def detect_device() -> str:
                     logger.info(f"Selected GPU: Device {best_device_idx} - {gpu_name} ({vram_gb:.1f}GB VRAM) (AMD ROCm via CUDA)")
                 else:
                     logger.info(f"Selected GPU: Device {best_device_idx} - {gpu_name} ({vram_gb:.1f}GB VRAM) (NVIDIA CUDA)")
-            except:
+            except Exception:
                 logger.info(f"Selected GPU: Device {best_device_idx}")
     
     elif torch.backends.mps.is_available():
@@ -511,7 +513,7 @@ def get_device_info() -> Dict[str, Any]:
             info['device'] = 'xpu'
             try:
                 info['gpu_name'] = torch.xpu.get_device_name(0)
-            except:
+            except Exception:
                 info['gpu_name'] = 'Intel GPU'
         
         elif torch.cuda.is_available():
@@ -529,7 +531,7 @@ def get_device_info() -> Dict[str, Any]:
             try:
                 total_memory = torch.cuda.get_device_properties(0).total_memory
                 info['vram_gb'] = round(total_memory / (1024**3), 2)
-            except:
+            except Exception:
                 pass
                 
         elif torch.backends.mps.is_available():
@@ -554,7 +556,7 @@ def is_clip_available() -> bool:
         # Try to detect device
         detect_device()
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -585,11 +587,17 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
         )
     
     global _clip_model, _clip_device, _clip_model_name
-    
-    # Return cached model if available
+
+    # Fast path: return cached model without lock (read-only check)
     if _clip_model is not None and not force_reload and model_name == _clip_model_name:
         return _clip_model, _clip_device
-    
+
+    # Thread-safe model loading: double-checked locking pattern
+    with _clip_model_lock:
+        # Re-check after acquiring lock (another thread may have loaded it)
+        if _clip_model is not None and not force_reload and model_name == _clip_model_name:
+            return _clip_model, _clip_device
+
     try:
         logger.info(f"Loading CLIP model: {model_name}")
         
@@ -665,11 +673,12 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
             if progress_callback:
                 progress_callback("Model ready!", 100)
             
-            # Cache model
-            _clip_model = model
-            _clip_device = device
-            _clip_model_name = model_name
-            
+            # Cache model (thread-safe assignment)
+            with _clip_model_lock:
+                _clip_model = model
+                _clip_device = device
+                _clip_model_name = model_name
+
             return model, device
         
         except Exception as download_error:
@@ -1038,7 +1047,7 @@ def extract_clip_embedding(image_path: str, model_name: str = None,
                     f"CLIP extraction failed: {str(e)}",
                     "Fallback to legacy features attempted but incompatible. Fix CLIP setup."
                 )
-            except:
+            except (ImportError, Exception):
                 pass
         
         raise ImageProcessingFailedError(

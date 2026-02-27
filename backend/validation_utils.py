@@ -129,11 +129,7 @@ def validate_product_name(name, max_length=200):
     
     if len(name) > max_length:
         return None, f'product_name too long (max {max_length} characters)'
-    
-    # Basic XSS prevention - strip HTML tags
-    if '<' in name or '>' in name:
-        name = re.sub(r'<[^>]*>', '', name)
-    
+
     return name, None
 
 

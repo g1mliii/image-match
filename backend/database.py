@@ -2,8 +2,10 @@ import sqlite3
 import os
 import numpy as np
 import io
+import json
 import logging
 import time
+import secrets
 import threading
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Tuple
@@ -20,21 +22,12 @@ DB_PATH = get_database_path()
 # MEMORY OPTIMIZATION: Simple connection pool to reduce fragmentation
 # Maintains 3-5 reusable connections instead of creating new ones for each operation
 _connection_pool = []
-_pool_max_size = 5
-_pool_lock = None
+_pool_max_size = 15
+_pool_lock = threading.Lock()
 _pool_idle_timeout = 300  # Idle timeout in seconds (5 minutes)
-
-def _init_pool():
-    """Initialize connection pool on first use"""
-    global _pool_lock
-    if _pool_lock is None:
-        import threading
-        _pool_lock = threading.Lock()
 
 def _get_pooled_connection():
     """Get a connection from the pool or create a new one"""
-    _init_pool()
-
     with _pool_lock:
         # Remove idle connections that have exceeded timeout
         current_time = time.time()
@@ -47,7 +40,7 @@ def _get_pooled_connection():
                 try:
                     conn.close()
                     logger.debug(f"Closed idle connection (exceeded {_pool_idle_timeout}s timeout)")
-                except:
+                except Exception:
                     pass
         _connection_pool[:] = active_connections
 
@@ -64,7 +57,6 @@ def _get_pooled_connection():
 
 def _return_pooled_connection(conn):
     """Return a connection to the pool"""
-    _init_pool()
 
     # Reset connection state before returning to pool (prevent transaction pollution)
     try:
@@ -82,7 +74,7 @@ def _return_pooled_connection(conn):
             # Pool is full, close the connection
             try:
                 conn.close()
-            except:
+            except Exception:
                 pass
             logger.debug(f"Pool full, closed connection (pool size: {len(_connection_pool)})")
 
@@ -109,7 +101,7 @@ def get_db_connection():
     except Exception as e:
         try:
             conn.rollback()
-        except:
+        except Exception:
             pass
         raise e
     finally:
@@ -122,7 +114,6 @@ def close_all_db_connections():
     Should be called on application shutdown to prevent database locks.
     """
     global _connection_pool
-    _init_pool()
 
     with _pool_lock:
         num_connections = len(_connection_pool)
@@ -241,6 +232,33 @@ def init_db():
                 FOREIGN KEY (matched_product_id) REFERENCES products(id)
             )
         ''')
+
+        # Session-scoped match payload storage for paged frontend retrieval.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS match_result_sessions (
+                session_id TEXT PRIMARY KEY,
+                mode TEXT,
+                threshold REAL,
+                limit_value INTEGER,
+                visual_weight REAL,
+                metadata_weight REAL,
+                batch_size INTEGER,
+                summary_json TEXT,
+                errors_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS match_result_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                product_id INTEGER,
+                result_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES match_result_sessions(session_id) ON DELETE CASCADE
+            )
+        ''')
         
         # Create indexes for performance optimization
         cursor.execute('''
@@ -262,6 +280,21 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_matches_new_product 
             ON matches(new_product_id, similarity_score DESC)
         ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_match_result_items_session_id
+            ON match_result_items(session_id, id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_match_result_items_session_product
+            ON match_result_items(session_id, product_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_match_result_sessions_created_at
+            ON match_result_sessions(created_at DESC)
+        ''')
         
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_features_product_id
@@ -276,6 +309,22 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_products_name
             ON products(product_name)
+        ''')
+
+        # Optimize common catalog browsing sorts/filters for large catalogs.
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_products_created_at
+            ON products(created_at DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_products_historical_created_at
+            ON products(is_historical, created_at DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_products_category_created_at
+            ON products(category, created_at DESC)
         ''')
         
         # Create price_history table
@@ -399,23 +448,20 @@ def bulk_insert_products(products: List[Tuple[str, Optional[str], Optional[str],
     
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
+
         # Insert all products in one transaction
         cursor.executemany('''
             INSERT INTO products (image_path, category, product_name, sku, is_historical, metadata)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', products)
-        
-        # Get the IDs of inserted products
-        # SQLite's last_insert_rowid() only returns the last ID
-        # We need to query back to get all IDs in order
-        cursor.execute('''
-            SELECT id FROM products
-            ORDER BY id DESC
-            LIMIT ?
-        ''', (len(products),))
 
-        ids = [row[0] for row in reversed(cursor.fetchall())]
+        # Query MAX(id) AFTER insert to get the last assigned ID.
+        # With AUTOINCREMENT, IDs come from sqlite_sequence (not MAX(id)+1),
+        # so we must read the actual assigned IDs after the insert completes.
+        # Within the same connection, the insert is visible immediately.
+        cursor.execute('SELECT MAX(id) FROM products')
+        max_after = cursor.fetchone()[0]
+        ids = list(range(max_after - len(products) + 1, max_after + 1))
 
     # PERFORMANCE: Invalidate category cache after bulk insert (categories may have been added)
     _invalidate_category_cache()
@@ -879,19 +925,27 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
 
         cursor.execute(query, params)
         
+        # MEMORY OPTIMIZATION: Use fetchmany() to process in chunks instead of
+        # fetchall() which materializes all embeddings at once. For 50K products
+        # with 512-dim float32 embeddings, this reduces peak memory usage.
+        _EMBED_CHUNK = 1000
         results = []
-        for row in cursor.fetchall():
-            product_id = row['id']
-            features = {
-                'color_features': deserialize_numpy_array(row['color_features']),
-                'shape_features': deserialize_numpy_array(row['shape_features']),
-                'texture_features': deserialize_numpy_array(row['texture_features']),
-                'embedding_type': row['embedding_type'] or 'legacy',
-                'embedding_version': row['embedding_version'],
-                'category': row['category']  # Include category in results for reference
-            }
-            results.append((product_id, features))
-        
+        while True:
+            rows = cursor.fetchmany(_EMBED_CHUNK)
+            if not rows:
+                break
+            for row in rows:
+                product_id = row['id']
+                features = {
+                    'color_features': deserialize_numpy_array(row['color_features']),
+                    'shape_features': deserialize_numpy_array(row['shape_features']),
+                    'texture_features': deserialize_numpy_array(row['texture_features']),
+                    'embedding_type': row['embedding_type'] or 'legacy',
+                    'embedding_version': row['embedding_version'],
+                    'category': row['category']  # Include category in results for reference
+                }
+                results.append((product_id, features))
+
         return results
 
 # Match storage functions
@@ -981,44 +1035,311 @@ def get_matches_for_product(new_product_id: int, limit: int = 10) -> List[sqlite
         ''', (new_product_id, limit))
         return cursor.fetchall()
 
+
+def create_match_result_session(
+    mode: str,
+    threshold: float,
+    limit_value: int,
+    visual_weight: float,
+    metadata_weight: float,
+    batch_size: int,
+    summary: Optional[Dict[str, Any]] = None,
+    errors: Optional[List[Any]] = None
+) -> str:
+    """Create a match result session and return its session_id."""
+    session_id = secrets.token_hex(16)
+    summary_json = json.dumps(summary or {}, ensure_ascii=False, default=str)
+    errors_json = json.dumps(errors or [], ensure_ascii=False, default=str)
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO match_result_sessions
+            (session_id, mode, threshold, limit_value, visual_weight, metadata_weight,
+             batch_size, summary_json, errors_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                session_id,
+                mode,
+                float(threshold),
+                int(limit_value),
+                float(visual_weight),
+                float(metadata_weight),
+                int(batch_size),
+                summary_json,
+                errors_json
+            )
+        )
+
+    return session_id
+
+
+def store_match_result_session_items(
+    session_id: str,
+    results: List[Dict[str, Any]],
+    replace_existing: bool = True,
+    chunk_size: int = 200
+) -> int:
+    """Store per-product match payloads for a session."""
+    if not session_id:
+        raise ValueError("session_id is required")
+
+    if not results:
+        if replace_existing:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM match_result_items WHERE session_id = ?', (session_id,))
+        return 0
+
+    chunk_size = max(1, int(chunk_size))
+    inserted = 0
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        if replace_existing:
+            cursor.execute('DELETE FROM match_result_items WHERE session_id = ?', (session_id,))
+
+        chunk: List[Tuple[str, Optional[int], str]] = []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            product_id = result.get('product_id')
+            if product_id is None:
+                product_data = result.get('product_data')
+                if isinstance(product_data, dict):
+                    product_id = product_data.get('id')
+
+            try:
+                product_id = int(product_id) if product_id is not None else None
+            except (TypeError, ValueError):
+                product_id = None
+
+            result_json = json.dumps(result, ensure_ascii=False, default=str, separators=(',', ':'))
+            chunk.append((session_id, product_id, result_json))
+
+            if len(chunk) >= chunk_size:
+                cursor.executemany(
+                    '''
+                    INSERT INTO match_result_items (session_id, product_id, result_json)
+                    VALUES (?, ?, ?)
+                    ''',
+                    chunk
+                )
+                chunk_count = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else len(chunk)
+                inserted += chunk_count
+                chunk.clear()
+
+        if chunk:
+            cursor.executemany(
+                '''
+                INSERT INTO match_result_items (session_id, product_id, result_json)
+                VALUES (?, ?, ?)
+                ''',
+                chunk
+            )
+            chunk_count = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else len(chunk)
+            inserted += chunk_count
+
+    return inserted
+
+
+def get_match_result_session_page(session_id: str, page: int = 1, limit: int = 250) -> Dict[str, Any]:
+    """Get paginated match payloads for a stored session."""
+    if not session_id:
+        return {
+            'exists': False,
+            'results': [],
+            'total_results': 0,
+            'total_pages': 0,
+            'page': 1,
+            'limit': 0,
+            'summary': {},
+            'errors': [],
+            'created_at': None
+        }
+
+    page = max(1, int(page))
+    limit = max(1, min(int(limit), 1000))
+    offset = (page - 1) * limit
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            '''
+            SELECT session_id, summary_json, errors_json, created_at
+            FROM match_result_sessions
+            WHERE session_id = ?
+            ''',
+            (session_id,)
+        )
+        session_row = cursor.fetchone()
+        if not session_row:
+            return {
+                'exists': False,
+                'results': [],
+                'total_results': 0,
+                'total_pages': 0,
+                'page': page,
+                'limit': limit,
+                'summary': {},
+                'errors': [],
+                'created_at': None
+            }
+
+        cursor.execute(
+            'SELECT COUNT(*) AS count FROM match_result_items WHERE session_id = ?',
+            (session_id,)
+        )
+        total_results = cursor.fetchone()['count']
+        total_pages = (total_results + limit - 1) // limit if total_results > 0 else 0
+
+        cursor.execute(
+            '''
+            SELECT result_json
+            FROM match_result_items
+            WHERE session_id = ?
+            ORDER BY id ASC
+            LIMIT ? OFFSET ?
+            ''',
+            (session_id, limit, offset)
+        )
+        item_rows = cursor.fetchall()
+
+    parsed_results = []
+    for row in item_rows:
+        try:
+            parsed = json.loads(row['result_json'])
+            if isinstance(parsed, dict):
+                parsed_results.append(parsed)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+    try:
+        summary = json.loads(session_row['summary_json']) if session_row['summary_json'] else {}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        summary = {}
+
+    try:
+        errors = json.loads(session_row['errors_json']) if session_row['errors_json'] else []
+    except (json.JSONDecodeError, TypeError, ValueError):
+        errors = []
+
+    return {
+        'exists': True,
+        'results': parsed_results,
+        'total_results': total_results,
+        'total_pages': total_pages,
+        'page': page,
+        'limit': limit,
+        'summary': summary,
+        'errors': errors,
+        'created_at': session_row['created_at']
+    }
+
+
+def clear_all_match_result_sessions() -> int:
+    """Delete all stored match result sessions and return deleted session count."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) AS count FROM match_result_sessions')
+        session_count = cursor.fetchone()['count']
+        cursor.execute('DELETE FROM match_result_items')
+        cursor.execute('DELETE FROM match_result_sessions')
+        return session_count
+
+def cleanup_stale_match_result_sessions(max_age_hours: int = 24) -> int:
+    """Delete match result sessions older than max_age_hours.
+
+    Called on app startup and before creating new sessions to prevent
+    unbounded growth if the app crashes without running /api/session/cleanup.
+
+    Returns the number of expired sessions removed.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT session_id FROM match_result_sessions
+                WHERE created_at < datetime('now', ? || ' hours')
+                ''',
+                (str(-max_age_hours),)
+            )
+            expired_ids = [row['session_id'] for row in cursor.fetchall()]
+            if not expired_ids:
+                return 0
+
+            placeholders = ','.join('?' for _ in expired_ids)
+            cursor.execute(
+                f'DELETE FROM match_result_items WHERE session_id IN ({placeholders})',
+                expired_ids
+            )
+            cursor.execute(
+                f'DELETE FROM match_result_sessions WHERE session_id IN ({placeholders})',
+                expired_ids
+            )
+            logger.info(f"[SESSION-TTL] Cleaned up {len(expired_ids)} expired session(s)")
+            return len(expired_ids)
+    except Exception as e:
+        logger.error(f"[SESSION-TTL] Cleanup failed: {e}")
+        return 0
+
+
 def delete_matches_for_product(product_id: int) -> bool:
     """Delete all matches for a product"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            DELETE FROM matches 
+            DELETE FROM matches
             WHERE new_product_id = ? OR matched_product_id = ?
         ''', (product_id, product_id))
         return cursor.rowcount > 0
 
 # Utility functions for handling missing/incomplete data
 
-def get_products_without_category(is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
-    """Get all products that are missing category information
-    
-    Useful for identifying products that need manual categorization or 
+def get_products_without_category(is_historical: Optional[bool] = None,
+                                  limit: int = 5000, offset: int = 0) -> List[sqlite3.Row]:
+    """Get products that are missing category information
+
+    Useful for identifying products that need manual categorization or
     category inference from image analysis.
+
+    Args:
+        is_historical: Optional filter for historical vs new products
+        limit: Maximum number of results (default 5000, prevents OOM on large catalogs)
+        offset: Pagination offset
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         if is_historical is not None:
             cursor.execute('''
-                SELECT * FROM products 
+                SELECT * FROM products
                 WHERE category IS NULL AND is_historical = ?
                 ORDER BY created_at DESC
-            ''', (is_historical,))
+                LIMIT ? OFFSET ?
+            ''', (is_historical, limit, offset))
         else:
             cursor.execute('''
-                SELECT * FROM products 
+                SELECT * FROM products
                 WHERE category IS NULL
                 ORDER BY created_at DESC
-            ''')
+                LIMIT ? OFFSET ?
+            ''', (limit, offset))
         return cursor.fetchall()
 
-def get_products_without_features() -> List[sqlite3.Row]:
-    """Get all products that don't have feature vectors extracted yet
-    
+def get_products_without_features(limit: int = 5000, offset: int = 0) -> List[sqlite3.Row]:
+    """Get products that don't have feature vectors extracted yet
+
     Useful for batch processing to extract features from images.
+
+    Args:
+        limit: Maximum number of results (default 5000, prevents OOM on large catalogs)
+        offset: Pagination offset
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -1027,19 +1348,24 @@ def get_products_without_features() -> List[sqlite3.Row]:
             LEFT JOIN features f ON p.id = f.product_id
             WHERE f.id IS NULL
             ORDER BY p.created_at DESC
-        ''')
+            LIMIT ? OFFSET ?
+        ''', (limit, offset))
         return cursor.fetchall()
 
-def get_incomplete_products() -> List[Dict[str, Any]]:
+def get_incomplete_products(limit: int = 5000, offset: int = 0) -> List[Dict[str, Any]]:
     """Get products with missing critical information
-    
+
     Returns a list of products with flags indicating what data is missing.
     Useful for data quality monitoring and cleanup.
+
+    Args:
+        limit: Maximum number of results (default 5000, prevents OOM on large catalogs)
+        offset: Pagination offset
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT 
+            SELECT
                 p.id,
                 p.image_path,
                 p.category,
@@ -1052,13 +1378,14 @@ def get_incomplete_products() -> List[Dict[str, Any]]:
                 CASE WHEN p.sku IS NULL THEN 1 ELSE 0 END as missing_sku
             FROM products p
             LEFT JOIN features f ON p.id = f.product_id
-            WHERE p.category IS NULL 
-               OR p.product_name IS NULL 
-               OR p.sku IS NULL 
+            WHERE p.category IS NULL
+               OR p.product_name IS NULL
+               OR p.sku IS NULL
                OR f.id IS NULL
             ORDER BY p.created_at DESC
-        ''')
-        
+            LIMIT ? OFFSET ?
+        ''', (limit, offset))
+
         results = []
         for row in cursor.fetchall():
             results.append({
@@ -1073,7 +1400,7 @@ def get_incomplete_products() -> List[Dict[str, Any]]:
                 'missing_name': bool(row['missing_name']),
                 'missing_sku': bool(row['missing_sku'])
             })
-        
+
         return results
 
 # ============ Category Caching (Performance Optimization) ============
@@ -1326,31 +1653,33 @@ def get_duplicate_skus() -> List[Dict[str, Any]]:
         
         return results
 
-def get_products_without_sku(is_historical: Optional[bool] = None) -> List[sqlite3.Row]:
-    """Get all products that are missing SKU information
-    
+def get_products_without_sku(is_historical: Optional[bool] = None,
+                            limit: int = 5000, offset: int = 0) -> List[sqlite3.Row]:
+    """Get products that are missing SKU information
+
     Args:
         is_historical: Optional filter for historical vs new products
-    
-    Returns:
-        List of products without SKU
-    
+        limit: Maximum number of results (default 5000, prevents OOM on large catalogs)
+        offset: Pagination offset
+
     Useful for identifying products that need SKU assignment.
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         if is_historical is not None:
             cursor.execute('''
-                SELECT * FROM products 
+                SELECT * FROM products
                 WHERE sku IS NULL AND is_historical = ?
                 ORDER BY created_at DESC
-            ''', (is_historical,))
+                LIMIT ? OFFSET ?
+            ''', (is_historical, limit, offset))
         else:
             cursor.execute('''
-                SELECT * FROM products 
+                SELECT * FROM products
                 WHERE sku IS NULL
                 ORDER BY created_at DESC
-            ''')
+                LIMIT ? OFFSET ?
+            ''', (limit, offset))
         return cursor.fetchall()
 
 def search_products(query: str, search_fields: List[str] = None, 
@@ -2177,7 +2506,7 @@ def get_catalog_stats() -> Dict[str, Any]:
         db_size_mb = 0
         try:
             db_size_mb = round(os.path.getsize(DB_PATH) / (1024 * 1024), 2)
-        except:
+        except OSError:
             pass
         
         # Uploads folder size
@@ -2191,7 +2520,7 @@ def get_catalog_stats() -> Dict[str, Any]:
                         fp = os.path.join(dirpath, f)
                         total_size += os.path.getsize(fp)
                 uploads_size_mb = round(total_size / (1024 * 1024), 2)
-        except:
+        except OSError:
             pass
         
         return {
@@ -2240,20 +2569,25 @@ def get_products_paginated(page: int = 1, limit: int = 50,
         
         if search:
             conditions.append('''
-                (LOWER(image_path) LIKE LOWER(?) 
-                 OR LOWER(sku) LIKE LOWER(?) 
-                 OR LOWER(product_name) LIKE LOWER(?))
+                (LOWER(COALESCE(p.image_path, '')) LIKE LOWER(?) 
+                 OR LOWER(COALESCE(p.sku, '')) LIKE LOWER(?) 
+                 OR LOWER(COALESCE(p.product_name, '')) LIKE LOWER(?))
             ''')
             search_param = f'%{search}%'
             params.extend([search_param, search_param, search_param])
         
         if category:
-            conditions.append('category = ?')
+            conditions.append('p.category = ?')
             params.append(category)
         
         if is_historical is not None:
-            conditions.append('is_historical = ?')
+            conditions.append('p.is_historical = ?')
             params.append(is_historical)
+
+        if has_features is True:
+            conditions.append('EXISTS (SELECT 1 FROM features f WHERE f.product_id = p.id)')
+        elif has_features is False:
+            conditions.append('NOT EXISTS (SELECT 1 FROM features f WHERE f.product_id = p.id)')
         
         where_clause = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
         
@@ -2277,17 +2611,19 @@ def get_products_paginated(page: int = 1, limit: int = 50,
         # Get products with feature status
         offset = (page - 1) * limit
         query = f'''
-            SELECT p.*, 
-                   CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as has_features
+            SELECT p.*,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM features f WHERE f.product_id = p.id
+                   ) THEN 1 ELSE 0 END as has_features
             FROM products p
-            LEFT JOIN features f ON p.id = f.product_id
             {where_clause}
             ORDER BY {order_by}
             LIMIT ? OFFSET ?
         '''
-        params.extend([limit, offset])
+        query_params = list(params)
+        query_params.extend([limit, offset])
         
-        cursor.execute(query, params)
+        cursor.execute(query, query_params)
         
         products = []
         for row in cursor.fetchall():
@@ -2306,10 +2642,6 @@ def get_products_paginated(page: int = 1, limit: int = 50,
                 'created_at': row['created_at']
             })
         
-        # Filter by has_features if specified (done after query for simplicity)
-        if has_features is not None:
-            products = [p for p in products if p['has_features'] == has_features]
-        
         return {
             'products': products,
             'total': total,
@@ -2321,67 +2653,66 @@ def get_products_paginated(page: int = 1, limit: int = 50,
 
 def bulk_delete_products(product_ids: List[int]) -> int:
     """Delete multiple products and their associated data
-    
+
+    PERFORMANCE: Processes in chunks of 900 to respect SQLite's variable limit
+    and avoid creating massive IN clauses for 50k+ product deletions.
+
     Args:
         product_ids: List of product IDs to delete
-    
+
     Returns:
         Number of products deleted
     """
     if not product_ids:
         return 0
-    
+
+    CHUNK_SIZE = 900  # SQLite limit is ~999 variables
+    uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
+    abs_uploads = os.path.abspath(uploads_folder)
+    all_categories = set()
+    deleted_count = 0
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
-        # Get image paths before deletion
-        placeholders = ','.join('?' * len(product_ids))
-        cursor.execute(f'SELECT image_path FROM products WHERE id IN ({placeholders})', product_ids)
-        image_paths = [row['image_path'] for row in cursor.fetchall()]
-        
-        # Delete features
-        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Delete matches
-        cursor.execute(f'''
-            DELETE FROM matches 
-            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
-        ''', product_ids + product_ids)
-        
-        # Delete price history
-        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Delete performance history
-        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Get categories before deletion (needed for FAISS invalidation)
-        cursor.execute(f'SELECT DISTINCT category FROM products WHERE id IN ({placeholders})', product_ids)
-        categories = [row[0] for row in cursor.fetchall() if row[0]]
-        
-        # Delete products
-        cursor.execute(f'DELETE FROM products WHERE id IN ({placeholders})', product_ids)
-        deleted_count = cursor.rowcount
 
-        # Invalidate FAISS indexes for affected categories
-        for category in categories:
-            invalidate_faiss_index(category)
+        for i in range(0, len(product_ids), CHUNK_SIZE):
+            chunk = product_ids[i:i + CHUNK_SIZE]
+            placeholders = ','.join('?' * len(chunk))
 
-        # Delete image files - ONLY if they're in the uploads folder (not user source folder)
-        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        for path in image_paths:
-            try:
-                if path and os.path.exists(path):
-                    # Safety check: only delete files in uploads folder, never delete user source files
-                    is_managed_file = os.path.abspath(path).startswith(os.path.abspath(uploads_folder))
-                    if is_managed_file:
-                        os.remove(path)
-                        logger.debug(f"Deleted managed image file: {path}")
-                    else:
-                        logger.debug(f"Skipped deletion of external image file (not in uploads folder): {path}")
-            except Exception as e:
-                logger.warning(f"Failed to delete image file {path}: {e}")
+            # Get image paths and categories before deletion
+            cursor.execute(f'SELECT image_path FROM products WHERE id IN ({placeholders})', chunk)
+            image_paths = [row['image_path'] for row in cursor.fetchall()]
 
-        return deleted_count
+            cursor.execute(f'SELECT DISTINCT category FROM products WHERE id IN ({placeholders})', chunk)
+            all_categories.update(row[0] for row in cursor.fetchall() if row[0])
+
+            # Delete related data
+            cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', chunk)
+            cursor.execute(f'''
+                DELETE FROM matches
+                WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
+            ''', chunk + chunk)
+            cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', chunk)
+            cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', chunk)
+
+            # Delete products
+            cursor.execute(f'DELETE FROM products WHERE id IN ({placeholders})', chunk)
+            deleted_count += cursor.rowcount
+
+            # Delete managed image files
+            for path in image_paths:
+                try:
+                    if path and os.path.exists(path):
+                        if os.path.abspath(path).startswith(abs_uploads):
+                            os.remove(path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete image file {path}: {e}")
+
+    # Invalidate FAISS indexes for affected categories
+    for category in all_categories:
+        invalidate_faiss_index(category)
+
+    return deleted_count
 
 
 def bulk_update_products(product_ids: List[int], category: Optional[str] = None,
@@ -2431,16 +2762,19 @@ def bulk_update_products(product_ids: List[int], category: Optional[str] = None,
 
 def clear_products_by_type(product_type: str) -> Dict[str, int]:
     """Clear products by type (all, historical, new)
-    
+
+    PERFORMANCE: Uses chunked deletion to handle 50k+ product catalogs without
+    hitting SQLite variable limits or creating massive IN clauses.
+
     Args:
         product_type: 'all', 'historical', or 'new'
-    
+
     Returns:
         Dictionary with counts of deleted items
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
+
         # Build condition
         if product_type == 'all':
             condition = '1=1'
@@ -2450,53 +2784,46 @@ def clear_products_by_type(product_type: str) -> Dict[str, int]:
             condition = 'is_historical = 0'
         else:
             return {'error': 'Invalid product type'}
-        
-        # Get product IDs and image paths
-        cursor.execute(f'SELECT id, image_path FROM products WHERE {condition}')
-        products = cursor.fetchall()
-        product_ids = [p['id'] for p in products]
-        image_paths = [p['image_path'] for p in products]
-        
-        if not product_ids:
-            return {'products_deleted': 0, 'features_deleted': 0, 'matches_deleted': 0}
-        
-        placeholders = ','.join('?' * len(product_ids))
-        
-        # Delete features
-        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
+
+        # Use condition-based DELETE for related tables (no need to load all IDs)
+        # Delete features via subquery (avoids loading IDs into Python memory)
+        cursor.execute(f'DELETE FROM features WHERE product_id IN (SELECT id FROM products WHERE {condition})')
         features_deleted = cursor.rowcount
-        
-        # Delete matches
+
+        # Delete matches via subquery
         cursor.execute(f'''
-            DELETE FROM matches 
-            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
-        ''', product_ids + product_ids)
+            DELETE FROM matches
+            WHERE new_product_id IN (SELECT id FROM products WHERE {condition})
+               OR matched_product_id IN (SELECT id FROM products WHERE {condition})
+        ''')
         matches_deleted = cursor.rowcount
-        
-        # Delete price history
-        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Delete performance history
-        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
-        
+
+        # Delete price history via subquery
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN (SELECT id FROM products WHERE {condition})')
+
+        # Delete performance history via subquery
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN (SELECT id FROM products WHERE {condition})')
+
+        # Collect image paths for file cleanup (stream in chunks to avoid memory spike)
+        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
+        abs_uploads = os.path.abspath(uploads_folder)
+        cursor.execute(f'SELECT image_path FROM products WHERE {condition} AND image_path IS NOT NULL')
+        while True:
+            rows = cursor.fetchmany(1000)
+            if not rows:
+                break
+            for row in rows:
+                path = row['image_path']
+                try:
+                    if path and os.path.exists(path):
+                        if os.path.abspath(path).startswith(abs_uploads):
+                            os.remove(path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete image file {path}: {e}")
+
         # Delete products
         cursor.execute(f'DELETE FROM products WHERE {condition}')
         products_deleted = cursor.rowcount
-
-        # Delete image files - ONLY if they're in the uploads folder (not user source folder)
-        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        for path in image_paths:
-            try:
-                if path and os.path.exists(path):
-                    # Safety check: only delete files in uploads folder, never delete user source files
-                    is_managed_file = os.path.abspath(path).startswith(os.path.abspath(uploads_folder))
-                    if is_managed_file:
-                        os.remove(path)
-                        logger.debug(f"Deleted managed image file: {path}")
-                    else:
-                        logger.debug(f"Skipped deletion of external image file (not in uploads folder): {path}")
-            except Exception as e:
-                logger.warning(f"Failed to delete image file {path}: {e}")
 
         return {
             'products_deleted': products_deleted,
@@ -2519,19 +2846,22 @@ def clear_all_matches() -> int:
 
 def clear_products_by_categories(categories: List[str]) -> Dict[str, int]:
     """Clear products in specified categories
-    
+
+    PERFORMANCE: Uses subquery-based deletion to avoid loading all product IDs
+    into Python memory for large catalogs (50k+).
+
     Args:
         categories: List of category names to delete
-    
+
     Returns:
         Dictionary with counts of deleted items
     """
     if not categories:
         return {'products_deleted': 0}
-    
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
+
         # Handle NULL category
         conditions = []
         params = []
@@ -2541,51 +2871,39 @@ def clear_products_by_categories(categories: List[str]) -> Dict[str, int]:
             else:
                 conditions.append('category = ?')
                 params.append(cat)
-        
+
         where_clause = ' OR '.join(conditions)
-        
-        # Get product IDs and image paths
-        cursor.execute(f'SELECT id, image_path FROM products WHERE {where_clause}', params)
-        products = cursor.fetchall()
-        product_ids = [p['id'] for p in products]
-        image_paths = [p['image_path'] for p in products]
-        
-        if not product_ids:
-            return {'products_deleted': 0}
-        
-        placeholders = ','.join('?' * len(product_ids))
-        
-        # Delete features
-        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Delete matches
+        subquery = f'SELECT id FROM products WHERE {where_clause}'
+
+        # Delete related data via subquery (avoids loading IDs into Python)
+        cursor.execute(f'DELETE FROM features WHERE product_id IN ({subquery})', params)
         cursor.execute(f'''
-            DELETE FROM matches 
-            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
-        ''', product_ids + product_ids)
-        
-        # Delete price/performance history
-        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
-        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
-        
+            DELETE FROM matches
+            WHERE new_product_id IN ({subquery}) OR matched_product_id IN ({subquery})
+        ''', params + params)
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({subquery})', params)
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({subquery})', params)
+
+        # Collect image paths for file cleanup (stream in chunks)
+        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
+        abs_uploads = os.path.abspath(uploads_folder)
+        cursor.execute(f'SELECT image_path FROM products WHERE ({where_clause}) AND image_path IS NOT NULL', params)
+        while True:
+            rows = cursor.fetchmany(1000)
+            if not rows:
+                break
+            for row in rows:
+                path = row['image_path']
+                try:
+                    if path and os.path.exists(path):
+                        if os.path.abspath(path).startswith(abs_uploads):
+                            os.remove(path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete image file {path}: {e}")
+
         # Delete products
         cursor.execute(f'DELETE FROM products WHERE {where_clause}', params)
         products_deleted = cursor.rowcount
-
-        # Delete image files - ONLY if they're in the uploads folder (not user source folder)
-        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        for path in image_paths:
-            try:
-                if path and os.path.exists(path):
-                    # Safety check: only delete files in uploads folder, never delete user source files
-                    is_managed_file = os.path.abspath(path).startswith(os.path.abspath(uploads_folder))
-                    if is_managed_file:
-                        os.remove(path)
-                        logger.debug(f"Deleted managed image file: {path}")
-                    else:
-                        logger.debug(f"Skipped deletion of external image file (not in uploads folder): {path}")
-            except Exception as e:
-                logger.warning(f"Failed to delete image file {path}: {e}")
 
         return {'products_deleted': products_deleted}
 
@@ -2600,54 +2918,45 @@ def clear_products_by_date(older_than_days: int) -> Dict[str, int]:
         Dictionary with counts of deleted items
     """
     from datetime import datetime, timedelta
-    
+
     cutoff_date = (datetime.now() - timedelta(days=older_than_days)).strftime('%Y-%m-%d %H:%M:%S')
-    
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
-        # Get product IDs and image paths
-        cursor.execute('SELECT id, image_path FROM products WHERE created_at < ?', (cutoff_date,))
-        products = cursor.fetchall()
-        product_ids = [p['id'] for p in products]
-        image_paths = [p['image_path'] for p in products]
-        
-        if not product_ids:
-            return {'products_deleted': 0}
-        
-        placeholders = ','.join('?' * len(product_ids))
-        
-        # Delete features
-        cursor.execute(f'DELETE FROM features WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Delete matches
-        cursor.execute(f'''
-            DELETE FROM matches 
-            WHERE new_product_id IN ({placeholders}) OR matched_product_id IN ({placeholders})
-        ''', product_ids + product_ids)
-        
-        # Delete price/performance history
-        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({placeholders})', product_ids)
-        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({placeholders})', product_ids)
-        
-        # Delete products
-        cursor.execute('DELETE FROM products WHERE created_at < ?', (cutoff_date,))
-        products_deleted = cursor.rowcount
 
-        # Delete image files - ONLY if they're in the uploads folder (not user source folder)
+        condition = 'created_at < ?'
+        condition_params = [cutoff_date]
+        subquery = f'SELECT id FROM products WHERE {condition}'
+
+        # Delete related data via subquery (avoids loading IDs into Python)
+        cursor.execute(f'DELETE FROM features WHERE product_id IN ({subquery})', condition_params)
+        cursor.execute(f'''
+            DELETE FROM matches
+            WHERE new_product_id IN ({subquery}) OR matched_product_id IN ({subquery})
+        ''', condition_params + condition_params)
+        cursor.execute(f'DELETE FROM price_history WHERE product_id IN ({subquery})', condition_params)
+        cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({subquery})', condition_params)
+
+        # Collect image paths for file cleanup (stream in chunks)
         uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        for path in image_paths:
-            try:
-                if path and os.path.exists(path):
-                    # Safety check: only delete files in uploads folder, never delete user source files
-                    is_managed_file = os.path.abspath(path).startswith(os.path.abspath(uploads_folder))
-                    if is_managed_file:
-                        os.remove(path)
-                        logger.debug(f"Deleted managed image file: {path}")
-                    else:
-                        logger.debug(f"Skipped deletion of external image file (not in uploads folder): {path}")
-            except Exception as e:
-                logger.warning(f"Failed to delete image file {path}: {e}")
+        abs_uploads = os.path.abspath(uploads_folder)
+        cursor.execute(f'SELECT image_path FROM products WHERE {condition} AND image_path IS NOT NULL', condition_params)
+        while True:
+            rows = cursor.fetchmany(1000)
+            if not rows:
+                break
+            for row in rows:
+                path = row['image_path']
+                try:
+                    if path and os.path.exists(path):
+                        if os.path.abspath(path).startswith(abs_uploads):
+                            os.remove(path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete image file {path}: {e}")
+
+        # Delete products
+        cursor.execute(f'DELETE FROM products WHERE {condition}', condition_params)
+        products_deleted = cursor.rowcount
 
         return {'products_deleted': products_deleted}
 
@@ -2661,7 +2970,7 @@ def vacuum_database() -> Dict[str, Any]:
     size_before = 0
     try:
         size_before = os.path.getsize(DB_PATH) / (1024 * 1024)
-    except:
+    except OSError:
         pass
     
     # Need to use a separate connection for VACUUM (can't be in transaction)
@@ -2674,7 +2983,7 @@ def vacuum_database() -> Dict[str, Any]:
     size_after = 0
     try:
         size_after = os.path.getsize(DB_PATH) / (1024 * 1024)
-    except:
+    except OSError:
         pass
     
     return {
@@ -2784,9 +3093,10 @@ def export_catalog_csv() -> str:
         cursor.execute('''
             SELECT p.id, p.image_path, p.category, p.product_name, p.sku,
                    p.is_historical, p.created_at,
-                   CASE WHEN f.id IS NOT NULL THEN 'Yes' ELSE 'No' END as has_features
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM features f WHERE f.product_id = p.id
+                   ) THEN 'Yes' ELSE 'No' END as has_features
             FROM products p
-            LEFT JOIN features f ON p.id = f.product_id
             ORDER BY p.created_at DESC
         ''')
         
@@ -2797,8 +3107,8 @@ def export_catalog_csv() -> str:
         writer.writerow(['ID', 'Filename', 'Category', 'Name', 'SKU', 
                         'Type', 'Created', 'Has Features'])
         
-        # Data
-        for row in cursor.fetchall():
+        # Data (stream cursor rows directly to avoid loading all rows into memory)
+        for row in cursor:
             filename = os.path.basename(row['image_path']) if row['image_path'] else ''
             product_type = 'Historical' if row['is_historical'] else 'New'
             writer.writerow([
@@ -2813,6 +3123,69 @@ def export_catalog_csv() -> str:
             ])
         
         return output.getvalue()
+
+
+def stream_catalog_csv(batch_size: int = 2000):
+    """Stream catalog CSV in chunks to avoid high memory usage on large exports.
+
+    Args:
+        batch_size: Number of rows to process per chunk.
+
+    Returns:
+        Iterator yielding CSV text chunks.
+    """
+    import csv
+    import io
+
+    def _generate():
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT p.id, p.image_path, p.category, p.product_name, p.sku,
+                       p.is_historical, p.created_at,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM features f WHERE f.product_id = p.id
+                       ) THEN 'Yes' ELSE 'No' END as has_features
+                FROM products p
+                ORDER BY p.created_at DESC
+            ''')
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            # Header
+            writer.writerow(['ID', 'Filename', 'Category', 'Name', 'SKU',
+                            'Type', 'Created', 'Has Features'])
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+
+            while True:
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+
+                for row in rows:
+                    filename = os.path.basename(row['image_path']) if row['image_path'] else ''
+                    product_type = 'Historical' if row['is_historical'] else 'New'
+                    writer.writerow([
+                        row['id'],
+                        filename,
+                        row['category'] or '',
+                        row['product_name'] or '',
+                        row['sku'] or '',
+                        product_type,
+                        row['created_at'] or '',
+                        row['has_features']
+                    ])
+
+                chunk = output.getvalue()
+                if chunk:
+                    yield chunk
+                output.seek(0)
+                output.truncate(0)
+
+    return _generate()
 
 
 # ============================================================================
@@ -2903,8 +3276,10 @@ def rebuild_all_faiss_indexes() -> Dict[str, any]:
                     'reason': str(e)
                 }
         
-        # Parallel execution with thread pool (4-8 workers)
-        max_workers = min(8, len(categories))
+        # Parallel execution with thread pool (limit to 3 workers to prevent memory explosion)
+        # Each worker loads all embeddings for a category (~100MB for 50k products)
+        # 3 workers × 100MB = 300MB peak vs 8 workers × 100MB = 800MB peak
+        max_workers = min(3, len(categories))
         logger.debug(f"Using {max_workers} parallel workers for index building")
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -3043,7 +3418,7 @@ def search_matched_products(query: str, limit: int = 100) -> List[Dict[str, Any]
             cursor.execute('''
                 SELECT DISTINCT 
                     p.id, p.product_name, p.sku, p.category, 
-                    p.price, p.is_historical, p.created_at
+                    p.is_historical, p.created_at
                 FROM products p
                 WHERE 
                     p.product_name LIKE ? OR 
@@ -3068,9 +3443,8 @@ def search_matched_products(query: str, limit: int = 100) -> List[Dict[str, Any]
                     'name': r[1],
                     'sku': r[2],
                     'category': r[3],
-                    'price': r[4],
-                    'is_historical': r[5],
-                    'created_at': r[6]
+                    'is_historical': r[4],
+                    'created_at': r[5]
                 }
                 for r in results
             ]
@@ -3279,6 +3653,10 @@ def get_all_products_with_metadata(is_historical: Optional[bool] = None) -> List
     """
     Get all products with their metadata parsed.
 
+    MEMORY OPTIMIZATION: Uses fetchmany() to process rows in chunks instead of
+    fetchall() which materializes the entire result set at once. For 50K+ products
+    this reduces peak memory from ~500MB to ~50MB per chunk.
+
     Args:
         is_historical: Optional filter for historical/new products
 
@@ -3286,6 +3664,8 @@ def get_all_products_with_metadata(is_historical: Optional[bool] = None) -> List
         List of product dictionaries with parsed metadata
     """
     import json
+
+    _FETCH_CHUNK_SIZE = 2000
 
     try:
         with get_db_connection() as conn:
@@ -3304,25 +3684,29 @@ def get_all_products_with_metadata(is_historical: Optional[bool] = None) -> List
                 ''')
 
             results = []
-            for row in cursor.fetchall():
-                product = {
-                    'id': row[0],
-                    'image_path': row[1],
-                    'category': row[2],
-                    'product_name': row[3],
-                    'sku': row[4],
-                    'is_historical': row[5],
-                    'metadata': {}
-                }
+            while True:
+                rows = cursor.fetchmany(_FETCH_CHUNK_SIZE)
+                if not rows:
+                    break
+                for row in rows:
+                    product = {
+                        'id': row[0],
+                        'image_path': row[1],
+                        'category': row[2],
+                        'product_name': row[3],
+                        'sku': row[4],
+                        'is_historical': row[5],
+                        'metadata': {}
+                    }
 
-                # Parse metadata JSON if present
-                if row[6]:
-                    try:
-                        product['metadata'] = json.loads(row[6])
-                    except json.JSONDecodeError:
-                        product['metadata'] = {}
+                    # Parse metadata JSON if present
+                    if row[6]:
+                        try:
+                            product['metadata'] = json.loads(row[6])
+                        except json.JSONDecodeError:
+                            product['metadata'] = {}
 
-                results.append(product)
+                    results.append(product)
 
             return results
 

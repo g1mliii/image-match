@@ -11,6 +11,8 @@ let selectedProducts = new Set();
 let searchTimeout = null;
 let catalogStats = null;
 let imageObserver = null; // Track IntersectionObserver for cleanup
+let productsLoadAbortController = null;
+let productsLoadRequestId = 0;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -159,7 +161,14 @@ async function loadCategories() {
 
 async function loadProducts() {
     const grid = document.getElementById('productGrid');
-    grid.innerHTML = '';
+    const requestId = ++productsLoadRequestId;
+
+    if (productsLoadAbortController) {
+        productsLoadAbortController.abort();
+    }
+    productsLoadAbortController = new AbortController();
+
+    grid.innerHTML = '<p style="padding: 20px; text-align: center; color: #666;">Loading products...</p>';
     
     try {
         const params = new URLSearchParams({
@@ -172,16 +181,30 @@ async function loadProducts() {
             sort: document.getElementById('sortBy').value
         });
         
-        const response = await fetch(`/api/catalog/products?${params}`);
+        const response = await fetch(
+            `/api/catalog/products?${params}`,
+            { signal: productsLoadAbortController.signal }
+        );
         if (!response.ok) throw new Error('Failed to load products');
         
+        if (requestId !== productsLoadRequestId) return;
+
         const data = await response.json();
         totalProducts = data.total;
+
+        const totalPages = Math.max(1, data.total_pages || Math.ceil(totalProducts / pageSize));
+        if (totalProducts > 0 && currentPage > totalPages) {
+            currentPage = totalPages;
+            return loadProducts();
+        }
         
         renderProducts(data.products);
         updatePagination();
         
     } catch (error) {
+        if (error && error.name === 'AbortError') {
+            return;
+        }
         console.error('Error loading products:', error);
         grid.innerHTML = '<p>Failed to load products. Please try again.</p>';
     }
@@ -266,6 +289,10 @@ function lazyLoadImages() {
 
 // Cleanup on page unload (Fix #13: Memory leak)
 window.addEventListener('beforeunload', () => {
+    if (productsLoadAbortController) {
+        productsLoadAbortController.abort();
+        productsLoadAbortController = null;
+    }
     if (imageObserver) {
         imageObserver.disconnect();
         imageObserver = null;
@@ -277,10 +304,10 @@ window.addEventListener('beforeunload', () => {
 });
 
 function updatePagination() {
-    const totalPages = Math.ceil(totalProducts / pageSize);
+    const totalPages = Math.max(1, Math.ceil(totalProducts / pageSize));
     document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages} (${totalProducts} products)`;
     document.getElementById('prevBtn').disabled = currentPage <= 1;
-    document.getElementById('nextBtn').disabled = currentPage >= totalPages;
+    document.getElementById('nextBtn').disabled = totalProducts === 0 || currentPage >= totalPages;
 }
 
 function prevPage() {
@@ -1056,8 +1083,8 @@ async function loadSnapshots() {
 function renderSnapshots() {
     // Combine all snapshots into one list
     const allSnapshots = [
-        ...(snapshotData.historical || []).map(s => ({...s, type: 'Historical'})),
-        ...(snapshotData.new || []).map(s => ({...s, type: 'New'}))
+        ...(snapshotData.historical || []),
+        ...(snapshotData.new || [])
     ];
     renderSnapshotList('allSnapshots', allSnapshots);
 
@@ -1120,7 +1147,6 @@ function renderSnapshotList(containerId, snapshots) {
                     <div class="snapshot-info">
                         <div class="snapshot-name" style="${nameStyle}">
                             ${isActive ? '<span class="working-catalog-badge">WORKING CATALOG</span>Active Catalog' : escapeHtml(snapshot.name)}
-                            <span style="font-weight: normal; color: #666;">[${snapshot.type}]</span>
                             ${isSessionOnly ? '<span style="color: #999; margin-left: 8px; font-size: 0.85em;">[SESSION]</span>' : ''}
                         </div>
                         <div class="snapshot-meta" id="snapshot-count-${escapeHtml(snapshot.snapshot_file)}">
@@ -1337,26 +1363,34 @@ async function createSnapshot() {
         showToast('Please enter a snapshot name', 'error');
         return;
     }
-    
+
+    // PROGRESS FEEDBACK: Show saving state
+    const createBtn = document.querySelector('#confirmModal .btn-primary, #confirmModal button[onclick*="createSnapshot"]');
+    if (createBtn) createBtn.disabled = true;
+
     try {
+        showToast('Creating snapshot — this may take a moment for large catalogs...', 'info', 10000);
+
         const response = await fetch('/api/catalogs/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, is_historical: isHistorical, description, tags })
         });
-        
+
         if (!response.ok) {
             const data = await response.json();
             throw new Error(data.error || 'Failed to create snapshot');
         }
-        
+
         closeConfirmModal();
         showToast('Snapshot created successfully', 'success');
         loadSnapshots();
-        
+
     } catch (error) {
         console.error('Error creating snapshot:', error);
         showToast(error.message || 'Failed to create snapshot', 'error');
+    } finally {
+        if (createBtn) createBtn.disabled = false;
     }
 }
 
@@ -1735,10 +1769,6 @@ async function viewSnapshot(snapshotFile) {
                         <span class="value">${snapshot.version || '1.0'}</span>
                     </div>
                     <div class="detail-row">
-                        <span class="label">Type:</span>
-                        <span class="value">${snapshot.is_historical ? 'Historical Catalog' : 'New Products'}</span>
-                    </div>
-                    <div class="detail-row">
                         <span class="label">Products:</span>
                         <span class="value">${snapshot.product_count?.toLocaleString() || 0}</span>
                     </div>
@@ -1833,8 +1863,12 @@ async function loadSnapshotToMain(snapshotFile) {
         return;
     }
 
+    // PROGRESS FEEDBACK: Disable all snapshot action buttons during load
+    const actionButtons = document.querySelectorAll('.snapshot-actions button, .btn-small');
+    actionButtons.forEach(btn => btn.disabled = true);
+
     try {
-        showToast('Loading snapshot to main catalog...', 'info');
+        showToast('Loading snapshot — this may take a moment for large catalogs...', 'info', 10000);
 
         const response = await fetch(`/api/catalogs/load/${encodeURIComponent(snapshotFile)}`, {
             method: 'POST'
@@ -1881,6 +1915,9 @@ async function loadSnapshotToMain(snapshotFile) {
     } catch (error) {
         console.error('[CATALOG-MANAGER] Error loading snapshot:', error);
         showToast(`Failed to load snapshot: ${error.message}`, 'error');
+    } finally {
+        // Re-enable buttons after operation completes
+        actionButtons.forEach(btn => btn.disabled = false);
     }
 }
 

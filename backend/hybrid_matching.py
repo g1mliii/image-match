@@ -21,7 +21,7 @@ Smart Linking:
 import logging
 import os
 from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from database import insert_match
 
@@ -361,7 +361,7 @@ def batch_find_hybrid_matches(
     # - Mode 2: CPU/database (compute bound)
     logger.info(f"[BATCH-HYBRID] ▶ Starting Mode 1 (Visual) and Mode 2 (Metadata) SIMULTANEOUSLY")
     
-    from concurrent.futures import ThreadPoolExecutor as TPE, as_completed
+    from concurrent.futures import ThreadPoolExecutor as TPE
     
     mode1_time = 0
     mode2_time = 0
@@ -382,7 +382,8 @@ def batch_find_hybrid_matches(
             include_uncategorized=True,
             store_matches=False,
             skip_invalid_products=skip_invalid_products,
-            max_workers=max_workers
+            max_workers=max_workers,
+            preload_catalog=False
         )
         
         mode1_time = time.time() - mode1_start
@@ -571,176 +572,197 @@ def batch_find_hybrid_matches(
     # Fetch all query product data upfront for results display
     from database import get_products_by_ids
     query_products_data = get_products_by_ids(product_ids)
+
+    from product_matching import calculate_summary_stats
+
+    def merge_without_store(product_id: int) -> Dict[str, Any]:
+        """Merge visual/metadata matches for a single product (no DB writes)."""
+        try:
+            visual_result = visual_lookup.get(product_id)
+            metadata_result = metadata_lookup.get(product_id)
+
+            # Check if both modes succeeded
+            if not visual_result or visual_result['status'] != 'success':
+                return {
+                    'product_id': product_id,
+                    'status': 'failed',
+                    'error': 'Visual matching failed',
+                    'error_code': 'VISUAL_FAILED'
+                }
+
+            if not metadata_result or metadata_result['status'] != 'success':
+                return {
+                    'product_id': product_id,
+                    'status': 'failed',
+                    'error': 'Metadata matching failed',
+                    'error_code': 'METADATA_FAILED'
+                }
+
+            # Build lookup dictionaries for matches
+            visual_matches_lookup = {m['product_id']: m for m in visual_result['matches']}
+            metadata_matches_lookup = {m['product_id']: m for m in metadata_result['matches']}
+
+            # Get all unique candidate IDs
+            all_candidate_ids = set(visual_matches_lookup.keys()) | set(metadata_matches_lookup.keys())
+
+            # Compute hybrid scores with smart linking
+            hybrid_matches = []
+            for candidate_id in all_candidate_ids:
+                visual_match = visual_matches_lookup.get(candidate_id)
+                metadata_match = metadata_matches_lookup.get(candidate_id)
+
+                # Get scores (default to 0 if match not found in one mode)
+                visual_score = visual_match['similarity_score'] if visual_match else 0.0
+                metadata_score = metadata_match['similarity_score'] if metadata_match else 0.0
+
+                # SMART LINKING: If both found matches but to different products,
+                # check if they're actually the same product by filename ↔ SKU
+                if visual_match and metadata_match and visual_score > 0 and metadata_score > 0:
+                    if visual_match.get('product_id') != metadata_match.get('product_id'):
+                        # Different product_ids - verify they represent same item
+                        if not matches_by_filename_sku(visual_match, metadata_match):
+                            # Not the same product - don't merge these scores
+                            continue
+
+                # Compute hybrid score
+                hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
+
+                # Use visual match data as base (has image_path, etc.)
+                if visual_match:
+                    match_data = visual_match.copy()
+                elif metadata_match:
+                    match_data = metadata_match.copy()
+                else:
+                    continue
+
+                # Update with hybrid scores
+                match_data['similarity_score'] = hybrid_score
+                match_data['visual_score'] = visual_score
+                match_data['metadata_score'] = metadata_score
+                match_data['is_potential_duplicate'] = hybrid_score > 90
+
+                # Add metadata sub-scores and values
+                if metadata_match:
+                    # Pass through dynamic metadata structures
+                    match_data['metadata_scores'] = metadata_match.get('metadata_scores', {})
+
+                    # Ensure metadata values are passed
+                    if 'metadata_values' in metadata_match:
+                        match_data['metadata_values'] = metadata_match['metadata_values']
+
+                    # Map common fields to legacy top-level keys for compatibility
+                    ms_scores = match_data.get('metadata_scores', {})
+                    match_data['sku_score'] = ms_scores.get('sku', 0.0)
+                    match_data['name_score'] = ms_scores.get('name', 0.0)
+                    match_data['category_score'] = ms_scores.get('category', 0.0)
+                    match_data['price_score'] = ms_scores.get('price', 0.0)
+                    match_data['performance_score'] = ms_scores.get('performance', 0.0)
+
+                if not match_data.get('metadata_values') and visual_match and 'metadata_values' in visual_match:
+                     # Fallback: if visual match somehow has it (unlikely but possible if enriched later)
+                     match_data['metadata_values'] = visual_match['metadata_values']
+
+                hybrid_matches.append(match_data)
+
+            # Sort and filter
+            hybrid_matches.sort(key=lambda x: x['similarity_score'], reverse=True)
+
+            filtered_count = 0
+            if threshold > 0:
+                original_count = len(hybrid_matches)
+                hybrid_matches = [m for m in hybrid_matches if m['similarity_score'] >= threshold]
+                filtered_count = original_count - len(hybrid_matches)
+
+            if limit > 0:
+                hybrid_matches = hybrid_matches[:limit]
+
+            return {
+                'product_id': product_id,
+                'product_data': query_products_data.get(product_id, {}), # ADDED
+                'status': 'success',
+                'match_count': len(hybrid_matches),
+                'matches': hybrid_matches,
+                'summary_stats': calculate_summary_stats(hybrid_matches), # ADDED
+                'filtered_by_threshold': filtered_count
+            }
+
+        except Exception as e:
+            logger.error(f"Error merging results for product {product_id}: {e}")
+            return {
+                'product_id': product_id,
+                'status': 'failed',
+                'error': str(e),
+                'error_code': 'MERGE_ERROR'
+            }
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        max_in_flight = (
+            min(len(product_ids), max(max_workers, max_workers * 8))
+            if product_ids else 0
+        )
+
+        product_iter = iter(product_ids)
         futures = {}
-        for pid in product_ids:
-            # Create a modified merge function that doesn't store matches
-            def merge_without_store(product_id):
+        for _ in range(max_in_flight):
+            try:
+                pid = next(product_iter)
+            except StopIteration:
+                break
+            futures[executor.submit(merge_without_store, pid)] = pid
+
+        i = 0
+        while futures:
+            done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
+            for future in done:
+                i += 1
+                result = future.result()
+                futures.pop(future, None)
+
                 try:
-                    visual_result = visual_lookup.get(product_id)
-                    metadata_result = metadata_lookup.get(product_id)
-                    
-                    # Check if both modes succeeded
-                    if not visual_result or visual_result['status'] != 'success':
-                        return {
-                            'product_id': product_id,
-                            'status': 'failed',
-                            'error': 'Visual matching failed',
-                            'error_code': 'VISUAL_FAILED'
-                        }
-                
-                    if not metadata_result or metadata_result['status'] != 'success':
-                        return {
-                            'product_id': product_id,
-                            'status': 'failed',
-                            'error': 'Metadata matching failed',
-                            'error_code': 'METADATA_FAILED'
-                        }
-                    
-                    # Build lookup dictionaries for matches
-                    visual_matches_lookup = {m['product_id']: m for m in visual_result['matches']}
-                    metadata_matches_lookup = {m['product_id']: m for m in metadata_result['matches']}
-                    
-                    # Get all unique candidate IDs
-                    all_candidate_ids = set(visual_matches_lookup.keys()) | set(metadata_matches_lookup.keys())
-                    
-                    # Compute hybrid scores with smart linking
-                    hybrid_matches = []
-                    for candidate_id in all_candidate_ids:
-                        visual_match = visual_matches_lookup.get(candidate_id)
-                        metadata_match = metadata_matches_lookup.get(candidate_id)
+                    next_pid = next(product_iter)
+                    futures[executor.submit(merge_without_store, next_pid)] = next_pid
+                except StopIteration:
+                    pass
+                results.append(result)
 
-                        # Get scores (default to 0 if match not found in one mode)
-                        visual_score = visual_match['similarity_score'] if visual_match else 0.0
-                        metadata_score = metadata_match['similarity_score'] if metadata_match else 0.0
+                # MEMORY OPTIMIZATION: Incremental insertion to prevent 50-100MB accumulation in Mode 3
+                # Insert matches immediately instead of accumulating all in memory
+                if result['status'] == 'success' and result['matches']:
+                    # Collect matches for this product
+                    product_matches = []
+                    for match in result['matches']:
+                        product_matches.append((
+                            result['product_id'],
+                            match['product_id'],
+                            match['similarity_score'],
+                            match.get('color_score', match.get('visual_score', 0.0)),
+                            match.get('shape_score', match.get('visual_score', 0.0)),
+                            match.get('texture_score', match.get('visual_score', 0.0))
+                        ))
+                    total_matches_generated += len(product_matches)
 
-                        # SMART LINKING: If both found matches but to different products,
-                        # check if they're actually the same product by filename ↔ SKU
-                        if visual_match and metadata_match and visual_score > 0 and metadata_score > 0:
-                            if visual_match.get('product_id') != metadata_match.get('product_id'):
-                                # Different product_ids - verify they represent same item
-                                if not matches_by_filename_sku(visual_match, metadata_match):
-                                    # Not the same product - don't merge these scores
-                                    continue
+                    # OPTIMIZATION: Insert incrementally while other workers are still merging
+                    # This starts inserting while other workers are still running, freeing memory as we go
+                    if store_matches and product_matches:
+                        try:
+                            from database import bulk_insert_matches
+                            inserted = bulk_insert_matches(product_matches)
+                            total_matches_inserted += inserted
+                            logger.debug(f"[BATCH-HYBRID] [INSERT] ▶ Incremental insert: {inserted} matches for product {result['product_id']}")
+                        except Exception as e:
+                            logger.warning(f"[BATCH-HYBRID] [INSERT] Incremental insert failed for {result['product_id']}: {e}, will retry at end")
+                            all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
 
-                        # Compute hybrid score
-                        hybrid_score = (visual_score * visual_weight) + (metadata_score * metadata_weight)
-                        
-                        # Use visual match data as base (has image_path, etc.)
-                        if visual_match:
-                            match_data = visual_match.copy()
-                        elif metadata_match:
-                            match_data = metadata_match.copy()
-                        else:
-                            continue
-                        
-                        # Update with hybrid scores
-                        match_data['similarity_score'] = hybrid_score
-                        match_data['visual_score'] = visual_score
-                        match_data['metadata_score'] = metadata_score
-                        match_data['is_potential_duplicate'] = hybrid_score > 90
-                        
-                        # Add metadata sub-scores and values
-                        if metadata_match:
-                            # Pass through dynamic metadata structures
-                            match_data['metadata_scores'] = metadata_match.get('metadata_scores', {})
-                            
-                            # Ensure metadata values are passed
-                            if 'metadata_values' in metadata_match:
-                                match_data['metadata_values'] = metadata_match['metadata_values']
-                            
-                            # Map common fields to legacy top-level keys for compatibility
-                            ms_scores = match_data.get('metadata_scores', {})
-                            match_data['sku_score'] = ms_scores.get('sku', 0.0)
-                            match_data['name_score'] = ms_scores.get('name', 0.0)
-                            match_data['category_score'] = ms_scores.get('category', 0.0)
-                            match_data['price_score'] = ms_scores.get('price', 0.0)
-                            match_data['performance_score'] = ms_scores.get('performance', 0.0)
+                if result['status'] == 'success':
+                    successful += 1
+                    logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: {result['match_count']} matches")
+                else:
+                    failed += 1
+                    logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: FAILED - {result.get('error', 'Unknown error')}")
 
-                        if not match_data.get('metadata_values') and visual_match and 'metadata_values' in visual_match:
-                             # Fallback: if visual match somehow has it (unlikely but possible if enriched later)
-                             match_data['metadata_values'] = visual_match['metadata_values']
-                        
-                        hybrid_matches.append(match_data)
-                    
-                    # Sort and filter
-                    hybrid_matches.sort(key=lambda x: x['similarity_score'], reverse=True)
-                    
-                    filtered_count = 0
-                    if threshold > 0:
-                        original_count = len(hybrid_matches)
-                        hybrid_matches = [m for m in hybrid_matches if m['similarity_score'] >= threshold]
-                        filtered_count = original_count - len(hybrid_matches)
-                    
-                    if limit > 0:
-                        hybrid_matches = hybrid_matches[:limit]
-                    
-                    from product_matching import calculate_summary_stats
-                    return {
-                        'product_id': product_id,
-                        'product_data': query_products_data.get(product_id, {}), # ADDED
-                        'status': 'success',
-                        'match_count': len(hybrid_matches),
-                        'matches': hybrid_matches,
-                        'summary_stats': calculate_summary_stats(hybrid_matches), # ADDED
-                        'filtered_by_threshold': filtered_count
-                    }
-                    
-                except Exception as e:
-                    logger.error(f"Error merging results for product {product_id}: {e}")
-                    return {
-                        'product_id': product_id,
-                        'status': 'failed',
-                        'error': str(e),
-                        'error_code': 'MERGE_ERROR'
-                    }
-            
-            future = executor.submit(merge_without_store, pid)
-            futures[future] = pid
-        
-        for i, future in enumerate(as_completed(futures), 1):
-            result = future.result()
-            results.append(result)
-
-            # MEMORY OPTIMIZATION: Incremental insertion to prevent 50-100MB accumulation in Mode 3
-            # Insert matches immediately instead of accumulating all in memory
-            if result['status'] == 'success' and result['matches']:
-                # Collect matches for this product
-                product_matches = []
-                for match in result['matches']:
-                    product_matches.append((
-                        result['product_id'],
-                        match['product_id'],
-                        match['similarity_score'],
-                        match.get('color_score', match.get('visual_score', 0.0)),
-                        match.get('shape_score', match.get('visual_score', 0.0)),
-                        match.get('texture_score', match.get('visual_score', 0.0))
-                    ))
-                total_matches_generated += len(product_matches)
-
-                # OPTIMIZATION: Insert incrementally while other workers are still merging
-                # This starts inserting while other workers are still running, freeing memory as we go
-                if store_matches and product_matches:
-                    try:
-                        from database import bulk_insert_matches
-                        inserted = bulk_insert_matches(product_matches)
-                        total_matches_inserted += inserted
-                        logger.debug(f"[BATCH-HYBRID] [INSERT] ▶ Incremental insert: {inserted} matches for product {result['product_id']}")
-                    except Exception as e:
-                        logger.warning(f"[BATCH-HYBRID] [INSERT] Incremental insert failed for {result['product_id']}: {e}, will retry at end")
-                        all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
-
-            if result['status'] == 'success':
-                successful += 1
-                logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: {result['match_count']} matches")
-            else:
-                failed += 1
-                logger.debug(f"[BATCH-HYBRID] [MERGE] Product {result['product_id']}: FAILED - {result.get('error', 'Unknown error')}")
-
-            # Log progress every 10 products (debug-only to reduce normal log noise)
-            if i % 10 == 0:
-                logger.debug(f"[BATCH-HYBRID] [MERGE] Progress: {i}/{len(product_ids)} merged ({successful} successful, {failed} failed)")
+                # Log progress every 10 products (debug-only to reduce normal log noise)
+                if i % 10 == 0:
+                    logger.debug(f"[BATCH-HYBRID] [MERGE] Progress: {i}/{len(product_ids)} merged ({successful} successful, {failed} failed)")
     
     # PERFORMANCE OPTIMIZATION: Insert any remaining matches in chunks
     # (Most matches were already inserted incrementally, this handles any failed insertions)

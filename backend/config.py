@@ -24,7 +24,7 @@ if not DEBUG_MODE and os.path.exists(DEBUG_CONFIG_PATH):
         with open(DEBUG_CONFIG_PATH, 'r') as f:
             content = f.read().strip().lower()
             DEBUG_MODE = content in ('true', '1', 'yes', 'on')
-    except:
+    except OSError:
         pass
 
 def is_debug_mode():

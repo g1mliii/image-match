@@ -103,7 +103,7 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
             if isinstance(pm, str):
                 try:
                     meta = json.loads(pm)
-                except:
+                except (json.JSONDecodeError, ValueError, TypeError):
                     pass
             elif isinstance(pm, dict):
                 meta = pm
@@ -117,16 +117,24 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
             meta = m['metadata_values']
 
         # Flatten if nested under 'metadata' key (common issue)
-        if meta and 'metadata' in meta and isinstance(meta['metadata'], dict):
-            nested = meta.pop('metadata')
-            meta.update(nested)
+        if meta and 'metadata' in meta:
+            nested_meta = meta['metadata']
+            if isinstance(nested_meta, str):
+                try:
+                    nested_meta = json.loads(nested_meta)
+                except (json.JSONDecodeError, ValueError):
+                    nested_meta = None
+            if isinstance(nested_meta, dict):
+                meta.pop('metadata')
+                meta.update(nested_meta)
 
         parsed_metadata.append(meta)
 
-    # PERFORMANCE: Single pass for similarity stats and key/value collection
+    # PERFORMANCE: Single pass for similarity stats, key/value collection, and metadata_scores keys
     similarity_sum = 0
     similarity_max = 0
     values_map = {}  # key -> list of values
+    all_metadata_scores_keys = set()
 
     for i, m in enumerate(matches):
         # Collect similarity score
@@ -145,6 +153,10 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
                     values_map[k] = []
                 values_map[k].append(v)
 
+        # Collect metadata_scores keys (Mode 2/3 similarity percentages)
+        if 'metadata_scores' in m and m['metadata_scores']:
+            all_metadata_scores_keys.update(m['metadata_scores'].keys())
+
     # Build stats object
     stats = {
         'match_count': len(matches),
@@ -157,13 +169,6 @@ def calculate_summary_stats(matches: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     # Blacklist internal/technical fields that should never appear in UI
     BLACKLIST_FIELDS = {'id', 'is_historical', 'image_path', 'created_at', 'updated_at', 'product_id'}
-
-    # Collect metadata_scores for similarity percentages (Mode 2/3)
-    # metadata_scores contains similarity scores for text fields (brand, description, etc.)
-    all_metadata_scores_keys = set()
-    for m in matches:
-        if 'metadata_scores' in m and m['metadata_scores']:
-            all_metadata_scores_keys.update(m['metadata_scores'].keys())
 
     # Analyze each key (numeric vs text with similarity scores)
     numeric_fields = []
@@ -595,38 +600,62 @@ def find_matches(
                 "Product has no category. Matching against all historical products."
             )
             match_against_all = True
-    
-    # Step 4: Get candidate products from historical catalog
-    # PERFORMANCE OPTIMIZATION (Task 14): Category filtering happens at database level
-    # Uses composite index (category, is_historical) for efficient retrieval
-    # This ensures we only load features for products in the target category,
-    # avoiding unnecessary similarity computations on irrelevant products
-    if is_debug_mode():
-        logger.debug(f"Fetching historical products for matching (category: {normalized_category}, match_all: {match_against_all})")
-    
-    if match_against_all:
-        # Match against all historical products regardless of category
-        candidate_features = get_all_features_by_category(
-            category=None,
-            is_historical=True,
-            include_uncategorized=True
-        )
-    else:
-        # Match only within same category (OPTIMIZED: filters at DB level)
-        candidate_features = get_all_features_by_category(
+
+    # Step 4: Candidate set strategy
+    # - If FAISS index is available (CLIP mode), avoid loading all candidate feature blobs.
+    # - Otherwise, load candidates from DB for brute-force matching.
+    search_category = normalized_category if not match_against_all else None
+    candidate_features: Optional[List[Tuple[int, Dict[str, Any]]]] = None
+    candidate_count = 0
+    faiss_manager = None
+    faiss_index_available = False
+
+    def _load_candidate_features_for_bruteforce() -> List[Tuple[int, Dict[str, Any]]]:
+        if match_against_all:
+            return get_all_features_by_category(
+                category=None,
+                is_historical=True,
+                include_uncategorized=True
+            )
+        return get_all_features_by_category(
             category=normalized_category,
             is_historical=True,
             include_uncategorized=include_uncategorized
         )
-    
-    # Step 5: Handle empty catalog
-    if not candidate_features:
-        logger.warning(f"No historical products found for matching")
-        raise EmptyCatalogError(normalized_category if not match_against_all else None)
 
-    # DEBUG: Only log candidate count in debug mode (reduces log spam)
-    if is_debug_mode():
-        logger.debug(f"Found {len(candidate_features)} candidate products")
+    if use_clip:
+        try:
+            from faiss_index import faiss_manager as _faiss_manager
+            faiss_manager = _faiss_manager
+            faiss_index_available = faiss_manager.has_index(search_category)
+        except ImportError:
+            faiss_index_available = False
+        except Exception as e:
+            logger.warning(f"Failed to check FAISS availability for '{search_category}': {e}")
+            faiss_index_available = False
+
+    if faiss_index_available and faiss_manager is not None:
+        candidate_count = faiss_manager.get_index_size(search_category)
+        if candidate_count <= 0:
+            logger.warning("FAISS index exists but contains no candidates")
+            raise EmptyCatalogError(normalized_category if not match_against_all else None)
+        if is_debug_mode():
+            logger.debug(
+                f"Using FAISS candidate count for matching (category: {search_category}, candidates: {candidate_count})"
+            )
+    else:
+        if is_debug_mode():
+            logger.debug(
+                f"Fetching historical products for brute force matching (category: {normalized_category}, "
+                f"match_all: {match_against_all})"
+            )
+        candidate_features = _load_candidate_features_for_bruteforce()
+        candidate_count = len(candidate_features)
+        if candidate_count == 0:
+            logger.warning("No historical products found for matching")
+            raise EmptyCatalogError(normalized_category if not match_against_all else None)
+        if is_debug_mode():
+            logger.debug(f"Found {candidate_count} candidate products")
     
     # Step 6: Compute similarities with FAISS acceleration (if available)
     matches = []
@@ -635,111 +664,112 @@ def find_matches(
     
     # Try FAISS fast path for CLIP embeddings
     faiss_used = False
-    if use_clip:
+    if use_clip and faiss_index_available and faiss_manager is not None:
         try:
-            from faiss_index import faiss_manager
-            
-            # Check if FAISS index exists for this category
-            search_category = normalized_category if not match_against_all else None
-            
-            if faiss_manager.has_index(search_category):
+            if is_debug_mode():
+                logger.debug(f"Using FAISS fast path for category '{search_category}'")
+
+            # Search with FAISS (returns top candidates quickly)
+            # Request more candidates than limit to account for filtering
+            k = limit * 10 if limit > 0 else 1000
+            if candidate_count > 0:
+                k = min(k, candidate_count)
+            distances, candidate_ids = faiss_manager.search(
+                search_category,
+                query_embedding,
+                k=k,
+                threshold=threshold / 100.0  # Convert 0-100 to 0-1 range
+            )
+
+            if distances is not None and candidate_ids is not None:
+                faiss_used = True
                 if is_debug_mode():
-                    logger.debug(f"Using FAISS fast path for category '{search_category}'")
-                
-                # Search with FAISS (returns top candidates quickly)
-                # Request more candidates than limit to account for filtering
-                k = min(limit * 10 if limit > 0 else 1000, len(candidate_features))
-                distances, candidate_ids = faiss_manager.search(
-                    search_category,
-                    query_embedding,
-                    k=k,
-                    threshold=threshold / 100.0  # Convert 0-100 to 0-1 range
-                )
-                
-                if distances is not None and candidate_ids is not None:
-                    faiss_used = True
-                    if is_debug_mode():
-                        logger.debug(f"FAISS returned {len(candidate_ids)} candidates")
-                    
-                    # Deduplicate candidates (FAISS might return same ID multiple times if catalog was appended)
-                    seen_candidate_ids = set()
-                    duplicate_count = 0
-                    
-                    # Process FAISS results
-                    for dist, candidate_id in zip(distances, candidate_ids):
-                        # Skip self
-                        if candidate_id == product_id:
-                            continue
-                            
-                        # Skip duplicates
-                        if candidate_id in seen_candidate_ids:
-                            duplicate_count += 1
-                            logger.warning(f"FAISS returned duplicate candidate_id {candidate_id} for product {product_id}")
-                            continue
-                        seen_candidate_ids.add(candidate_id)
-                        
-                        try:
-                            # Get candidate product details
-                            candidate_product = get_product_by_id(candidate_id)
-                            
-                            if not candidate_product:
-                                logger.warning(f"Product {candidate_id} not found in database, skipping")
-                                failed_count += 1
-                                continue
-                            
-                            # Convert FAISS distance (0-1 cosine similarity) to 0-100 scale
-                            similarity_score = float(dist) * 100.0
-                            
-                            # Create similarities dict compatible with legacy format
-                            similarities = {
-                                'combined_similarity': similarity_score,
-                                'color_similarity': similarity_score,
-                                'shape_similarity': similarity_score,
-                                'texture_similarity': similarity_score
-                            }
-                            
-                            # Handle missing metadata gracefully
-                            from matching_utils import track_missing_metadata, create_match_result
-                            
-                            missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
-                            
-                            if missing_fields:
-                                logger.debug(f"Product {candidate_id} missing metadata: {missing_fields}")
-                            
-                            # Create match result
-                            match_result = create_match_result(
-                                candidate_id,
-                                candidate_product,
-                                similarities,
-                                missing_fields
-                            )
-                            
-                            matches.append(match_result)
-                            successful_count += 1
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing FAISS result for product {candidate_id}: {e}")
+                    logger.debug(f"FAISS returned {len(candidate_ids)} candidates")
+
+                # Deduplicate candidates and collect unique IDs
+                seen_candidate_ids = set()
+                duplicate_count = 0
+                unique_pairs = []  # (dist, candidate_id) after dedup
+
+                for dist, candidate_id in zip(distances, candidate_ids):
+                    if candidate_id == product_id:
+                        continue
+                    if candidate_id in seen_candidate_ids:
+                        duplicate_count += 1
+                        continue
+                    seen_candidate_ids.add(candidate_id)
+                    unique_pairs.append((dist, candidate_id))
+
+                # BATCH LOOKUP: Single query for all candidate products (replaces N individual queries)
+                from database import get_products_by_ids
+                candidate_products_map = get_products_by_ids([cid for _, cid in unique_pairs])
+
+                from matching_utils import track_missing_metadata, create_match_result
+
+                # Process FAISS results using pre-fetched product data
+                for dist, candidate_id in unique_pairs:
+                    try:
+                        candidate_product = candidate_products_map.get(candidate_id)
+
+                        if not candidate_product:
+                            logger.warning(f"Product {candidate_id} not found in database, skipping")
                             failed_count += 1
-                            data_quality_issues['computation_errors'] += 1
-                            if not skip_invalid_products:
-                                raise
-                    
-                    if is_debug_mode():
-                        logger.debug(f"FAISS fast path complete: {successful_count} matches, {failed_count} failed")
-                else:
-                    logger.warning("FAISS search returned None, falling back to brute force")
+                            continue
+
+                        similarity_score = float(dist) * 100.0
+
+                        similarities = {
+                            'combined_similarity': similarity_score,
+                            'color_similarity': similarity_score,
+                            'shape_similarity': similarity_score,
+                            'texture_similarity': similarity_score
+                        }
+
+                        missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
+
+                        if missing_fields:
+                            logger.debug(f"Product {candidate_id} missing metadata: {missing_fields}")
+
+                        match_result = create_match_result(
+                            candidate_id,
+                            candidate_product,
+                            similarities,
+                            missing_fields
+                        )
+
+                        matches.append(match_result)
+                        successful_count += 1
+
+                    except Exception as e:
+                        logger.error(f"Error processing FAISS result for product {candidate_id}: {e}")
+                        failed_count += 1
+                        data_quality_issues['computation_errors'] += 1
+                        if not skip_invalid_products:
+                            raise
+
+                if is_debug_mode():
+                    logger.debug(f"FAISS fast path complete: {successful_count} matches, {failed_count} failed")
             else:
-                logger.info(f"FAISS index not available for category '{search_category}', using brute force")
-                
-        except ImportError:
-            logger.warning("FAISS not available (install faiss-cpu), using brute force")
+                logger.warning("FAISS search returned None, falling back to brute force")
         except Exception as e:
             logger.error(f"FAISS search failed: {e}, falling back to brute force", exc_info=True)
     
     # Fallback to brute force if FAISS not used
     if not faiss_used:
         logger.info("Using brute force similarity computation")
-        
+
+        if candidate_features is None:
+            candidate_features = _load_candidate_features_for_bruteforce()
+            candidate_count = len(candidate_features)
+            if candidate_count == 0:
+                raise EmptyCatalogError(normalized_category if not match_against_all else None)
+
+        # BATCH LOOKUP: Preload all candidate product data in one query (replaces N individual queries)
+        from database import get_products_by_ids
+        _brute_candidate_ids = list(set(cid for cid, _ in candidate_features if cid != product_id))
+        _brute_products_map = get_products_by_ids(_brute_candidate_ids) if _brute_candidate_ids else {}
+        del _brute_candidate_ids  # Free temporary list
+
         # Deduplicate candidates (database might return same ID multiple times)
         seen_candidate_ids = set()
         
@@ -862,22 +892,9 @@ def find_matches(
                         raise
                     continue
                 
-                # Get candidate product details with error handling
-                try:
-                    candidate_product = get_product_by_id(candidate_id)
-                except Exception as e:
-                    logger.error(f"Database error retrieving product {candidate_id}: {e}")
-                    warnings_list.append(f"Product {candidate_id}: Database error")
-                    failed_count += 1
-                    errors_list.append({
-                        'product_id': candidate_id,
-                        'error': f'Database error: {str(e)}',
-                        'error_code': 'DATABASE_ERROR'
-                    })
-                    if not skip_invalid_products:
-                        raise
-                    continue
-                
+                # Get candidate product details from pre-fetched batch (no N+1 query)
+                candidate_product = _brute_products_map.get(candidate_id)
+
                 if not candidate_product:
                     logger.warning(f"Product {candidate_id} not found in database, skipping")
                     warnings_list.append(f"Product {candidate_id} not found in database")
@@ -936,7 +953,7 @@ def find_matches(
         logger.warning(f"No matches found for product {product_id} (FAISS returned 0 candidates or all failed)")
         return {
             'matches': [],
-            'total_candidates': len(candidate_features),
+            'total_candidates': candidate_count,
             'successful_matches': 0,
             'failed_matches': failed_count,
             'filtered_by_threshold': 0,
@@ -1032,7 +1049,7 @@ def find_matches(
     result = {
         'matches': matches,
         'summary_stats': calculate_summary_stats(matches), # ADDED: upfront stats for groups
-        'total_candidates': len(candidate_features),
+        'total_candidates': candidate_count,
         'successful_matches': successful_count,
         'failed_matches': failed_count,
         'filtered_by_threshold': filtered_count,
@@ -1047,7 +1064,7 @@ def find_matches(
         'data_quality_issues': data_quality_issues,
         'data_quality_summary': {
             'total_issues': sum(data_quality_issues.values()),
-            'success_rate': round(successful_count / len(candidate_features) * 100, 1) if candidate_features else 0,
+            'success_rate': round(successful_count / candidate_count * 100, 1) if candidate_count else 0,
             'has_data_quality_issues': sum(data_quality_issues.values()) > 0
         }
     }
@@ -1671,6 +1688,216 @@ def find_metadata_matches(
     )
     
 
+def _parse_metadata_json(raw_metadata: Any) -> Dict[str, Any]:
+    """Parse metadata payload into a dictionary safely."""
+    import json
+
+    if raw_metadata is None:
+        return {}
+
+    if isinstance(raw_metadata, dict):
+        return raw_metadata
+
+    if isinstance(raw_metadata, str):
+        try:
+            parsed = json.loads(raw_metadata)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+
+    return {}
+
+
+def _build_combined_metadata(product: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build normalized metadata map from standard fields + metadata JSON.
+
+    Keeps matching behavior unchanged while enabling reuse/caching for
+    large Mode 2 batch runs.
+    """
+    combined = {}
+
+    if product.get('sku'):
+        combined['sku'] = product['sku']
+    if product.get('product_name'):
+        combined['name'] = product['product_name']
+    if product.get('category'):
+        combined['category'] = product['category']
+
+    product_meta = _parse_metadata_json(product.get('metadata'))
+    if product_meta:
+        combined.update(product_meta)
+
+    return combined
+
+
+def _build_mode2_candidate_index(candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Build reusable category index for Mode 2 candidate filtering.
+
+    Returns a dictionary with:
+    - all: all candidates
+    - by_category: normalized_category -> candidate list
+    - categories: list of normalized categories
+    """
+    all_candidates: List[Dict[str, Any]] = []
+    by_category: Dict[str, List[Dict[str, Any]]] = {}
+
+    for candidate in candidates:
+        candidate_dict = candidate if isinstance(candidate, dict) else dict(candidate)
+        all_candidates.append(candidate_dict)
+
+        normalized = normalize_category(candidate_dict.get('category'))
+        if normalized is None:
+            continue
+        by_category.setdefault(normalized, []).append(candidate_dict)
+
+    return {
+        'all': all_candidates,
+        'by_category': by_category,
+        'categories': list(by_category.keys())
+    }
+
+
+def _get_mode2_similar_categories(
+    query_category: str,
+    available_categories: List[str],
+    high_threshold: float = 80.0,
+    fallback_threshold: float = 65.0
+) -> Tuple[List[str], Dict[str, Any]]:
+    """
+    Find category candidates using percentage similarity.
+
+    Strategy:
+    - exact match first
+    - categories above high_threshold (e.g. 80%) next
+    - single closest category if best score >= fallback_threshold
+    - otherwise caller should fall back to full catalog
+    """
+    query_norm = normalize_category(query_category)
+    if query_norm is None:
+        return [], {'strategy': 'none', 'best_score': 0.0}
+
+    # Fast exact hit
+    if query_norm in available_categories:
+        return [query_norm], {
+            'strategy': 'exact',
+            'best_category': query_norm,
+            'best_score': 100.0
+        }
+
+    scored: List[Tuple[str, float]] = []
+    for category in available_categories:
+        # Blend typo-aware category metric with fuzzy token similarity.
+        score = max(
+            compute_category_similarity(query_norm, category),
+            compute_string_similarity(query_norm, category, 'category')
+        )
+        scored.append((category, score))
+
+    if not scored:
+        return [], {'strategy': 'none', 'best_score': 0.0}
+
+    scored.sort(key=lambda item: item[1], reverse=True)
+    best_category, best_score = scored[0]
+
+    high_conf_categories = [category for category, score in scored if score >= high_threshold]
+    if high_conf_categories:
+        return high_conf_categories, {
+            'strategy': 'high_confidence',
+            'best_category': best_category,
+            'best_score': best_score
+        }
+
+    if best_score >= fallback_threshold:
+        return [best_category], {
+            'strategy': 'closest_fallback',
+            'best_category': best_category,
+            'best_score': best_score
+        }
+
+    return [], {
+        'strategy': 'no_confident_match',
+        'best_category': best_category,
+        'best_score': best_score
+    }
+
+
+def _select_mode2_candidates(
+    query_category: Optional[str],
+    candidate_index: Dict[str, Any],
+    limit: int,
+    match_against_all: bool = False
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Select Mode 2 candidate pool using soft category prefilter with safe fallback.
+    """
+    all_candidates = candidate_index.get('all', [])
+    if match_against_all:
+        return all_candidates, {
+            'enabled': False,
+            'strategy': 'match_against_all',
+            'selected_categories': [],
+            'selected_count': len(all_candidates)
+        }
+
+    query_norm = normalize_category(query_category)
+    if query_norm is None:
+        return all_candidates, {
+            'enabled': False,
+            'strategy': 'query_uncategorized',
+            'selected_categories': [],
+            'selected_count': len(all_candidates)
+        }
+
+    available_categories: List[str] = candidate_index.get('categories', [])
+    selected_categories, category_info = _get_mode2_similar_categories(
+        query_category=query_norm,
+        available_categories=available_categories
+    )
+
+    if not selected_categories:
+        return all_candidates, {
+            'enabled': False,
+            'strategy': category_info.get('strategy', 'fallback_all'),
+            'best_category': category_info.get('best_category'),
+            'best_score': category_info.get('best_score', 0.0),
+            'selected_categories': [],
+            'selected_count': len(all_candidates)
+        }
+
+    by_category: Dict[str, List[Dict[str, Any]]] = candidate_index.get('by_category', {})
+    selected: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    for category in selected_categories:
+        for candidate in by_category.get(category, []):
+            candidate_id = candidate.get('id')
+            if candidate_id in seen_ids:
+                continue
+            seen_ids.add(candidate_id)
+            selected.append(candidate)
+
+    # Safety guard: if prefiltered pool is too small, use full catalog to preserve recall.
+    min_candidates = max(limit * 5, 50)
+    if len(selected) < min_candidates:
+        return all_candidates, {
+            'enabled': False,
+            'strategy': 'fallback_small_pool',
+            'best_category': category_info.get('best_category'),
+            'best_score': category_info.get('best_score', 0.0),
+            'selected_categories': selected_categories,
+            'selected_count': len(all_candidates)
+        }
+
+    return selected, {
+        'enabled': True,
+        'strategy': category_info.get('strategy', 'category_prefilter'),
+        'best_category': category_info.get('best_category'),
+        'best_score': category_info.get('best_score', 0.0),
+        'selected_categories': selected_categories,
+        'selected_count': len(selected)
+    }
 
 
 def _find_dynamic_metadata_matches(
@@ -1680,7 +1907,11 @@ def _find_dynamic_metadata_matches(
     weights: Dict[str, float] = None,
     store_matches: bool = True,
     skip_invalid_products: bool = True,
-    match_against_all: bool = False
+    match_against_all: bool = False,
+    preloaded_candidates: Optional[List[Dict[str, Any]]] = None,
+    query_product: Optional[Dict[str, Any]] = None,
+    schema_types: Optional[Dict[str, str]] = None,
+    candidate_index: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Internal function for dynamic metadata matching.
@@ -1700,8 +1931,7 @@ def _find_dynamic_metadata_matches(
     Returns:
         Dictionary with matches and metadata_scores per match
     """
-    import json
-    from database import get_metadata_schema, get_product_metadata as db_get_product_metadata
+    from database import get_metadata_schema
 
     warnings_list = []
     errors_list = []
@@ -1721,31 +1951,19 @@ def _find_dynamic_metadata_matches(
     if total_weight > 0:
         weights = {k: v / total_weight for k, v in weights.items()}
 
-    # Get schema for data types
-    schema = get_metadata_schema()
-    schema_types = {col['column_name']: col['data_type'] for col in schema}
+    # Get schema for data types (preloaded in batch mode when available)
+    if schema_types is None:
+        schema = get_metadata_schema()
+        schema_types = {col['column_name']: col['data_type'] for col in schema}
 
     # Step 1: Get query product
-    product = get_product_by_id(product_id)
+    product = query_product if query_product is not None else get_product_by_id(product_id)
     if not product:
         raise ProductNotFoundError(product_id)
     product = dict(product)  # Convert Row to dict for .get() usage
 
     # Build query metadata from product fields + metadata JSON
-    query_metadata = {}
-
-    # Standard product fields
-    if product.get('sku'):
-        query_metadata['sku'] = product['sku']
-    if product.get('product_name'):
-        query_metadata['name'] = product['product_name']
-    if product.get('category'):
-        query_metadata['category'] = product['category']
-
-    # Parse metadata JSON if exists
-    product_meta = db_get_product_metadata(product_id)
-    if product_meta:
-        query_metadata.update(product_meta)
+    query_metadata = _build_combined_metadata(product)
 
     # DEBUG: Only log query metadata in debug mode
     if is_debug_mode():
@@ -1755,17 +1973,47 @@ def _find_dynamic_metadata_matches(
     from database import get_all_products_with_metadata
 
     try:
-        candidates = get_all_products_with_metadata(is_historical=True)
+        all_candidates = preloaded_candidates if preloaded_candidates is not None else get_all_products_with_metadata(is_historical=True)
     except Exception as e:
         logger.error(f"Failed to get candidates: {e}")
         raise EmptyCatalogError()
 
-    if not candidates:
+    if not all_candidates:
         raise EmptyCatalogError()
+
+    # PERFORMANCE OPTIMIZATION: Use category pre-filtering whenever a candidate_index
+    # is available and we're not matching against all. This narrows the comparison set
+    # from all historical to same-category only, even when category_weight is 0.
+    # This reduces comparisons from N*M to N*(M/C) where C is number of categories.
+    try:
+        category_weight = float(weights.get('category', 0.0))
+    except (TypeError, ValueError, AttributeError):
+        category_weight = 0.0
+
+    use_category_prefilter = (not match_against_all) and candidate_index is not None
+
+    if use_category_prefilter:
+        query_category = query_metadata.get('category') or product.get('category')
+        candidates, category_filter_info = _select_mode2_candidates(
+            query_category=query_category,
+            candidate_index=candidate_index,
+            limit=limit,
+            match_against_all=match_against_all
+        )
+    else:
+        candidates = all_candidates
+        category_filter_info = {
+            'enabled': False,
+            'strategy': 'match_against_all' if match_against_all else 'no_index',
+            'selected_categories': [],
+            'selected_count': len(all_candidates)
+        }
 
     # DEBUG: Only log candidate count in debug mode (reduces log spam)
     if is_debug_mode():
-        logger.debug(f"Found {len(candidates)} candidate products")
+        logger.debug(
+            f"Found {len(candidates)} candidate products (catalog={len(all_candidates)}, strategy={category_filter_info.get('strategy')})"
+        )
 
     # Step 3: Compute similarities
     matches = []
@@ -1773,7 +2021,8 @@ def _find_dynamic_metadata_matches(
     failed_count = 0
 
     for candidate in candidates:
-        candidate = dict(candidate)  # Convert Row to dict for .get() usage
+        if not isinstance(candidate, dict):
+            candidate = dict(candidate)  # Convert Row to dict for .get() usage
         candidate_id = candidate['id']
 
         # Skip self
@@ -1781,19 +2030,10 @@ def _find_dynamic_metadata_matches(
             continue
 
         try:
-            # Build candidate metadata from product fields + metadata JSON
-            cand_metadata = {}
-
-            if candidate.get('sku'):
-                cand_metadata['sku'] = candidate['sku']
-            if candidate.get('product_name'):
-                cand_metadata['name'] = candidate['product_name']
-            if candidate.get('category'):
-                cand_metadata['category'] = candidate['category']
-
-            # Add metadata JSON fields
-            if candidate.get('metadata'):
-                cand_metadata.update(candidate['metadata'])
+            # Reuse precomputed candidate metadata when available.
+            cand_metadata = candidate.get('_combined_metadata')
+            if cand_metadata is None:
+                cand_metadata = _build_combined_metadata(candidate)
 
             # Compute similarity for each weighted column
             metadata_scores = {}
@@ -1874,6 +2114,8 @@ def _find_dynamic_metadata_matches(
         'matches': matches,
         'summary_stats': calculate_summary_stats(matches), # ADDED: upfront stats for groups
         'total_candidates': len(candidates),
+        'total_catalog_candidates': len(all_candidates),
+        'category_filtering': category_filter_info,
         'successful_matches': successful_count,
         'failed_matches': failed_count,
         'filtered_by_threshold': filtered_count,
@@ -1945,7 +2187,7 @@ def batch_find_matches(
     
     Requirements: 6.1, 6.2, 6.3
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     
     if max_workers is None:
         max_workers = min(32, (os.cpu_count() or 1) + 4)
@@ -2054,10 +2296,15 @@ def batch_find_matches(
     last_logged_percent = 0
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks with store_matches=False (we'll batch insert after)
-        futures = {}
-        for pid in product_ids:
-            future = executor.submit(
+        # Submit work using a bounded in-flight queue to avoid holding tens of
+        # thousands of Future objects for large (e.g. 50k) batches.
+        max_in_flight = (
+            min(len(product_ids), max(max_workers, max_workers * 8))
+            if product_ids else 0
+        )
+
+        def _submit_mode1(pid: int):
+            return executor.submit(
                 find_matches,
                 product_id=pid,
                 threshold=threshold,
@@ -2070,92 +2317,109 @@ def batch_find_matches(
                 store_matches=False,  # Don't store yet - we'll batch insert
                 skip_invalid_products=skip_invalid_products
             )
-            futures[future] = pid
-        
-        # Process results as they complete
-        for i, future in enumerate(as_completed(futures), 1):
-            product_id = futures[future]
-            
-            try:
-                match_result = future.result()
-                
-                # Collect matches for batch insertion
-                if match_result['matches']:
-                    total_matches_found += len(match_result['matches'])
-                    if store_matches:
-                        for match in match_result['matches']:
-                            all_matches_to_insert.append((
-                                product_id,
-                                match['product_id'],
-                                match['similarity_score'],
-                                match['color_score'],
-                                match['shape_score'],
-                                match['texture_score']
-                            ))
-                        
-                        # OPTIMIZATION: Insert incrementally to avoid memory bloat
-                        # This starts inserting while other workers are still matching
-                        if len(all_matches_to_insert) >= INCREMENTAL_BATCH_SIZE:
-                            try:
-                                from database import bulk_insert_matches
-                                inserted = bulk_insert_matches(all_matches_to_insert)
-                                total_matches_inserted += inserted
-                                logger.debug(f"[BATCH-MODE1] ▶ Incremental insert: {inserted} matches (batch inserted while matching continues)")
-                                all_matches_to_insert = []  # Clear for next batch
-                            except Exception as e:
-                                logger.warning(f"[BATCH-MODE1] Incremental insert failed: {e}, will retry at end")
-                
-                results.append({
-                    'product_id': product_id,
-                    'product_data': query_products_data.get(product_id, {}), # ADDED
-                    'status': 'success',
-                    'match_count': len(match_result['matches']),
-                    'matches': match_result['matches'],
-                    'summary_stats': match_result.get('summary_stats', {}), # ADDED
-                    'warnings': match_result['warnings'],
-                    'data_quality_issues': match_result.get('data_quality_issues', {}),
-                    'data_quality_summary': match_result.get('data_quality_summary', {})
-                })
-                
-                successful += 1
-                logger.debug(f"[BATCH-MODE1] Product {product_id}: {len(match_result['matches'])} matches found")
-                
-            except (ProductNotFoundError, MissingFeaturesError, EmptyCatalogError, AllMatchesFailedError) as e:
-                logger.error(f"Failed to match product {product_id}: {e.message}")
-                
-                error_info = {
-                    'product_id': product_id,
-                    'status': 'failed',
-                    'error': e.message,
-                    'error_code': e.error_code,
-                    'suggestion': e.suggestion
-                }
-                
-                results.append(error_info)
-                errors.append(error_info)
-                failed += 1
-                logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {e.message}")
-                
-            except Exception as e:
-                logger.error(f"Unexpected error matching product {product_id}: {e}")
-                
-                error_info = {
-                    'product_id': product_id,
-                    'status': 'failed',
-                    'error': str(e),
-                    'error_code': 'UNKNOWN_ERROR'
-                }
-                
-                results.append(error_info)
-                errors.append(error_info)
-                failed += 1
-                logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {str(e)}")
 
-            # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
-            current_percent = int((i / len(product_ids)) * 100)
-            if current_percent >= last_logged_percent + 20:
-                logger.debug(f"[BATCH-MODE1] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
-                last_logged_percent = current_percent
+        product_iter = iter(product_ids)
+        futures = {}
+        for _ in range(max_in_flight):
+            try:
+                pid = next(product_iter)
+            except StopIteration:
+                break
+            futures[_submit_mode1(pid)] = pid
+
+        i = 0
+        while futures:
+            done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
+            for future in done:
+                i += 1
+                product_id = futures.pop(future)
+
+                try:
+                    next_pid = next(product_iter)
+                    futures[_submit_mode1(next_pid)] = next_pid
+                except StopIteration:
+                    pass
+            
+                try:
+                    match_result = future.result()
+                
+                    # Collect matches for batch insertion
+                    if match_result['matches']:
+                        total_matches_found += len(match_result['matches'])
+                        if store_matches:
+                            for match in match_result['matches']:
+                                all_matches_to_insert.append((
+                                    product_id,
+                                    match['product_id'],
+                                    match['similarity_score'],
+                                    match['color_score'],
+                                    match['shape_score'],
+                                    match['texture_score']
+                                ))
+                            
+                            # OPTIMIZATION: Insert incrementally to avoid memory bloat
+                            # This starts inserting while other workers are still matching
+                            if len(all_matches_to_insert) >= INCREMENTAL_BATCH_SIZE:
+                                try:
+                                    from database import bulk_insert_matches
+                                    inserted = bulk_insert_matches(all_matches_to_insert)
+                                    total_matches_inserted += inserted
+                                    logger.debug(f"[BATCH-MODE1] ▶ Incremental insert: {inserted} matches (batch inserted while matching continues)")
+                                    all_matches_to_insert = []  # Clear for next batch
+                                except Exception as e:
+                                    logger.warning(f"[BATCH-MODE1] Incremental insert failed: {e}, will retry at end")
+                
+                    results.append({
+                        'product_id': product_id,
+                        'product_data': query_products_data.get(product_id, {}), # ADDED
+                        'status': 'success',
+                        'match_count': len(match_result['matches']),
+                        'matches': match_result['matches'],
+                        'summary_stats': match_result.get('summary_stats', {}), # ADDED
+                        'warnings': match_result['warnings'],
+                        'data_quality_issues': match_result.get('data_quality_issues', {}),
+                        'data_quality_summary': match_result.get('data_quality_summary', {})
+                    })
+                
+                    successful += 1
+                    logger.debug(f"[BATCH-MODE1] Product {product_id}: {len(match_result['matches'])} matches found")
+                
+                except (ProductNotFoundError, MissingFeaturesError, EmptyCatalogError, AllMatchesFailedError) as e:
+                    logger.error(f"Failed to match product {product_id}: {e.message}")
+                
+                    error_info = {
+                        'product_id': product_id,
+                        'status': 'failed',
+                        'error': e.message,
+                        'error_code': e.error_code,
+                        'suggestion': e.suggestion
+                    }
+                
+                    results.append(error_info)
+                    errors.append(error_info)
+                    failed += 1
+                    logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {e.message}")
+                
+                except Exception as e:
+                    logger.error(f"Unexpected error matching product {product_id}: {e}")
+                
+                    error_info = {
+                        'product_id': product_id,
+                        'status': 'failed',
+                        'error': str(e),
+                        'error_code': 'UNKNOWN_ERROR'
+                    }
+                
+                    results.append(error_info)
+                    errors.append(error_info)
+                    failed += 1
+                    logger.debug(f"[BATCH-MODE1] Product {product_id}: FAILED - {str(e)}")
+
+                # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
+                current_percent = int((i / len(product_ids)) * 100)
+                if current_percent >= last_logged_percent + 20:
+                    logger.debug(f"[BATCH-MODE1] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
+                    last_logged_percent = current_percent
     
     # PERFORMANCE OPTIMIZATION: Batch insert remaining matches in chunks
     # Smaller chunks = faster insertion while matching still happening
@@ -2234,7 +2498,7 @@ def batch_find_metadata_matches(
     """
     Find metadata matches for multiple products in batch with parallel processing.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     
     if max_workers is None:
         max_workers = min(32, (os.cpu_count() or 1) + 4)
@@ -2251,24 +2515,52 @@ def batch_find_metadata_matches(
     total_matches_inserted = 0  # Track total for logging (includes incremental + batch)
     total_matches_generated = 0
 
-    # Fetch query products data upfront
-    from database import get_products_by_ids
+    # Fetch batch-shared data upfront
+    from database import get_products_by_ids, get_all_products_with_metadata, get_metadata_schema
     query_products_data = get_products_by_ids(product_ids)
+    schema_types = {col['column_name']: col['data_type'] for col in get_metadata_schema()}
+    preloaded_candidates = get_all_products_with_metadata(is_historical=True)
+
+    # Precompute candidate metadata once for reuse across all products.
+    # MEMORY OPTIMIZATION: Build combined metadata and then drop the raw 'metadata'
+    # dict which is no longer needed. This avoids holding both the raw JSON-parsed
+    # dict and the flattened combined dict simultaneously (~40% memory reduction).
+    for candidate in preloaded_candidates:
+        if '_combined_metadata' not in candidate:
+            candidate['_combined_metadata'] = _build_combined_metadata(candidate)
+            # Drop the raw parsed metadata dict - it's been folded into _combined_metadata
+            candidate.pop('metadata', None)
+    try:
+        category_weight = float(weights.get('category', 0.0)) if weights else 0.0
+    except (TypeError, ValueError, AttributeError):
+        category_weight = 0.0
+
+    use_category_prefilter = (not match_against_all) and category_weight > 0
+
+    # PERFORMANCE OPTIMIZATION: Always build the candidate index when not matching
+    # against all. The index is cheap to build (single pass, grouping by category)
+    # and enables category-based pre-filtering in _find_dynamic_metadata_matches
+    # even when category_weight is 0. This reduces comparisons from N*M to N*(M/C)
+    # where C is the number of categories.
+    candidate_index = _build_mode2_candidate_index(preloaded_candidates) if not match_against_all else None
 
     def process_single_metadata_match(product_id: int) -> Tuple[int, Dict[str, Any]]:
         """Process a single product metadata match"""
         try:
-            # Use dynamic weights
-            match_result = find_metadata_matches(
+            # Use dynamic weights with shared preloaded data.
+            # Behavior remains identical; this only removes repeated DB/parsing work.
+            match_result = _find_dynamic_metadata_matches(
                 product_id=product_id,
                 threshold=threshold,
                 limit=limit,
                 weights=weights,
-                # --- START OF FIX ---
                 store_matches=False,  # CHANGED: Force False here so workers don't write to DB
-                # --- END OF FIX ---
                 skip_invalid_products=skip_invalid_products,
-                match_against_all=match_against_all
+                match_against_all=match_against_all,
+                preloaded_candidates=preloaded_candidates,
+                query_product=query_products_data.get(product_id),
+                schema_types=schema_types,
+                candidate_index=candidate_index
             )
             
             return (product_id, {
@@ -2311,7 +2603,7 @@ def batch_find_metadata_matches(
     logger.debug(f"[BATCH-MODE2] ▶ Starting parallel metadata matching with {max_workers} workers")
     logger.debug(f"[BATCH-MODE2] Processing {len(product_ids)} products in parallel...")
     logger.debug(f"[BATCH-MODE2] Matches will be batch inserted after all products are matched (1 DB call)")
-    logger.debug(f"[BATCH-MODE2] Step 1: Submit all {len(product_ids)} tasks to thread pool")
+    logger.debug(f"[BATCH-MODE2] Step 1: Submit metadata tasks with bounded in-flight queue")
 
     # Collect all matches for batch insertion
     all_matches_to_insert = []
@@ -2320,65 +2612,83 @@ def batch_find_metadata_matches(
     last_logged_percent = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
+        max_in_flight = (
+            min(len(product_ids), max(max_workers, max_workers * 8))
+            if product_ids else 0
+        )
+
+        product_iter = iter(product_ids)
         futures = {}
-        for pid in product_ids:
-            future = executor.submit(process_single_metadata_match, pid)
-            futures[future] = pid
+        for _ in range(max_in_flight):
+            try:
+                pid = next(product_iter)
+            except StopIteration:
+                break
+            futures[executor.submit(process_single_metadata_match, pid)] = pid
         
         # Process results as they complete
-        logger.debug(f"[BATCH-MODE2] Step 2: Processing results as they complete (as_completed)")
-        for i, future in enumerate(as_completed(futures), 1):
-            product_id = futures[future]
+        logger.debug(f"[BATCH-MODE2] Step 2: Processing results as they complete")
+        i = 0
+        while futures:
+            done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
+            for future in done:
+                i += 1
+                product_id = futures.pop(future)
+
+                try:
+                    next_pid = next(product_iter)
+                    futures[executor.submit(process_single_metadata_match, next_pid)] = next_pid
+                except StopIteration:
+                    pass
             
-            try:
-                result_tuple = future.result()
-                # result_tuple is (product_id, match_result_dict)
-                match_result = result_tuple[1]
+                try:
+                    result_tuple = future.result()
+                    # result_tuple is (product_id, match_result_dict)
+                    match_result = result_tuple[1]
                 
-                # MEMORY OPTIMIZATION: Incremental insertion to prevent 50-100MB accumulation in Mode 2
-                if match_result.get('matches'):
-                    total_matches_generated += len(match_result['matches'])
-                    if store_matches:
-                        # Collect matches for this product
-                        product_matches = []
-                        for match in match_result['matches']:
-                            product_matches.append((
-                                product_id,
-                                match['product_id'],
-                                match['similarity_score'],
-                                0, 0, 0  # color_score, shape_score, texture_score = 0 (N/A for metadata)
-                            ))
+                    # MEMORY OPTIMIZATION: Incremental insertion to prevent 50-100MB accumulation in Mode 2
+                    if match_result.get('matches'):
+                        total_matches_generated += len(match_result['matches'])
+                        if store_matches:
+                            # Collect matches for this product
+                            product_matches = []
+                            for match in match_result['matches']:
+                                product_matches.append((
+                                    product_id,
+                                    match['product_id'],
+                                    match['similarity_score'],
+                                    0, 0, 0  # color_score, shape_score, texture_score = 0 (N/A for metadata)
+                                ))
 
-                        # OPTIMIZATION: Insert incrementally while other workers are still matching
-                        try:
-                            from database import bulk_insert_matches
-                            inserted = bulk_insert_matches(product_matches)
-                            total_matches_inserted += inserted
-                            logger.debug(f"[BATCH-MODE2] ▶ Incremental insert: {inserted} matches for product {product_id}")
-                        except Exception as e:
-                            logger.warning(f"[BATCH-MODE2] Incremental insert failed for {product_id}: {e}, will retry at end")
-                            all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
+                            # OPTIMIZATION: Insert incrementally while other workers are still matching
+                            try:
+                                from database import bulk_insert_matches
+                                inserted = bulk_insert_matches(product_matches)
+                                total_matches_inserted += inserted
+                                logger.debug(f"[BATCH-MODE2] ▶ Incremental insert: {inserted} matches for product {product_id}")
+                            except Exception as e:
+                                logger.warning(f"[BATCH-MODE2] Incremental insert failed for {product_id}: {e}, will retry at end")
+                                all_matches_to_insert.extend(product_matches)  # Fallback to end insert if immediate insert fails
 
-                results.append(match_result) # Fixed: append the match_result dict directly or with wrapper if needed
+                    results.append(match_result) # Fixed: append the match_result dict directly or with wrapper if needed
                 
-                if match_result.get('status') == 'success':
-                    successful += 1
-                else:
+                    if match_result.get('status') == 'success':
+                        successful += 1
+                    else:
+                        failed += 1
+                        errors.append(match_result)
+                
+                    logger.debug(f"[BATCH-MODE2] Product {product_id}: Processed")
+                
+                except Exception as e:
+                    logger.error(f"Unexpected error matching product {product_id}: {e}")
                     failed += 1
-                    errors.append(match_result)
-                
-                logger.debug(f"[BATCH-MODE2] Product {product_id}: Processed")
-                
-            except Exception as e:
-                logger.error(f"Unexpected error matching product {product_id}: {e}")
-                failed += 1
 
-            # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
-            current_percent = int((i / len(product_ids)) * 100)
-            if current_percent >= last_logged_percent + 20:
-                logger.debug(f"[BATCH-MODE2] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
-                last_logged_percent = current_percent
+                # PERFORMANCE: Log progress every 20% instead of every 10 iterations (reduces log spam)
+                current_percent = int((i / len(product_ids)) * 100)
+                if current_percent >= last_logged_percent + 20:
+                    logger.debug(f"[BATCH-MODE2] Progress: {current_percent}% ({i}/{len(product_ids)}) - {successful} successful, {failed} failed")
+                    last_logged_percent = current_percent
     
     # PERFORMANCE OPTIMIZATION: Insert any remaining matches in chunks
     remaining_matches_count = len(all_matches_to_insert)
