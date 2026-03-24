@@ -2440,14 +2440,20 @@ function duplicateProduct(index) {
     showToast('Product duplicated', 'success');
 }
 
-function deleteProduct(index) {
-    if (confirm('Delete this product?')) {
-        saveStateForUndo();
-        state.products.splice(index, 1);
-        renderProductsTable();
-        saveState();
-        showToast('Product deleted', 'success');
-    }
+async function deleteProduct(index) {
+    const confirmed = await showCsvBuilderConfirmDialog({
+        title: 'Delete Product',
+        message: 'Delete this product?',
+        confirmLabel: 'DELETE',
+        danger: true
+    });
+    if (!confirmed) return;
+
+    saveStateForUndo();
+    state.products.splice(index, 1);
+    renderProductsTable();
+    saveState();
+    showToast('Product deleted', 'success');
 }
 
 // ===== STEP 3: Price & Performance History =====
@@ -2561,14 +2567,20 @@ function deletePriceEntry(index) {
     updateProductProgress();
 }
 
-function clearPriceHistory() {
-    if (confirm('Clear all price history for this product?')) {
-        const product = state.products[state.selectedProductIndex];
-        product.priceHistory = [];
-        renderPriceHistory();
-        saveState();
-        updateProductProgress();
-    }
+async function clearPriceHistory() {
+    const confirmed = await showCsvBuilderConfirmDialog({
+        title: 'Clear Price History',
+        message: 'Clear all price history for this product?',
+        confirmLabel: 'CLEAR',
+        danger: true
+    });
+    if (!confirmed) return;
+
+    const product = state.products[state.selectedProductIndex];
+    product.priceHistory = [];
+    renderPriceHistory();
+    saveState();
+    updateProductProgress();
 }
 
 function importPriceFromClipboard() {
@@ -2671,14 +2683,20 @@ function deletePerformanceEntry(index) {
     updateProductProgress();
 }
 
-function clearPerformanceHistory() {
-    if (confirm('Clear all performance history for this product?')) {
-        const product = state.products[state.selectedProductIndex];
-        product.performanceHistory = [];
-        renderPerformanceHistory();
-        saveState();
-        updateProductProgress();
-    }
+async function clearPerformanceHistory() {
+    const confirmed = await showCsvBuilderConfirmDialog({
+        title: 'Clear Performance History',
+        message: 'Clear all performance history for this product?',
+        confirmLabel: 'CLEAR',
+        danger: true
+    });
+    if (!confirmed) return;
+
+    const product = state.products[state.selectedProductIndex];
+    product.performanceHistory = [];
+    renderPerformanceHistory();
+    saveState();
+    updateProductProgress();
 }
 
 function importPerformanceFromClipboard() {
@@ -2881,8 +2899,13 @@ function copyToClipboard() {
     });
 }
 
-function saveAsTemplate() {
-    const templateName = prompt('Enter template name:');
+async function saveAsTemplate() {
+    const templateName = await showCsvBuilderPromptDialog({
+        title: 'Save Template',
+        message: 'Enter a template name.',
+        placeholder: 'Template name',
+        confirmLabel: 'SAVE'
+    });
     if (!templateName) return;
     
     const templates = JSON.parse(localStorage.getItem('csvTemplates') || '{}');
@@ -3140,8 +3163,14 @@ function redo() {
 }
 
 // Save/Load Draft
-function saveDraft() {
-    const draftName = prompt('Enter draft name:', `Draft_${new Date().toISOString().slice(0, 10)}`);
+async function saveDraft() {
+    const draftName = await showCsvBuilderPromptDialog({
+        title: 'Save Draft',
+        message: 'Enter a draft name.',
+        placeholder: 'Draft name',
+        defaultValue: `Draft_${new Date().toISOString().slice(0, 10)}`,
+        confirmLabel: 'SAVE'
+    });
     if (!draftName) return;
     
     const drafts = JSON.parse(localStorage.getItem('csvDrafts') || '{}');
@@ -3154,7 +3183,7 @@ function saveDraft() {
     showToast(`Draft "${draftName}" saved!`, 'success');
 }
 
-function loadDraft() {
+async function loadDraft() {
     const drafts = JSON.parse(localStorage.getItem('csvDrafts') || '{}');
     const draftNames = Object.keys(drafts);
     
@@ -3163,18 +3192,30 @@ function loadDraft() {
         return;
     }
     
-    const draftName = prompt(`Available drafts:\n${draftNames.join('\n')}\n\nEnter draft name to load:`);
+    const draftName = await showCsvBuilderPromptDialog({
+        title: 'Load Draft',
+        message: 'Enter the name of the draft to load.',
+        details: draftNames.map(name => `• ${escapeHtml(name)}`).join('<br>'),
+        placeholder: 'Draft name',
+        confirmLabel: 'LOAD'
+    });
     if (!draftName || !drafts[draftName]) {
         showToast('Draft not found', 'error');
         return;
     }
     
-    if (confirm('Loading a draft will replace current data. Continue?')) {
-        state.products = drafts[draftName].products;
-        renderProductsTable();
-        saveState();
-        showToast(`Draft "${draftName}" loaded!`, 'success');
-    }
+    const confirmed = await showCsvBuilderConfirmDialog({
+        title: 'Load Draft',
+        message: 'Loading a draft will replace current data. Continue?',
+        confirmLabel: 'LOAD',
+        danger: true
+    });
+    if (!confirmed) return;
+
+    state.products = drafts[draftName].products;
+    renderProductsTable();
+    saveState();
+    showToast(`Draft "${draftName}" loaded!`, 'success');
 }
 
 // Auto-save to localStorage with size limit
@@ -3270,6 +3311,107 @@ function showToast(message, type = 'info') {
     setTimeout(() => {
         toast.classList.remove('show');
     }, timeout);
+}
+
+function showDialogModal(markup, onReady) {
+    const existingModal = document.getElementById('csvBuilderDialogModal');
+    if (existingModal) existingModal.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'csvBuilderDialogModal';
+    modal.className = 'modal show';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 520px;">
+            ${markup}
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    if (typeof onReady === 'function') {
+        onReady(modal);
+    }
+}
+
+function showCsvBuilderConfirmDialog({ title, message, details = '', confirmLabel = 'CONFIRM', danger = false }) {
+    return new Promise(resolve => {
+        const detailsHtml = details ? `<div style="margin: 12px 0; padding: 10px; background: #f5f0e6; border: 2px solid #000;">${details}</div>` : '';
+        showDialogModal(`
+            <h2 style="margin-bottom: 10px;">${escapeHtml(title)}</h2>
+            <p style="margin-bottom: 10px;">${escapeHtml(message)}</p>
+            ${detailsHtml}
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button class="btn" data-dialog-cancel>CANCEL</button>
+                <button class="btn ${danger ? 'danger' : ''}" data-dialog-confirm>${escapeHtml(confirmLabel)}</button>
+            </div>
+        `, (modal) => {
+            modal.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => {
+                modal.remove();
+                resolve(false);
+            });
+            modal.querySelector('[data-dialog-confirm]')?.addEventListener('click', () => {
+                modal.remove();
+                resolve(true);
+            });
+        });
+    });
+}
+
+function showCsvBuilderPromptDialog({
+    title,
+    message,
+    details = '',
+    placeholder = '',
+    defaultValue = '',
+    confirmLabel = 'SAVE',
+    allowEmpty = false
+}) {
+    return new Promise(resolve => {
+        const detailsHtml = details ? `<div style="margin: 12px 0; padding: 10px; background: #f5f0e6; border: 2px solid #000;">${details}</div>` : '';
+        showDialogModal(`
+            <h2 style="margin-bottom: 10px;">${escapeHtml(title)}</h2>
+            <p style="margin-bottom: 10px;">${escapeHtml(message)}</p>
+            ${detailsHtml}
+            <input
+                id="csvBuilderPromptInput"
+                type="text"
+                value="${escapeHtml(defaultValue)}"
+                placeholder="${escapeHtml(placeholder)}"
+                autocomplete="off"
+                spellcheck="false"
+                style="width: 100%; padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box; margin-bottom: 12px;"
+            >
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button class="btn" data-dialog-cancel>CANCEL</button>
+                <button class="btn" data-dialog-confirm>${escapeHtml(confirmLabel)}</button>
+            </div>
+        `, (modal) => {
+            const input = modal.querySelector('#csvBuilderPromptInput');
+            const submit = () => {
+                const value = input ? input.value.trim() : '';
+                if (!allowEmpty && !value) {
+                    showToast('A value is required', 'info');
+                    input?.focus();
+                    return;
+                }
+                modal.remove();
+                resolve(value);
+            };
+
+            modal.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => {
+                modal.remove();
+                resolve(null);
+            });
+            modal.querySelector('[data-dialog-confirm]')?.addEventListener('click', submit);
+            input?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    submit();
+                }
+            });
+            input?.focus();
+            input?.select();
+        });
+    });
 }
 
 function escapeHtml(text) {
@@ -3583,8 +3725,14 @@ function confirmSendToMainApp() {
 
 
 // Clear CSV Builder Upload
-function clearCsvBuilderUpload() {
-    if (!confirm('Clear uploaded folder? This will reset all data.')) {
+async function clearCsvBuilderUpload() {
+    const confirmed = await showCsvBuilderConfirmDialog({
+        title: 'Clear Uploaded Folder',
+        message: 'Clear uploaded folder and reset all CSV Builder data?',
+        confirmLabel: 'CLEAR',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
     

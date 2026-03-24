@@ -2338,94 +2338,101 @@ async function exportResults() {
 }
 
 async function resetApp() {
-    if (confirm('Start over? This will clear all data and take you back to the upload step.')) {
-        // Show loading message
-        showToast('Resetting app...', 'info');
+    const confirmed = await window.showAppConfirmDialog({
+        title: 'Start Over',
+        message: 'Clear all data and go back to the upload step?',
+        confirmLabel: 'START OVER',
+        danger: true
+    });
+    if (!confirmed) {
+        return;
+    }
 
-        // Clear UI state BEFORE cleanup to ensure visibility changes
-        try {
-            // Hide results and matching sections
-            const resultsSection = document.getElementById('resultsSection');
-            const matchingSection = document.getElementById('matchingSection');
-            if (resultsSection) resultsSection.style.display = 'none';
-            if (matchingSection) matchingSection.style.display = 'none';
+    // Show loading message
+    showToast('Resetting app...', 'info');
 
-            // Clear file info
-            const historicalInfo = document.getElementById('historicalInfo');
-            const newInfo = document.getElementById('newInfo');
-            if (historicalInfo) {
-                historicalInfo.innerHTML = '';
-                historicalInfo.classList.remove('show');
-            }
-            if (newInfo) {
-                newInfo.innerHTML = '';
-                newInfo.classList.remove('show');
-            }
+    // Clear UI state BEFORE cleanup to ensure visibility changes
+    try {
+        // Hide results and matching sections
+        const resultsSection = document.getElementById('resultsSection');
+        const matchingSection = document.getElementById('matchingSection');
+        if (resultsSection) resultsSection.style.display = 'none';
+        if (matchingSection) matchingSection.style.display = 'none';
 
-            // Hide template download buttons
-            const historicalTemplateBtn = document.getElementById('downloadHistoricalTemplateBtn');
-            const newTemplateBtn = document.getElementById('downloadNewTemplateBtn');
-            if (historicalTemplateBtn) historicalTemplateBtn.style.display = 'none';
-            if (newTemplateBtn) newTemplateBtn.style.display = 'none';
-
-            // Hide status messages
-            const historicalStatus = document.getElementById('historicalStatus');
-            const newStatus = document.getElementById('newStatus');
-            if (historicalStatus) {
-                historicalStatus.innerHTML = '';
-                historicalStatus.classList.remove('show');
-            }
-            if (newStatus) {
-                newStatus.innerHTML = '';
-                newStatus.classList.remove('show');
-            }
-
-            // Reset all buttons to initial state
-            const processBtn = document.getElementById('processHistoricalBtn');
-            const processNewBtn = document.getElementById('processNewBtn');
-            const resetBtn = document.getElementById('resetBtn');
-            if (processBtn) {
-                processBtn.disabled = true;
-                processBtn.textContent = 'PROCESS';
-            }
-            if (processNewBtn) {
-                processNewBtn.disabled = true;
-                processNewBtn.textContent = 'PROCESS';
-            }
-            if (resetBtn) resetBtn.style.display = 'none';
-
-            // Reset file input values
-            const historicalInput = document.getElementById('historicalInput');
-            const newInput = document.getElementById('newInput');
-            const historicalCsvInput = document.getElementById('historicalCsvInput');
-            const newCsvInput = document.getElementById('newCsvInput');
-            if (historicalInput) historicalInput.value = '';
-            if (newInput) newInput.value = '';
-            if (historicalCsvInput) historicalCsvInput.value = '';
-            if (newCsvInput) newCsvInput.value = '';
-
-            // Reset file labels
-            const historicalFileLabel = document.getElementById('historicalFileLabel');
-            const newFileLabel = document.getElementById('newFileLabel');
-            if (historicalFileLabel) historicalFileLabel.textContent = 'CSV optional - Use BUILD CSV for easy setup';
-            if (newFileLabel) newFileLabel.textContent = 'CSV optional - Use BUILD CSV for easy setup';
-
-        } catch (error) {
-            console.error('Error clearing UI state:', error);
+        // Clear file info
+        const historicalInfo = document.getElementById('historicalInfo');
+        const newInfo = document.getElementById('newInfo');
+        if (historicalInfo) {
+            historicalInfo.innerHTML = '';
+            historicalInfo.classList.remove('show');
+        }
+        if (newInfo) {
+            newInfo.innerHTML = '';
+            newInfo.classList.remove('show');
         }
 
-        // Clean up memory
-        cleanupMemory();
+        // Hide template download buttons
+        const historicalTemplateBtn = document.getElementById('downloadHistoricalTemplateBtn');
+        const newTemplateBtn = document.getElementById('downloadNewTemplateBtn');
+        if (historicalTemplateBtn) historicalTemplateBtn.style.display = 'none';
+        if (newTemplateBtn) newTemplateBtn.style.display = 'none';
 
-        // Clear saved state (webview only)
-        await clearSavedState();
+        // Hide status messages
+        const historicalStatus = document.getElementById('historicalStatus');
+        const newStatus = document.getElementById('newStatus');
+        if (historicalStatus) {
+            historicalStatus.innerHTML = '';
+            historicalStatus.classList.remove('show');
+        }
+        if (newStatus) {
+            newStatus.innerHTML = '';
+            newStatus.classList.remove('show');
+        }
 
-        // Small delay to ensure cleanup completes
-        setTimeout(() => {
-            showToast('Ready for new upload!', 'success');
-            location.reload();
-        }, 100);
+        // Reset all buttons to initial state
+        const processBtn = document.getElementById('processHistoricalBtn');
+        const processNewBtn = document.getElementById('processNewBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        if (processBtn) {
+            processBtn.disabled = true;
+            processBtn.textContent = 'PROCESS';
+        }
+        if (processNewBtn) {
+            processNewBtn.disabled = true;
+            processNewBtn.textContent = 'PROCESS';
+        }
+        if (resetBtn) resetBtn.style.display = 'none';
+
+        // Reset file input values
+        const historicalInput = document.getElementById('historicalInput');
+        const newInput = document.getElementById('newInput');
+        const historicalCsvInput = document.getElementById('historicalCsvInput');
+        const newCsvInput = document.getElementById('newCsvInput');
+        if (historicalInput) historicalInput.value = '';
+        if (newInput) newInput.value = '';
+        if (historicalCsvInput) historicalCsvInput.value = '';
+        if (newCsvInput) newCsvInput.value = '';
+
+        // Reset file labels
+        const historicalFileLabel = document.getElementById('historicalFileLabel');
+        const newFileLabel = document.getElementById('newFileLabel');
+        if (historicalFileLabel) historicalFileLabel.textContent = 'CSV optional - Use BUILD CSV for easy setup';
+        if (newFileLabel) newFileLabel.textContent = 'CSV optional - Use BUILD CSV for easy setup';
+    } catch (error) {
+        console.error('Error clearing UI state:', error);
     }
+
+    // Clean up memory
+    cleanupMemory();
+
+    // Clear saved state (webview only)
+    await clearSavedState();
+
+    // Small delay to ensure cleanup completes
+    setTimeout(() => {
+        showToast('Ready for new upload!', 'success');
+        location.reload();
+    }, 100);
 }
 
 function parseCSVLine(line) {

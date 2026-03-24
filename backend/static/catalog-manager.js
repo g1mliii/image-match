@@ -508,7 +508,14 @@ async function reextractFeatures(productId) {
 }
 
 async function deleteProduct(productId) {
-    if (!confirm('Are you sure you want to delete this product? This cannot be undone.')) {
+    const confirmed = await showConfirmDialog({
+        title: 'Delete Product',
+        message: 'Are you sure you want to delete this product?',
+        details: '<strong>Warning:</strong> This action cannot be undone.',
+        confirmLabel: 'DELETE',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
     
@@ -539,7 +546,14 @@ async function bulkDelete() {
     const count = selectedProducts.size;
     if (count === 0) return;
     
-    if (!confirm(`Are you sure you want to delete ${count} product(s)? This cannot be undone.`)) {
+    const confirmed = await showConfirmDialog({
+        title: 'Bulk Delete Products',
+        message: `Delete ${count} selected product(s)?`,
+        details: '<strong>Warning:</strong> This action cannot be undone.',
+        confirmLabel: 'DELETE',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
     
@@ -571,7 +585,13 @@ async function bulkEditCategory() {
     const count = selectedProducts.size;
     if (count === 0) return;
     
-    const newCategory = prompt(`Enter new category for ${count} product(s):`);
+    const newCategory = await showPromptDialog({
+        title: 'Update Category',
+        message: `Enter a category for ${count} product(s).`,
+        placeholder: 'Category name',
+        confirmLabel: 'UPDATE',
+        allowEmpty: true
+    });
     if (newCategory === null) return;
     
     try {
@@ -603,7 +623,13 @@ async function bulkReextract() {
     const count = selectedProducts.size;
     if (count === 0) return;
     
-    if (!confirm(`Re-extract features for ${count} product(s)? This may take a while.`)) {
+    const confirmed = await showConfirmDialog({
+        title: 'Re-extract Features',
+        message: `Re-extract features for ${count} product(s)?`,
+        details: 'This may take a while for large selections.',
+        confirmLabel: 'RE-EXTRACT'
+    });
+    if (!confirmed) {
         return;
     }
     
@@ -681,6 +707,106 @@ function confirmCleanup(type) {
 
 function closeConfirmModal() {
     document.getElementById('confirmModal').style.display = 'none';
+}
+
+function showDialogMarkup(markup, onReady) {
+    const modal = document.getElementById('confirmModal');
+    const body = document.getElementById('confirmModalBody');
+
+    body.innerHTML = markup;
+    modal.style.display = 'flex';
+
+    if (typeof onReady === 'function') {
+        onReady(body, modal);
+    }
+}
+
+function showConfirmDialog({ title, message, details = '', confirmLabel = 'CONFIRM', danger = false }) {
+    return new Promise(resolve => {
+        const detailsHtml = details ? `<div class="confirm-details">${details}</div>` : '';
+        showDialogMarkup(`
+            <div class="confirm-modal">
+                <div class="warning-icon">[!]</div>
+                <h2>${escapeHtml(title)}</h2>
+                <p class="confirm-message">${escapeHtml(message)}</p>
+                ${detailsHtml}
+                <div class="confirm-actions">
+                    <button class="btn" data-dialog-cancel>CANCEL</button>
+                    <button class="btn ${danger ? 'danger' : ''}" data-dialog-confirm>${escapeHtml(confirmLabel)}</button>
+                </div>
+            </div>
+        `, (body) => {
+            body.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => {
+                closeConfirmModal();
+                resolve(false);
+            });
+            body.querySelector('[data-dialog-confirm]')?.addEventListener('click', () => {
+                closeConfirmModal();
+                resolve(true);
+            });
+        });
+    });
+}
+
+function showPromptDialog({
+    title,
+    message,
+    details = '',
+    placeholder = '',
+    defaultValue = '',
+    confirmLabel = 'SAVE',
+    danger = false,
+    allowEmpty = false
+}) {
+    return new Promise(resolve => {
+        const detailsHtml = details ? `<div class="confirm-details">${details}</div>` : '';
+        showDialogMarkup(`
+            <div class="confirm-modal">
+                <div class="warning-icon">[?]</div>
+                <h2>${escapeHtml(title)}</h2>
+                <p class="confirm-message">${escapeHtml(message)}</p>
+                ${detailsHtml}
+                <input
+                    id="dialogPromptInput"
+                    type="text"
+                    value="${escapeHtml(defaultValue)}"
+                    placeholder="${escapeHtml(placeholder)}"
+                    autocomplete="off"
+                    spellcheck="false"
+                    style="width: 100%; margin-top: 12px; padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;"
+                >
+                <div class="confirm-actions">
+                    <button class="btn" data-dialog-cancel>CANCEL</button>
+                    <button class="btn ${danger ? 'danger' : ''}" data-dialog-confirm>${escapeHtml(confirmLabel)}</button>
+                </div>
+            </div>
+        `, (body) => {
+            const input = body.querySelector('#dialogPromptInput');
+            const submit = () => {
+                const value = input ? input.value.trim() : '';
+                if (!allowEmpty && !value) {
+                    showToast('A value is required', 'info');
+                    input?.focus();
+                    return;
+                }
+                closeConfirmModal();
+                resolve(value);
+            };
+
+            body.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => {
+                closeConfirmModal();
+                resolve(null);
+            });
+            body.querySelector('[data-dialog-confirm]')?.addEventListener('click', submit);
+            input?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    submit();
+                }
+            });
+            input?.focus();
+            input?.select();
+        });
+    });
 }
 
 async function executeCleanup(type) {
@@ -883,7 +1009,13 @@ async function vacuumDatabase() {
 }
 
 async function clearUploadedImages() {
-    if (!confirm('This will delete all uploaded image files but keep product metadata. Continue?')) {
+    const confirmed = await showConfirmDialog({
+        title: 'Clear Uploaded Images',
+        message: 'Delete all uploaded image files but keep product metadata?',
+        confirmLabel: 'DELETE',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
     
@@ -1223,17 +1355,54 @@ async function refreshWorkingCatalogStats(filename) {
 }
 
 function confirmClearWorkingCatalog() {
-    const message = 'WARNING: This will delete ALL products and features from your working catalog.\n\n' +
-                   'This action cannot be undone, but you can restore from snapshots.\n\n' +
-                   'Type "CLEAR" to confirm:';
+    const modal = document.getElementById('confirmModal');
+    const body = document.getElementById('confirmModalBody');
 
-    const confirmation = prompt(message);
+    body.innerHTML = `
+        <div class="confirm-modal">
+            <div class="warning-icon">[!]</div>
+            <h2>Clear Working Catalog</h2>
+            <p class="confirm-message">This will delete all products and features from your working catalog.</p>
+            <div class="confirm-details">
+                <strong>Warning:</strong> This action cannot be undone, but you can restore from snapshots.<br>
+                <strong>Confirm:</strong> Type <code>CLEAR</code> below to continue.
+            </div>
+            <input
+                id="clearWorkingCatalogInput"
+                type="text"
+                placeholder="Type CLEAR"
+                autocomplete="off"
+                spellcheck="false"
+                style="width: 100%; margin-top: 12px; padding: 10px; border: 2px solid #000; font-family: inherit; box-sizing: border-box;"
+                onkeydown="if (event.key === 'Enter') submitClearWorkingCatalogConfirmation();"
+            >
+            <div class="confirm-actions">
+                <button class="btn" onclick="closeConfirmModal()">CANCEL</button>
+                <button class="btn danger" onclick="submitClearWorkingCatalogConfirmation()">DELETE</button>
+            </div>
+        </div>
+    `;
 
-    if (confirmation === 'CLEAR') {
-        clearWorkingCatalog();
-    } else if (confirmation !== null) {
-        showToast('Clear cancelled - confirmation text did not match', 'info');
+    modal.style.display = 'flex';
+
+    const input = document.getElementById('clearWorkingCatalogInput');
+    if (input) {
+        input.focus();
+        input.select();
     }
+}
+
+function submitClearWorkingCatalogConfirmation() {
+    const input = document.getElementById('clearWorkingCatalogInput');
+    const confirmation = input ? input.value.trim() : '';
+
+    if (confirmation !== 'CLEAR') {
+        showToast('Clear cancelled - confirmation text did not match', 'info');
+        return;
+    }
+
+    closeConfirmModal();
+    clearWorkingCatalog();
 }
 
 async function clearWorkingCatalog() {
@@ -1395,7 +1564,14 @@ async function createSnapshot() {
 }
 
 async function deleteSnapshot(snapshotFile) {
-    if (!confirm(`Are you sure you want to delete "${snapshotFile}"? This cannot be undone.`)) {
+    const confirmed = await showConfirmDialog({
+        title: 'Delete Snapshot',
+        message: `Delete "${snapshotFile}"?`,
+        details: '<strong>Warning:</strong> This action cannot be undone.',
+        confirmLabel: 'DELETE',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
 
@@ -1429,7 +1605,12 @@ async function deleteSnapshot(snapshotFile) {
 }
 
 async function renameSnapshot(snapshotFile) {
-    const newName = prompt('Enter new name for snapshot:');
+    const newName = await showPromptDialog({
+        title: 'Rename Snapshot',
+        message: 'Enter a new name for this snapshot.',
+        placeholder: 'Snapshot name',
+        confirmLabel: 'RENAME'
+    });
     if (!newName || !newName.trim()) return;
     
     try {
@@ -1494,13 +1675,19 @@ async function bulkDeleteSnapshots() {
     }
 
     const snapshotsToDelete = Array.from(selectedCheckboxes).map(cb => cb.dataset.snapshot);
-    const message = `Delete ${snapshotsToDelete.length} snapshot${snapshotsToDelete.length !== 1 ? 's' : ''}?\n\n${snapshotsToDelete.map(f => {
-        const card = document.querySelector(`[data-snapshot="${f}"]`);
-        const name = card?.querySelector('.snapshot-name')?.textContent || f;
-        return `• ${name}`;
-    }).join('\n')}\n\nThis action cannot be undone.`;
 
-    if (!confirm(message)) return;
+    const confirmed = await showConfirmDialog({
+        title: 'Bulk Delete Snapshots',
+        message: `Delete ${snapshotsToDelete.length} snapshot${snapshotsToDelete.length !== 1 ? 's' : ''}?`,
+        details: `${snapshotsToDelete.map(f => {
+            const card = document.querySelector(`[data-snapshot="${f}"]`);
+            const name = card?.querySelector('.snapshot-name')?.textContent || f;
+            return `• ${escapeHtml(name)}`;
+        }).join('<br>')}<br><br><strong>Warning:</strong> This action cannot be undone.`,
+        confirmLabel: 'DELETE',
+        danger: true
+    });
+    if (!confirmed) return;
 
     try {
         showToast(`Deleting ${snapshotsToDelete.length} snapshots...`, 'info');
@@ -1825,10 +2012,22 @@ async function viewSnapshot(snapshotFile) {
 // ============ Main Database Integration ============
 
 async function saveCurrentAsSnapshot() {
-    const name = prompt('Enter name for this snapshot:');
+    const name = await showPromptDialog({
+        title: 'Save Current Catalog',
+        message: 'Enter a name for this snapshot.',
+        placeholder: 'Snapshot name',
+        confirmLabel: 'NEXT'
+    });
     if (!name || !name.trim()) return;
     
-    const description = prompt('Enter description (optional):') || '';
+    const description = await showPromptDialog({
+        title: 'Snapshot Description',
+        message: 'Enter a description for this snapshot.',
+        placeholder: 'Description (optional)',
+        confirmLabel: 'SAVE',
+        allowEmpty: true
+    });
+    if (description === null) return;
     
     try {
         showToast('Saving current catalog as snapshot...', 'info');
@@ -1859,7 +2058,14 @@ async function saveCurrentAsSnapshot() {
 }
 
 async function loadSnapshotToMain(snapshotFile) {
-    if (!confirm(`Load "${snapshotFile}" into main catalog?\n\nThis will REPLACE your current catalog. Make sure to save it first if needed.`)) {
+    const confirmed = await showConfirmDialog({
+        title: 'Load Snapshot',
+        message: `Load "${snapshotFile}" into the main catalog?`,
+        details: '<strong>Warning:</strong> This will replace your current catalog. Save it first if needed.',
+        confirmLabel: 'LOAD',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
 

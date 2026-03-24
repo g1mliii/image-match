@@ -88,7 +88,7 @@ async function checkExistingCatalog() {
     }
 }
 
-function handleCatalogOptionChange(e) {
+async function handleCatalogOptionChange(e) {
     // Support both event-based calls and direct calls
     const option = e && e.target ? e.target.value : getCatalogLoadOption();
     const dropZone = document.getElementById('historicalDropZone');
@@ -110,11 +110,13 @@ function handleCatalogOptionChange(e) {
         // Replace catalog - show warning, hide download
         if (e && e.target && existingCatalogStats && existingCatalogStats.historical_products > 0) {
             // Only show confirmation dialog when user manually changes to replace (not on initial load)
-            const confirmed = confirm(
-                `WARNING: This will DELETE all ${existingCatalogStats.historical_products.toLocaleString()} existing historical products and create a NEW catalog!\n\n` +
-                `A backup snapshot will be created automatically.\n\n` +
-                `Are you sure you want to replace with a new catalog?`
-            );
+            const confirmed = await window.showAppConfirmDialog({
+                title: 'Replace Historical Catalog',
+                message: `Delete all ${existingCatalogStats.historical_products.toLocaleString()} existing historical products and replace them with a new catalog?`,
+                details: 'A backup snapshot will be created automatically.',
+                confirmLabel: 'REPLACE',
+                danger: true
+            });
             if (!confirmed) {
                 // Revert to use_existing
                 document.querySelector('input[name="catalogLoadOption"][value="use_existing"]').checked = true;
@@ -321,7 +323,7 @@ async function checkExistingNewCatalog() {
     }
 }
 
-function handleNewCatalogOptionChange() {
+async function handleNewCatalogOptionChange() {
     const option = getNewCatalogLoadOption();
     const dropZone = document.getElementById('newDropZone');
     const processBtn = document.getElementById('processNewBtn');
@@ -348,11 +350,13 @@ function handleNewCatalogOptionChange() {
 
         // Show warning
         if (existingCatalogStats && existingCatalogStats.new_products > 0) {
-            const confirmed = confirm(
-                `WARNING: This will DELETE all ${existingCatalogStats.new_products} existing new products and create a NEW catalog!\n\n` +
-                `A backup snapshot will be created automatically.\n\n` +
-                `Are you sure you want to replace with a new catalog?`
-            );
+            const confirmed = await window.showAppConfirmDialog({
+                title: 'Replace New Products',
+                message: `Delete all ${existingCatalogStats.new_products} existing new products and replace them with a new catalog?`,
+                details: 'A backup snapshot will be created automatically.',
+                confirmLabel: 'REPLACE',
+                danger: true
+            });
             if (!confirmed) {
                 // Revert to add_to_existing
                 document.querySelector('input[name="newCatalogLoadOption"][value="add_to_existing"]').checked = true;

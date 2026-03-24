@@ -5045,7 +5045,15 @@ def delete_catalog_product(product_id):
         if image_path and os.path.exists(image_path):
             # Safety check: only delete files in uploads folder, never delete user source files
             uploads_folder = app.config['UPLOAD_FOLDER']
-            is_managed_file = os.path.realpath(image_path).startswith(os.path.realpath(uploads_folder))
+            try:
+                is_managed_file = (
+                    os.path.commonpath([
+                        os.path.realpath(image_path),
+                        os.path.realpath(uploads_folder)
+                    ]) == os.path.realpath(uploads_folder)
+                )
+            except (ValueError, OSError):
+                is_managed_file = False
 
             if is_managed_file:
                 try:

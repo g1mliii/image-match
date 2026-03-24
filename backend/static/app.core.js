@@ -84,6 +84,54 @@ function debugWarn(...args) {
     }
 }
 
+function escapeDialogText(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text ?? '');
+    return div.innerHTML;
+}
+
+window.showAppConfirmDialog = function showAppConfirmDialog({
+    title = 'Confirm',
+    message,
+    details = '',
+    confirmLabel = 'CONFIRM',
+    danger = false
+}) {
+    return new Promise(resolve => {
+        const existingModal = document.getElementById('appConfirmDialogModal');
+        if (existingModal) existingModal.remove();
+
+        const detailsHtml = details
+            ? `<div style="margin: 12px 0; padding: 10px; background: #f5f0e6; border: 2px solid #000;">${details}</div>`
+            : '';
+        const modal = document.createElement('div');
+        modal.id = 'appConfirmDialogModal';
+        modal.className = 'modal show';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 520px;">
+                <h2 style="margin-bottom: 10px;">${escapeDialogText(title)}</h2>
+                <p style="margin-bottom: 10px;">${escapeDialogText(message)}</p>
+                ${detailsHtml}
+                <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                    <button class="btn" data-dialog-cancel>CANCEL</button>
+                    <button class="btn ${danger ? 'danger' : ''}" data-dialog-confirm>${escapeDialogText(confirmLabel)}</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        modal.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => {
+            modal.remove();
+            resolve(false);
+        });
+        modal.querySelector('[data-dialog-confirm]')?.addEventListener('click', () => {
+            modal.remove();
+            resolve(true);
+        });
+    });
+};
+
 // Excluded metadata keys for component display
 const EXCLUDED_METADATA_KEYS = new Set(['sku', 'name', 'category', 'price', 'product_name', 'performance']);
 
@@ -3251,8 +3299,14 @@ function updateFileLabel(input, labelId) {
 }
 
 // Clear Folder Upload
-function clearFolderUpload(section) {
-    if (!confirm('Clear uploaded folder? This will reset all data for this section.')) {
+async function clearFolderUpload(section) {
+    const confirmed = await window.showAppConfirmDialog({
+        title: 'Clear Uploaded Folder',
+        message: 'Clear uploaded folder and reset all data for this section?',
+        confirmLabel: 'CLEAR',
+        danger: true
+    });
+    if (!confirmed) {
         return;
     }
 

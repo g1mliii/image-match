@@ -12,12 +12,33 @@ from typing import Optional, List, Dict, Any, Tuple, Iterator
 
 # Import debug mode check (from config to avoid circular imports)
 from config import is_debug_mode
-from path_manager import get_database_path
+from path_manager import get_database_path, get_uploads_dir
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 DB_PATH = get_database_path()
+
+
+def _get_managed_uploads_dir() -> str:
+    """Return the app-managed uploads directory for the current runtime mode."""
+    return os.path.abspath(get_uploads_dir())
+
+
+def _is_managed_upload_path(path: Optional[str]) -> bool:
+    """Check whether an image path belongs to the app-managed uploads directory."""
+    if not path:
+        return False
+
+    uploads_dir = _get_managed_uploads_dir()
+
+    try:
+        candidate_path = os.path.abspath(path)
+        common_path = os.path.commonpath([candidate_path, uploads_dir])
+    except (ValueError, OSError):
+        return False
+
+    return common_path == uploads_dir
 
 # MEMORY OPTIMIZATION: Simple connection pool to reduce fragmentation
 # Maintains 3-5 reusable connections instead of creating new ones for each operation
@@ -2506,7 +2527,7 @@ def get_catalog_stats() -> Dict[str, Any]:
         
         # Uploads folder size
         uploads_size_mb = 0
-        uploads_path = os.path.join(os.path.dirname(__file__), 'uploads')
+        uploads_path = _get_managed_uploads_dir()
         try:
             if os.path.exists(uploads_path):
                 total_size = 0
@@ -2662,8 +2683,6 @@ def bulk_delete_products(product_ids: List[int]) -> int:
         return 0
 
     CHUNK_SIZE = 900  # SQLite limit is ~999 variables
-    uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-    abs_uploads = os.path.abspath(uploads_folder)
     all_categories = set()
     deleted_count = 0
 
@@ -2698,7 +2717,7 @@ def bulk_delete_products(product_ids: List[int]) -> int:
             for path in image_paths:
                 try:
                     if path and os.path.exists(path):
-                        if os.path.abspath(path).startswith(abs_uploads):
+                        if _is_managed_upload_path(path):
                             os.remove(path)
                 except Exception as e:
                     logger.warning(f"Failed to delete image file {path}: {e}")
@@ -2800,8 +2819,6 @@ def clear_products_by_type(product_type: str) -> Dict[str, int]:
         cursor.execute(f'DELETE FROM performance_history WHERE product_id IN (SELECT id FROM products WHERE {condition})')
 
         # Collect image paths for file cleanup (stream in chunks to avoid memory spike)
-        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        abs_uploads = os.path.abspath(uploads_folder)
         cursor.execute(f'SELECT image_path FROM products WHERE {condition} AND image_path IS NOT NULL')
         while True:
             rows = cursor.fetchmany(1000)
@@ -2811,7 +2828,7 @@ def clear_products_by_type(product_type: str) -> Dict[str, int]:
                 path = row['image_path']
                 try:
                     if path and os.path.exists(path):
-                        if os.path.abspath(path).startswith(abs_uploads):
+                        if _is_managed_upload_path(path):
                             os.remove(path)
                 except Exception as e:
                     logger.warning(f"Failed to delete image file {path}: {e}")
@@ -2880,8 +2897,6 @@ def clear_products_by_categories(categories: List[str]) -> Dict[str, int]:
         cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({subquery})', params)
 
         # Collect image paths for file cleanup (stream in chunks)
-        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        abs_uploads = os.path.abspath(uploads_folder)
         cursor.execute(f'SELECT image_path FROM products WHERE ({where_clause}) AND image_path IS NOT NULL', params)
         while True:
             rows = cursor.fetchmany(1000)
@@ -2891,7 +2906,7 @@ def clear_products_by_categories(categories: List[str]) -> Dict[str, int]:
                 path = row['image_path']
                 try:
                     if path and os.path.exists(path):
-                        if os.path.abspath(path).startswith(abs_uploads):
+                        if _is_managed_upload_path(path):
                             os.remove(path)
                 except Exception as e:
                     logger.warning(f"Failed to delete image file {path}: {e}")
@@ -2933,8 +2948,6 @@ def clear_products_by_date(older_than_days: int) -> Dict[str, int]:
         cursor.execute(f'DELETE FROM performance_history WHERE product_id IN ({subquery})', condition_params)
 
         # Collect image paths for file cleanup (stream in chunks)
-        uploads_folder = os.path.join(os.path.dirname(__file__), 'uploads')
-        abs_uploads = os.path.abspath(uploads_folder)
         cursor.execute(f'SELECT image_path FROM products WHERE {condition} AND image_path IS NOT NULL', condition_params)
         while True:
             rows = cursor.fetchmany(1000)
@@ -2944,7 +2957,7 @@ def clear_products_by_date(older_than_days: int) -> Dict[str, int]:
                 path = row['image_path']
                 try:
                     if path and os.path.exists(path):
-                        if os.path.abspath(path).startswith(abs_uploads):
+                        if _is_managed_upload_path(path):
                             os.remove(path)
                 except Exception as e:
                     logger.warning(f"Failed to delete image file {path}: {e}")
@@ -2994,7 +3007,7 @@ def clear_uploaded_images() -> Dict[str, int]:
     Returns:
         Dictionary with count of files deleted and space reclaimed
     """
-    uploads_path = os.path.join(os.path.dirname(__file__), 'uploads')
+    uploads_path = _get_managed_uploads_dir()
     
     files_deleted = 0
     space_reclaimed = 0
@@ -3035,7 +3048,7 @@ def cleanup_old_uploaded_images(days_retention: int = 30) -> Dict[str, Any]:
     """
     import time
 
-    uploads_path = os.path.join(os.path.dirname(__file__), 'uploads')
+    uploads_path = _get_managed_uploads_dir()
 
     files_deleted = 0
     space_reclaimed = 0

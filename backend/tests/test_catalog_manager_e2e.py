@@ -25,6 +25,7 @@ from app import app
 from database import (
     init_db, insert_product, insert_features, get_product_by_id,
     get_catalog_stats, get_products_paginated, bulk_delete_products,
+    clear_uploaded_images, close_all_db_connections,
     clear_products_by_type, vacuum_database, DB_PATH
 )
 import numpy as np
@@ -45,6 +46,7 @@ def client():
     # Initialize fresh database
     import database
     original_db_path = database.DB_PATH
+    close_all_db_connections()
     database.DB_PATH = test_db_path
     init_db()
     
@@ -52,7 +54,9 @@ def client():
         yield client
     
     # Cleanup
+    close_all_db_connections()
     database.DB_PATH = original_db_path
+    close_all_db_connections()
     if os.path.exists(test_db_path):
         os.remove(test_db_path)
 
@@ -427,6 +431,50 @@ class TestDatabaseMaintenance:
         assert 'ID,Filename,Category,Name,SKU' in csv_content
         assert 'Historical Product' in csv_content
 
+    def test_clear_uploaded_images_uses_managed_uploads_dir(self, client, monkeypatch, tmp_path):
+        """Test image cleanup against the configured uploads directory."""
+        import database
+
+        uploads_dir = tmp_path / 'managed-uploads'
+        uploads_dir.mkdir()
+        (uploads_dir / 'first.jpg').write_bytes(b'a' * 1024)
+        (uploads_dir / 'second.png').write_bytes(b'b' * 2048)
+
+        monkeypatch.setattr(database, 'get_uploads_dir', lambda: str(uploads_dir))
+
+        result = clear_uploaded_images()
+
+        assert result['files_deleted'] == 2
+        assert result['space_reclaimed_mb'] >= 0
+        assert not (uploads_dir / 'first.jpg').exists()
+        assert not (uploads_dir / 'second.png').exists()
+
+
+class TestWorkingCatalogManagement:
+    """Test working catalog maintenance endpoints."""
+
+    def test_clear_working_catalog_endpoint(self, client, sample_products):
+        """Test clearing the active working catalog."""
+        stats_before = client.get('/api/working-catalog/stats')
+        assert stats_before.status_code == 200
+        before_data = json.loads(stats_before.data)
+        assert before_data['product_count'] == 8
+        assert before_data['features_count'] == 3
+
+        response = client.post('/api/working-catalog/clear')
+        assert response.status_code == 200
+
+        data = json.loads(response.data)
+        assert data['success'] is True
+        assert data['products_deleted'] == 8
+        assert data['features_deleted'] == 3
+
+        stats_after = client.get('/api/working-catalog/stats')
+        assert stats_after.status_code == 200
+        after_data = json.loads(stats_after.data)
+        assert after_data['product_count'] == 0
+        assert after_data['features_count'] == 0
+
 
 class TestInputValidation:
     """Test input validation across all endpoints"""
@@ -727,7 +775,33 @@ class TestMainAppInteraction:
         # Try to access via main app - should return 404
         response = client.get(f'/api/products/{product_id}')
         assert response.status_code == 404
-    
+
+    def test_delete_product_does_not_remove_non_managed_sibling_path(self, client, monkeypatch, tmp_path):
+        """
+        Scenario: Product image path shares a prefix with uploads folder but is not inside it.
+        The app must not delete that file.
+        """
+        upload_dir = tmp_path / 'uploads'
+        upload_dir.mkdir()
+        sibling_dir = tmp_path / 'uploads-archive'
+        sibling_dir.mkdir()
+        image_path = sibling_dir / 'external.jpg'
+        image_path.write_bytes(b'test-image')
+
+        monkeypatch.setitem(app.config, 'UPLOAD_FOLDER', str(upload_dir))
+
+        product_id = insert_product(
+            image_path=str(image_path),
+            category='test_category',
+            product_name='External Product',
+            sku='EXT-001',
+            is_historical=True
+        )
+
+        response = client.delete(f'/api/catalog/products/{product_id}')
+        assert response.status_code == 200
+        assert image_path.exists()
+
     def test_bulk_category_change_affects_matching(self, client, sample_products):
         """
         Scenario: User changes category of products in Catalog Manager.
