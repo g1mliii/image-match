@@ -20,7 +20,7 @@ let sortBy = 'similarity'; // similarity, price, performance
 let sortOrder = 'desc';
 
 // Dynamic result filters
-let dynamicThreshold = 30;  // Minimum 30% threshold
+let dynamicThreshold = 0;  // Default: show all matches (calibrated scores)
 let dynamicLimit = 10;
 
 // Similarity weights for matching (default values for CLIP)
@@ -48,7 +48,6 @@ let historyIndex = -1;
 const MAX_HISTORY = 50;
 const PATH_SEPARATOR_REGEX = /[\\/]/;
 const IMAGE_EXTENSION_REGEX = /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i;
-const MAX_UPLOAD_FILES = 50000;
 const LARGE_FOLDER_CHUNK_THRESHOLD = 5000;
 const CATEGORY_COUNT_CHUNK_SIZE = 2000;
 const MAX_FAILED_ITEM_DETAILS = 200;
@@ -1378,11 +1377,6 @@ async function handleHistoricalFiles(files) {
         return;
     }
 
-    if (imageFiles.length > MAX_UPLOAD_FILES) {
-        showToast(`Too many files selected (${imageFiles.length.toLocaleString()}). Maximum supported is ${MAX_UPLOAD_FILES.toLocaleString()}.`, 'error');
-        return;
-    }
-
     // Extract categories from folder structure
     const filesWithCategories = imageFiles.map(file => {
         const category = extractCategoryFromPath(file.webkitRelativePath || file.name);
@@ -1957,11 +1951,6 @@ async function handleNewFiles(files) {
 
     if (imageFiles.length === 0) {
         showToast('No image files found in folder', 'error');
-        return;
-    }
-
-    if (imageFiles.length > MAX_UPLOAD_FILES) {
-        showToast(`Too many files selected (${imageFiles.length.toLocaleString()}). Maximum supported is ${MAX_UPLOAD_FILES.toLocaleString()}.`, 'error');
         return;
     }
 
@@ -2678,7 +2667,9 @@ function calculateProductMetadataStats(productResult) {
         const overall = bs._overall || { avg: 0, min: 0, max: 0, count: 0 };
 
         const metadataStats = {};
-        const dynamicStats = {}; 
+        const dynamicStats = {};
+        // Only populate metadataStats (Similarity Breakdown) when metadata matching was used
+        const includeMetadataBreakdown = window.newMode === 'metadata' || window.newMode === 'hybrid';
 
         Object.entries(bs).forEach(([key, stat]) => {
             // 1. BLACKLIST: Explicitly ignore these keys
@@ -2698,8 +2689,10 @@ function calculateProductMetadataStats(productResult) {
                     value: stat.avg,
                     subtext: `Avg: ${formatNum(stat.avg)} | Sum: ${formatNum(stat.sum)} | Min: ${formatNum(stat.min)} | Max: ${formatNum(stat.max)}`
                 };
-                // Also add to metadata stats dictionary for chart rendering
-                metadataStats[key] = { avg: stat.avg, min: stat.min, max: stat.max, sum: stat.sum, count: stat.count };
+                // Only show numeric fields in Similarity Breakdown for metadata/hybrid modes
+                if (includeMetadataBreakdown) {
+                    metadataStats[key] = { avg: stat.avg, min: stat.min, max: stat.max, sum: stat.sum, count: stat.count };
+                }
             }
             else if (stat.type === 'categorical') {
                 dynamicStats[key] = {
@@ -2709,7 +2702,7 @@ function calculateProductMetadataStats(productResult) {
                     subtext: `Top Value (${stat.distribution ? stat.distribution[stat.top_value] : 0})`
                 };
             }
-            else if (stat.type === 'similarity') {
+            else if (stat.type === 'similarity' && includeMetadataBreakdown) {
                 // Similarity scores for text fields (brand, description, etc.)
                 metadataStats[key] = {
                     avg: stat.avg,
@@ -2720,8 +2713,8 @@ function calculateProductMetadataStats(productResult) {
                 };
             }
             // 3. CATCH-ALL (Fixes Brand/Type/Description missing)
-            // If it has no type, display it as a generic metadata field
-            else {
+            // Only include in breakdown when metadata matching was used
+            else if (includeMetadataBreakdown && !stat.type) {
                 metadataStats[key] = {
                     avg: typeof stat.avg === 'number' ? stat.avg.toFixed(1) : stat.avg,
                     min: typeof stat.min === 'number' ? stat.min.toFixed(1) : stat.min,

@@ -1526,15 +1526,79 @@ def compute_clip_similarity(embedding1: np.ndarray, embedding2: np.ndarray) -> f
     # Clip to [-1, 1] range (should already be, but just in case)
     similarity = np.clip(similarity, -1.0, 1.0)
     
-    # Convert to 0-100 scale
-    # Cosine similarity ranges from -1 (opposite) to 1 (identical)
-    # We map this to 0-100 scale
-    similarity_score = (similarity + 1.0) / 2.0 * 100.0
-    
+    # Convert raw cosine to calibrated 0-100 display score
+    similarity_score = float(calibrate_clip_score(float(similarity)))
+
     return float(similarity_score)
 
 
-def batch_compute_clip_similarities(query_embedding: np.ndarray, 
+# =============================================================================
+# CLIP Score Calibration
+# =============================================================================
+# Raw CLIP cosine similarity is NOT a meaningful percentage. Unrelated images
+# typically score 0.5-0.7 cosine, so the old (cosine+1)/2*100 mapping made
+# clearly different images show as 75-85%. These piecewise-linear calibration
+# functions map the effective cosine range to an intuitive 0-100 scale.
+#
+# Calibration table:
+#   Cosine ≤0.50  →  0%   (unrelated)
+#   0.50 - 0.65   →  0-15%  (clearly different)
+#   0.65 - 0.75   → 15-40%  (weak similarity)
+#   0.75 - 0.85   → 40-70%  (moderate similarity)
+#   0.85 - 0.95   → 70-90%  (strong match)
+#   0.95 - 1.00   → 90-100% (near duplicate)
+# =============================================================================
+
+_CALIB_COSINE = np.array([0.50, 0.65, 0.75, 0.85, 0.95, 1.0], dtype=np.float64)
+_CALIB_SCORE  = np.array([0.0,  15.0, 40.0, 70.0, 90.0, 100.0], dtype=np.float64)
+
+
+def calibrate_clip_score(cosine: float) -> float:
+    """Map raw CLIP cosine similarity to a calibrated 0-100 display score.
+
+    Args:
+        cosine: Raw cosine similarity value (typically -1.0 to 1.0)
+
+    Returns:
+        Calibrated score in range 0-100
+    """
+    clamped = max(-1.0, min(1.0, cosine))
+    if clamped <= _CALIB_COSINE[0]:
+        return 0.0
+    return float(np.interp(clamped, _CALIB_COSINE, _CALIB_SCORE))
+
+
+def batch_calibrate_clip_scores(cosines: np.ndarray) -> np.ndarray:
+    """Vectorized calibration for batch operations (handles 50k+ products efficiently).
+
+    Args:
+        cosines: Array of raw cosine similarity values
+
+    Returns:
+        Array of calibrated scores in range 0-100
+    """
+    clamped = np.clip(cosines, -1.0, 1.0)
+    scores = np.interp(clamped, _CALIB_COSINE, _CALIB_SCORE)
+    return scores.astype(np.float32)
+
+
+def inverse_calibrate_clip_score(display_score: float) -> float:
+    """Reverse calibration: convert display score back to raw cosine value.
+
+    Used for FAISS threshold conversion — FAISS operates in cosine space,
+    so user-facing thresholds must be converted back.
+
+    Args:
+        display_score: Calibrated display score (0-100)
+
+    Returns:
+        Raw cosine similarity value (0.5-1.0 range typically)
+    """
+    clamped = max(0.0, min(100.0, display_score))
+    return float(np.interp(clamped, _CALIB_SCORE, _CALIB_COSINE))
+
+
+def batch_compute_clip_similarities(query_embedding: np.ndarray,
                                     catalog_embeddings: np.ndarray,
                                     pre_normalized: bool = False) -> np.ndarray:
     """Compute similarities between one query and multiple catalog embeddings
@@ -1591,8 +1655,8 @@ def batch_compute_clip_similarities(query_embedding: np.ndarray,
     # Clip to [-1, 1] range (fast operation)
     similarities = np.clip(similarities, -1.0, 1.0)
     
-    # Convert to 0-100 scale (vectorized)
-    similarity_scores = (similarities + 1.0) * 50.0  # Optimized: * 50 instead of / 2 * 100
+    # Convert to calibrated 0-100 scale (vectorized piecewise-linear)
+    similarity_scores = batch_calibrate_clip_scores(similarities)
     
     return similarity_scores.astype(np.float32)
 

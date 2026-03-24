@@ -123,8 +123,8 @@ def find_hybrid_matches(
     """
     from product_matching import find_matches, find_metadata_matches
     
-    # Enforce minimum threshold of 30% for filtering
-    threshold = max(threshold, 30.0)
+    # Enforce minimum threshold (lowered from 30 after CLIP score calibration)
+    threshold = max(threshold, 10.0)
     
     logger.info(f"Finding hybrid matches for product {product_id} (visual: {visual_weight*100}%, metadata: {metadata_weight*100}%)")
     

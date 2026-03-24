@@ -199,7 +199,6 @@ app.logger.setLevel(logging.INFO)
 app.config['UPLOAD_FOLDER'] = get_uploads_dir()
 # 500MB max content length - prevents accidental DoS from oversized uploads
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
-MAX_UPLOAD_FILES_PER_OPERATION = 50000
 SUPPORTED_PROCESSING_PROFILES = {'auto', 'balanced', 'fast'}
 
 # Ensure upload directory exists (get_uploads_dir() already does this, but keeping for clarity)
@@ -1703,13 +1702,6 @@ def batch_upload_products():
         rebuild_faiss = str(rebuild_faiss_raw).strip().lower() in ('1', 'true', 'yes', 'on')
 
         effective_total_files = operation_total_files if operation_total_files is not None else file_count
-        if effective_total_files > MAX_UPLOAD_FILES_PER_OPERATION:
-            return create_error_response(
-                'TOO_MANY_FILES',
-                f'Upload contains {effective_total_files:,} files, which exceeds the maximum of {MAX_UPLOAD_FILES_PER_OPERATION:,}',
-                f'Split uploads into multiple operations of at most {MAX_UPLOAD_FILES_PER_OPERATION:,} files',
-                status_code=400
-            )
 
         # Get optional metadata arrays
         categories = request.form.get('categories', None)

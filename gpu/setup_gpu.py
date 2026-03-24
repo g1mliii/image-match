@@ -131,6 +131,21 @@ def install_dependencies():
     return True
 
 
+def install_torch_with_fallback(primary_cmd, fallback_cmd=None, fallback_label="CPU"):
+    """Install PyTorch, optionally falling back to a safer command."""
+    success, stdout, stderr = run_cmd(primary_cmd)
+    if success:
+        return True, stdout, stderr, False
+
+    if fallback_cmd:
+        print(f"[WARNING] Primary PyTorch install failed: {stderr}")
+        print(f"[INFO] Falling back to {fallback_label} PyTorch so the app can still run.")
+        fallback_success, fallback_stdout, fallback_stderr = run_cmd(fallback_cmd)
+        return fallback_success, fallback_stdout, fallback_stderr, True
+
+    return False, stdout, stderr, False
+
+
 def install_pytorch(gpu_type):
     """Install PyTorch with correct GPU support"""
     print("\n" + "="*80)
@@ -163,6 +178,8 @@ def install_pytorch(gpu_type):
     # Install based on GPU type
     print(f"\n[2/3] Installing PyTorch for {gpu_type.upper()}...")
 
+    fallback_cmd = None
+
     if gpu_type == 'nvidia':
         cmd = f"{_PIP} install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
     elif gpu_type == 'amd':
@@ -179,6 +196,7 @@ def install_pytorch(gpu_type):
                 print("[INFO] If this fails, install AMD Adrenaline driver (26.1.1+) which")
                 print("       bundles PyTorch+ROCm automatically.")
                 cmd = f"{_PIP} install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2"
+                fallback_cmd = f"{_PIP} install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
             else:
                 # This should never happen (main() already checked), but handle it anyway
                 print(f"\n[ERROR] AMD ROCm PyTorch requires Python 3.12, but you have Python {sys.version_info.major}.{sys.version_info.minor}")
@@ -233,14 +251,21 @@ def install_pytorch(gpu_type):
             return False
     else:  # CPU
         cmd = f"{_PIP} install torch torchvision torchaudio"
-    
-    success, stdout, stderr = run_cmd(cmd)
-    
+
+    success, stdout, stderr, used_fallback = install_torch_with_fallback(
+        cmd,
+        fallback_cmd=fallback_cmd,
+        fallback_label="CPU"
+    )
+
     if not success:
         print(f"[ERROR] Installation failed: {stderr}")
         return False
-    
-    print("[OK] PyTorch installed")
+
+    if used_fallback:
+        print("[OK] PyTorch installed (CPU fallback mode)")
+    else:
+        print("[OK] PyTorch installed")
     
     # Install other dependencies
     print("\n[3/3] Installing other dependencies...")

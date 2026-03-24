@@ -27,7 +27,7 @@ REM ============================================================================
 echo.
 echo [STEP 1/3] Installing base dependencies...
 echo.
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 if %errorlevel% neq 0 (
     echo.

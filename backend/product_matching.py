@@ -55,7 +55,9 @@ try:
         compute_clip_similarity,
         batch_compute_clip_similarities,
         is_clip_available,
-        CLIPModelError
+        CLIPModelError,
+        calibrate_clip_score,
+        inverse_calibrate_clip_score
     )
     CLIP_AVAILABLE = is_clip_available()
     if not CLIP_AVAILABLE:
@@ -449,8 +451,8 @@ def find_matches(
     store_matches: bool = True,
     skip_invalid_products: bool = True
 ) -> Dict[str, Any]:
-    # Enforce minimum threshold of 30% for filtering
-    threshold = max(threshold, 30.0)
+    # Enforce minimum threshold (lowered from 30 after CLIP score calibration)
+    threshold = max(threshold, 10.0)
     """
     Find similar products in the historical catalog with comprehensive error handling.
     
@@ -674,7 +676,7 @@ def find_matches(
                 search_category,
                 query_embedding,
                 k=k,
-                threshold=threshold / 100.0  # Convert 0-100 to 0-1 range
+                threshold=inverse_calibrate_clip_score(threshold)  # Convert display score to cosine for FAISS
             )
 
             if distances is not None and candidate_ids is not None:
@@ -712,7 +714,7 @@ def find_matches(
                             failed_count += 1
                             continue
 
-                        similarity_score = float(dist) * 100.0
+                        similarity_score = float(calibrate_clip_score(float(dist)))
 
                         similarities = {
                             'combined_similarity': similarity_score,

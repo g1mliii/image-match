@@ -51,8 +51,11 @@ torch>=2.0.0
 # Version 3.0+ requires torch.distributed.is_initialized() which is missing in ROCm Windows builds
 # Tested with ROCm 6.4.4 and 7.1.1 (PyTorch 2.9) - restriction still applies
 # DO NOT UPGRADE to 3.0+ or AMD GPU support will break!
-# Note: sentence-transformers will auto-install transformers >= 4.55.5 (required for ROCm)
 sentence-transformers>=2.7.0,<3.0.0
+# Pin transformers to a known-good version for sentence-transformers 2.7.0.
+# Newer transformers builds can require torch APIs that are missing from
+# some CPU/ROCm wheels resolved during setup, which breaks CLIP import.
+transformers==4.46.1
 
 # Intel GPU Acceleration (optional - for Intel Arc/Iris GPUs)
 # Uncomment to enable Intel GPU support:

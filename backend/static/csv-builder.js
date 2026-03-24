@@ -18,8 +18,8 @@ const state = {
     skuLinkField: '__auto__'
 };
 
-// MEMORY OPTIMIZATION: Limits to prevent unbounded state growth (200-500MB possible)
-const MAX_PRODUCTS = 50000;  // Maximum products in state
+// MEMORY OPTIMIZATION: Keep operational safety limits, but do not hard-cap
+// the number of products/imported rows a user can work with.
 const MAX_UNDO_STACK = 10;   // Maximum undo history items
 const MAX_REDO_STACK = 10;   // Maximum redo history items
 const MAX_LINK_INDEX_TOKEN_CANDIDATES = 400;
@@ -3121,22 +3121,6 @@ function saveStateForUndo() {
         }
     } catch (e) {
         console.error('Failed to save undo state:', e);
-    }
-}
-
-// MEMORY OPTIMIZATION: Enforce state size limits to prevent unbounded growth
-function enforceStateLimits() {
-    // Limit products array size
-    if (state.products.length > MAX_PRODUCTS) {
-        console.warn(`Products exceed limit (${state.products.length} > ${MAX_PRODUCTS}), removing oldest items`);
-        state.products = state.products.slice(-MAX_PRODUCTS);
-    }
-
-    // Limit imported data
-    if (state.importedData.length > MAX_PRODUCTS) {
-        state.importedData = state.importedData.slice(-MAX_PRODUCTS);
-        buildFuzzyIndex();
-        buildLinkIndexes();
     }
 }
 

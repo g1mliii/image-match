@@ -37,7 +37,10 @@ try:
         clear_model_cache,
         CLIPModelError,
         CLIPModelDownloadError,
-        TORCH_AVAILABLE
+        TORCH_AVAILABLE,
+        calibrate_clip_score,
+        batch_calibrate_clip_scores,
+        inverse_calibrate_clip_score
     )
     CLIP_AVAILABLE = is_clip_available()
 except ImportError as e:
@@ -1114,6 +1117,95 @@ class TestAdditionalEdgeCases:
             print(f"  Similarity with zero vector: {similarity:.2f}")
         finally:
             os.unlink(test_img)
+
+
+# ============================================================================
+# CLIP Score Calibration Tests
+# ============================================================================
+
+class TestCLIPScoreCalibration:
+    """Tests for the piecewise-linear CLIP score calibration functions."""
+
+    def test_calibration_breakpoints(self):
+        """Exact breakpoint values should map correctly."""
+        assert calibrate_clip_score(0.50) == pytest.approx(0.0)
+        assert calibrate_clip_score(0.65) == pytest.approx(15.0)
+        assert calibrate_clip_score(0.75) == pytest.approx(40.0)
+        assert calibrate_clip_score(0.85) == pytest.approx(70.0)
+        assert calibrate_clip_score(0.95) == pytest.approx(90.0)
+        assert calibrate_clip_score(1.00) == pytest.approx(100.0)
+
+    def test_calibration_below_minimum(self):
+        """Cosine values at or below 0.50 should return 0."""
+        assert calibrate_clip_score(0.50) == 0.0
+        assert calibrate_clip_score(0.40) == 0.0
+        assert calibrate_clip_score(0.0) == 0.0
+        assert calibrate_clip_score(-1.0) == 0.0
+
+    def test_calibration_monotonic(self):
+        """Calibration must be monotonically increasing (preserves ranking)."""
+        cosines = np.linspace(0.0, 1.0, 200)
+        scores = [calibrate_clip_score(c) for c in cosines]
+        for i in range(1, len(scores)):
+            assert scores[i] >= scores[i-1], f"Not monotonic at cosine={cosines[i]}"
+
+    def test_calibration_output_range(self):
+        """All outputs should be in [0, 100]."""
+        for c in np.linspace(-1.0, 1.0, 100):
+            score = calibrate_clip_score(c)
+            assert 0 <= score <= 100, f"Out of range: cosine={c} -> score={score}"
+
+    def test_calibration_bug_report_case(self):
+        """The original bug: cosine 0.6988 showed as ~85%, now should be ~27% (weak similarity)."""
+        score = calibrate_clip_score(0.6988)
+        # Should be in the 15-40 range (0.65-0.75 "weak similarity" segment)
+        # 0.6988 is 48.8% through the 0.65-0.75 segment -> 15 + 0.488 * 25 = ~27.2%
+        assert 15 < score < 40, f"Bug-report case: cosine 0.6988 -> {score:.1f}% (expected ~27%, weak similarity)"
+        # Most importantly, NOT the old inflated 84.9%
+        assert score < 50, f"Score still too high: {score:.1f}%"
+
+    def test_batch_matches_scalar(self):
+        """Batch calibration should produce same results as scalar."""
+        cosines = np.array([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+        batch_scores = batch_calibrate_clip_scores(cosines)
+        for i, c in enumerate(cosines):
+            scalar_score = calibrate_clip_score(c)
+            assert batch_scores[i] == pytest.approx(scalar_score, abs=0.01), \
+                f"Mismatch at cosine={c}: batch={batch_scores[i]}, scalar={scalar_score}"
+
+    def test_batch_output_type(self):
+        """Batch output should be float32 numpy array."""
+        cosines = np.array([0.5, 0.7, 0.9])
+        result = batch_calibrate_clip_scores(cosines)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+
+    def test_inverse_roundtrip(self):
+        """calibrate(inverse_calibrate(x)) should approximately equal x."""
+        for display_score in [0, 10, 25, 40, 55, 70, 80, 90, 95, 100]:
+            cosine = inverse_calibrate_clip_score(display_score)
+            roundtrip = calibrate_clip_score(cosine)
+            assert roundtrip == pytest.approx(display_score, abs=0.1), \
+                f"Roundtrip failed: {display_score} -> cosine {cosine} -> {roundtrip}"
+
+    def test_inverse_range(self):
+        """Inverse should return values in valid cosine range."""
+        for score in np.linspace(0, 100, 50):
+            cosine = inverse_calibrate_clip_score(score)
+            assert 0.5 <= cosine <= 1.0, f"Inverse out of range: score={score} -> cosine={cosine}"
+
+    def test_inverse_clamping(self):
+        """Inverse should clamp out-of-range inputs."""
+        assert inverse_calibrate_clip_score(-10) == inverse_calibrate_clip_score(0)
+        assert inverse_calibrate_clip_score(150) == inverse_calibrate_clip_score(100)
+
+    def test_batch_large_array(self):
+        """Batch should handle large arrays efficiently (50k+ products)."""
+        cosines = np.random.uniform(0.3, 1.0, size=50000).astype(np.float32)
+        scores = batch_calibrate_clip_scores(cosines)
+        assert scores.shape == (50000,)
+        assert np.all(scores >= 0)
+        assert np.all(scores <= 100)
 
 
 if __name__ == '__main__':

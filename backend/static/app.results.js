@@ -956,7 +956,7 @@ function buildServerSessionQueryParams(page, limit) {
     params.set('duplicates_only', filterDuplicatesOnly ? 'true' : 'false');
     params.set('sort_by', sortBy || 'similarity');
     params.set('sort_order', sortOrder || 'desc');
-    params.set('threshold', String(dynamicThreshold || 30));
+    params.set('threshold', String(dynamicThreshold || 0));
     params.set('dynamic_limit', String(dynamicLimit || 0));
     params.set('dynamic_search', dynamicSearch || '');
     params.set('metadata_filters', JSON.stringify(serializeMetadataFilterCriteriaForServer()));
@@ -1236,7 +1236,7 @@ function displayResults(resetPage = true) {
         <div style="margin-top: 12px; padding: 10px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap;">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <label style="font-weight: 600; color: #2d3748;">Min Similarity:</label>
-                <input type="range" id="dynamicThresholdSlider" min="30" max="100" value="${dynamicThreshold}"
+                <input type="range" id="dynamicThresholdSlider" min="0" max="100" value="${dynamicThreshold}"
                        style="width: 150px;"
                        oninput="updateDynamicThresholdPreview(this.value)"
                        onchange="applyDynamicThreshold(this.value)"
@@ -1442,7 +1442,7 @@ async function displayResultsServerMode(resetPage = true) {
             <div style="margin-top: 12px; padding: 10px; background: #f7fafc; border: 2px solid #000; display: flex; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap;">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <label style="font-weight: 600; color: #2d3748;">Min Similarity:</label>
-                    <input type="range" id="dynamicThresholdSlider" min="30" max="100" value="${dynamicThreshold}"
+                    <input type="range" id="dynamicThresholdSlider" min="0" max="100" value="${dynamicThreshold}"
                            style="width: 150px;"
                            oninput="updateDynamicThresholdPreview(this.value)"
                            onchange="applyDynamicThreshold(this.value)"
@@ -1990,7 +1990,7 @@ async function showDetailedComparison(newProductId, matchedProductId) {
                             <!-- Visual Score Component -->
                             <div style="margin-bottom: 15px;">
                                 <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                    <span style="font-weight: 600; color: #2d3748;">Visual Similarity (CLIP)</span>
+                                    <span style="font-weight: 600; color: #2d3748;">Visual Similarity</span>
                                     <span style="font-weight: 600; color: #667eea;">${matchDetails.visual_score.toFixed(1)}%</span>
                                 </div>
                                 <div style="width: 100%; height: 8px; background: #e2e8f0; border: 1px solid #cbd5e0; border-radius: 4px; overflow: hidden;">
@@ -4666,10 +4666,10 @@ function filterAndSortResults(results) {
         let filteredMatches = result.m;
 
 
-        if (dynamicThreshold > 30 || hasMetadataFilters || hasSearchResults) {
+        if (dynamicThreshold > 0 || hasMetadataFilters || hasSearchResults) {
             filteredMatches = filteredMatches.filter(match => {
                 // Check 1: Threshold (early exit if fails)
-                if (dynamicThreshold > 30 && getScore(match, 'similarity') < dynamicThreshold) {
+                if (dynamicThreshold > 0 && getScore(match, 'similarity') < dynamicThreshold) {
                     return false;
                 }
 
