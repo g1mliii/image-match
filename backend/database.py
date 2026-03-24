@@ -8,7 +8,7 @@ import time
 import secrets
 import threading
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Iterator
 
 # Import debug mode check (from config to avoid circular imports)
 from config import is_debug_mode
@@ -277,8 +277,13 @@ def init_db():
         ''')
         
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_matches_new_product 
+            CREATE INDEX IF NOT EXISTS idx_matches_new_product
             ON matches(new_product_id, similarity_score DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_matches_matched_product
+            ON matches(matched_product_id)
         ''')
 
         cursor.execute('''
@@ -299,6 +304,11 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_features_product_id
             ON features(product_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_features_product_id_id
+            ON features(product_id, id DESC)
         ''')
         
         cursor.execute('''
@@ -805,135 +815,98 @@ def delete_features(product_id: int) -> bool:
         cursor.execute('DELETE FROM features WHERE product_id = ?', (product_id,))
         return cursor.rowcount > 0
 
-def get_all_features_by_category(category: Optional[str] = None, is_historical: Optional[bool] = True,
-                                include_uncategorized: bool = False,
-                                embedding_type: Optional[str] = None,
-                                match_null_category: bool = False,
-                                limit: Optional[int] = None,
-                                offset: int = 0) -> List[Tuple[int, Dict[str, Any]]]:
-    """Get all feature vectors for products in a category
+def _build_latest_features_query(category: Optional[str] = None,
+                                 is_historical: Optional[bool] = True,
+                                 include_uncategorized: bool = False,
+                                 embedding_type: Optional[str] = None,
+                                 match_null_category: bool = False,
+                                 limit: Optional[int] = None,
+                                 offset: int = 0) -> Tuple[str, List[Any]]:
+    """Build the shared query that returns the latest feature row per product."""
+    query = '''
+        WITH latest_features AS (
+            SELECT product_id, MAX(id) AS latest_feature_id
+            FROM features
+            GROUP BY product_id
+        )
+        SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
+               f.embedding_type, f.embedding_version
+        FROM products p
+        JOIN latest_features lf ON p.id = lf.product_id
+        JOIN features f ON f.id = lf.latest_feature_id
+    '''
 
-    PERFORMANCE OPTIMIZED (Task 14):
-    - Uses composite index (category, is_historical) for fast filtering
-    - Filters at database level before loading features into memory
-    - Single JOIN query instead of multiple queries
-    - PAGINATION support (limit/offset) for 100K+ product catalogs
-    - Critical for performance with large catalogs (1000+ products)
-    
-    Args:
-        category: Category to filter by
-        is_historical: Filter for historical vs new products (None = get ALL products)
-        include_uncategorized: If True and category specified, also include NULL category products
-        embedding_type: Filter by embedding type ('legacy', 'clip', or None for all)
-        match_null_category: If True and category is None, match ONLY NULL category products
-                            If False and category is None, match ALL products regardless of category
-        limit: Optional maximum number of results to return (for pagination, prevents OOM on 100K+ catalogs)
-        offset: Number of results to skip (for pagination, default 0)
+    filters = []
+    params: List[Any] = []
 
-    Returns:
-        List of tuples (product_id, features_dict)
-        features_dict includes: color_features, shape_features, texture_features,
-                                embedding_type, embedding_version, category
-    """
+    if category is None and not match_null_category and is_historical is None:
+        pass
+    elif category is None and not match_null_category:
+        filters.append('p.is_historical = ?')
+        params.append(is_historical)
+    elif category is None and match_null_category:
+        filters.append('p.category IS NULL')
+        filters.append('p.is_historical = ?')
+        params.append(is_historical)
+    elif category is not None and is_historical is None:
+        filters.append('p.category = ?')
+        params.append(category)
+    elif include_uncategorized:
+        filters.append('(p.category = ? OR p.category IS NULL)')
+        filters.append('p.is_historical = ?')
+        params.extend([category, is_historical])
+    else:
+        filters.append('p.category = ?')
+        filters.append('p.is_historical = ?')
+        params.extend([category, is_historical])
+
+    if embedding_type is not None:
+        filters.append('f.embedding_type = ?')
+        params.append(embedding_type)
+
+    if filters:
+        query += ' WHERE ' + ' AND '.join(filters)
+
+    if limit is not None:
+        query += ' LIMIT ?'
+        params.append(limit)
+        if offset > 0:
+            query += ' OFFSET ?'
+            params.append(offset)
+
+    return query, params
+
+
+def iter_all_features_by_category(category: Optional[str] = None,
+                                  is_historical: Optional[bool] = True,
+                                  include_uncategorized: bool = False,
+                                  embedding_type: Optional[str] = None,
+                                  match_null_category: bool = False,
+                                  limit: Optional[int] = None,
+                                  offset: int = 0,
+                                  batch_size: int = 1000) -> Iterator[List[Tuple[int, Dict[str, Any]]]]:
+    """Yield feature rows in batches so callers can stream large catalogs safely."""
+    fetch_size = max(1, int(batch_size))
+    query, params = _build_latest_features_query(
+        category=category,
+        is_historical=is_historical,
+        include_uncategorized=include_uncategorized,
+        embedding_type=embedding_type,
+        match_null_category=match_null_category,
+        limit=limit,
+        offset=offset
+    )
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
-        # Build base query with embedding type filter
-        embedding_filter = ""
-        params = []
-        
-        if category is None and not match_null_category and is_historical is None:
-            # Get ALL products regardless of category or is_historical status
-            # PERFORMANCE FIX: Use JOIN with GROUP BY instead of subquery (10-50x faster for large catalogs!)
-            # Old N+1 pattern: WHERE f.id = (SELECT MAX(id)...) executes 1000 subqueries for 1000 products
-            # New pattern: Single query with GROUP BY executes once
-            query = '''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
-                       f.embedding_type, f.embedding_version
-                FROM products p
-                JOIN features f ON p.id = f.product_id
-                WHERE f.id IN (SELECT MAX(id) FROM features GROUP BY product_id)
-            '''
-        elif category is None and not match_null_category:
-            # Get all products regardless of category
-            # FIX: Use MAX(f.id) to get only the latest features per product (avoid duplicates)
-            query = '''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
-                       f.embedding_type, f.embedding_version
-                FROM products p
-                JOIN features f ON p.id = f.product_id
-                WHERE p.is_historical = ? AND f.id IN (SELECT MAX(id) FROM features GROUP BY product_id)
-            '''
-            params.append(is_historical)
-        elif category is None and match_null_category:
-            # Get ONLY products with NULL category (uncategorized)
-            # FIX: Use MAX(f.id) to get only the latest features per product (avoid duplicates)
-            query = '''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
-                       f.embedding_type, f.embedding_version
-                FROM products p
-                JOIN features f ON p.id = f.product_id
-                WHERE p.category IS NULL AND p.is_historical = ? AND f.id IN (SELECT MAX(id) FROM features GROUP BY product_id)
-            '''
-            params.append(is_historical)
-        elif category is not None and is_historical is None:
-            # Get products in specific category, ALL is_historical statuses
-            # FIX: Use MAX(f.id) to get only the latest features per product (avoid duplicates)
-            query = '''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
-                       f.embedding_type, f.embedding_version
-                FROM products p
-                JOIN features f ON p.id = f.product_id
-                WHERE p.category = ? AND f.id IN (SELECT MAX(id) FROM features GROUP BY product_id)
-            '''
-            params.append(category)
-        elif include_uncategorized:
-            # Get products in category OR with NULL category
-            # FIX: Use MAX(f.id) to get only the latest features per product (avoid duplicates)
-            query = '''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
-                       f.embedding_type, f.embedding_version
-                FROM products p
-                JOIN features f ON p.id = f.product_id
-                WHERE (p.category = ? OR p.category IS NULL) AND p.is_historical = ? AND f.id IN (SELECT MAX(id) FROM features GROUP BY product_id)
-            '''
-            params.extend([category, is_historical])
-        else:
-            # Get products in specific category only
-            # FIX: Use MAX(f.id) to get only the latest features per product (avoid duplicates)
-            query = '''
-                SELECT p.id, p.category, f.color_features, f.shape_features, f.texture_features,
-                       f.embedding_type, f.embedding_version
-                FROM products p
-                JOIN features f ON p.id = f.product_id
-                WHERE p.category = ? AND p.is_historical = ? AND f.id IN (SELECT MAX(id) FROM features GROUP BY product_id)
-            '''
-            params.extend([category, is_historical])
-        
-        # Add embedding type filter if specified
-        if embedding_type is not None:
-            query += ' AND f.embedding_type = ?'
-            params.append(embedding_type)
-
-        # PERFORMANCE: Add pagination support (prevents OOM on 100K+ catalogs)
-        if limit is not None:
-            query += ' LIMIT ?'
-            params.append(limit)
-            if offset > 0:
-                query += ' OFFSET ?'
-                params.append(offset)
-
         cursor.execute(query, params)
-        
-        # MEMORY OPTIMIZATION: Use fetchmany() to process in chunks instead of
-        # fetchall() which materializes all embeddings at once. For 50K products
-        # with 512-dim float32 embeddings, this reduces peak memory usage.
-        _EMBED_CHUNK = 1000
-        results = []
+
         while True:
-            rows = cursor.fetchmany(_EMBED_CHUNK)
+            rows = cursor.fetchmany(fetch_size)
             if not rows:
                 break
+
+            batch = []
             for row in rows:
                 product_id = row['id']
                 features = {
@@ -942,11 +915,33 @@ def get_all_features_by_category(category: Optional[str] = None, is_historical: 
                     'texture_features': deserialize_numpy_array(row['texture_features']),
                     'embedding_type': row['embedding_type'] or 'legacy',
                     'embedding_version': row['embedding_version'],
-                    'category': row['category']  # Include category in results for reference
+                    'category': row['category']
                 }
-                results.append((product_id, features))
+                batch.append((product_id, features))
 
-        return results
+            if batch:
+                yield batch
+
+
+def get_all_features_by_category(category: Optional[str] = None, is_historical: Optional[bool] = True,
+                                include_uncategorized: bool = False,
+                                embedding_type: Optional[str] = None,
+                                match_null_category: bool = False,
+                                limit: Optional[int] = None,
+                                offset: int = 0) -> List[Tuple[int, Dict[str, Any]]]:
+    """Get all feature vectors for products in a category."""
+    results: List[Tuple[int, Dict[str, Any]]] = []
+    for batch in iter_all_features_by_category(
+        category=category,
+        is_historical=is_historical,
+        include_uncategorized=include_uncategorized,
+        embedding_type=embedding_type,
+        match_null_category=match_null_category,
+        limit=limit,
+        offset=offset
+    ):
+        results.extend(batch)
+    return results
 
 # Match storage functions
 

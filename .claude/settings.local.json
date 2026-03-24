@@ -31,7 +31,13 @@
       "Bash(tasklist:*)",
       "Bash(curl:*)",
       "Bash(cmd.exe /c \"Restart App.bat\")",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(rm:*)",
+      "Bash(mkdir -p \"/c/Users/subai/Desktop/CatalogMatch_Test\")",
+      "Read(//c/Users/subai/Desktop/**)",
+      "Bash(mkdir:*)",
+      "Bash(test_env/Scripts/python.exe:*)",
+      "Bash(test_env/Scripts/pip.exe install:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

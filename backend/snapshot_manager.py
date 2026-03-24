@@ -284,6 +284,7 @@ def init_snapshot_db(snapshot_path: str, name: str, is_historical: bool = True,
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_name ON products(product_name)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_features_product_id ON features(product_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_features_product_id_id ON features(product_id, id DESC)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_matches_new_product ON matches(new_product_id, similarity_score DESC)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_price_history_product_id ON price_history(product_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_performance_history_product_id ON performance_history(product_id)')
@@ -1083,46 +1084,51 @@ def merge_snapshots(snapshot_files: List[str], new_name: str,
                     logger.warning(f"Snapshot not found during merge: {snapshot_file}")
                     continue
 
-                # PERFORMANCE: Use ATTACH + bulk INSERT...SELECT to avoid N+1 queries
-                # For 50k products this reduces 200k+ queries to ~4 bulk operations
-                attach_alias = 'source_snap'
-                new_cursor.execute(f"ATTACH DATABASE ? AS {attach_alias}", (source_path,))
+                copy_batch_size = 1000
 
-                try:
+                with sqlite3.connect(source_path) as source_conn:
+                    source_cursor = source_conn.cursor()
+
                     # Get current max product ID in target (for ID offset mapping)
                     new_cursor.execute('SELECT COALESCE(MAX(id), 0) FROM products')
-                    id_offset = new_cursor.fetchone()[0]
+                    next_target_id = new_cursor.fetchone()[0] + 1
 
-                    # Bulk copy products (image paths copied as-is; file copy done after)
-                    new_cursor.execute(f'''
-                        INSERT INTO products (image_path, category, product_name, sku, is_historical, metadata)
-                        SELECT image_path, category, product_name, sku, ?, metadata
-                        FROM {attach_alias}.products
-                    ''', (is_historical,))
-                    snapshot_product_count = new_cursor.rowcount
-
-                    # Build old_id -> new_id mapping using the known offset
-                    # New IDs are (id_offset + 1) through (id_offset + snapshot_product_count)
-                    # We need to map source IDs to new IDs; source products are inserted in rowid order
-                    new_cursor.execute(f'''
-                        SELECT id FROM {attach_alias}.products ORDER BY id ASC
+                    # Copy products in source ID order so generated IDs stay predictable.
+                    source_cursor.execute('''
+                        SELECT id, image_path, category, product_name, sku, metadata
+                        FROM products
+                        ORDER BY id ASC
                     ''')
-                    source_ids = [row[0] for row in new_cursor.fetchall()]
-
-                    # Map old source IDs to new sequential IDs
                     id_map = {}
-                    for seq, old_id in enumerate(source_ids, start=id_offset + 1):
-                        id_map[old_id] = seq
+                    snapshot_product_count = 0
+
+                    while True:
+                        rows = source_cursor.fetchmany(copy_batch_size)
+                        if not rows:
+                            break
+
+                        products_batch = []
+                        for row in rows:
+                            id_map[row[0]] = next_target_id
+                            next_target_id += 1
+                            snapshot_product_count += 1
+                            products_batch.append((row[1], row[2], row[3], row[4], is_historical, row[5]))
+
+                        if products_batch:
+                            new_cursor.executemany('''
+                                INSERT INTO products (image_path, category, product_name, sku, is_historical, metadata)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            ''', products_batch)
 
                     # Bulk copy features using ID mapping (batch with executemany)
-                    new_cursor.execute(f'''
+                    source_cursor.execute('''
                         SELECT product_id, color_features, shape_features, texture_features,
                                embedding_type, embedding_version
-                        FROM {attach_alias}.features
+                        FROM features
                     ''')
-                    features_batch = []
                     while True:
-                        rows = new_cursor.fetchmany(1000)
+                        features_batch = []
+                        rows = source_cursor.fetchmany(copy_batch_size)
                         if not rows:
                             break
                         for row in rows:
@@ -1136,73 +1142,82 @@ def merge_snapshots(snapshot_files: List[str], new_name: str,
                                  embedding_type, embedding_version)
                                 VALUES (?, ?, ?, ?, ?, ?)
                             ''', features_batch)
-                            features_batch = []
 
                     # Bulk copy price history
-                    new_cursor.execute(f'''
+                    source_cursor.execute('''
                         SELECT product_id, date, price, currency
-                        FROM {attach_alias}.price_history
+                        FROM price_history
                     ''')
-                    price_batch = []
-                    for row in new_cursor.fetchall():
-                        new_pid = id_map.get(row[0])
-                        if new_pid:
-                            price_batch.append((new_pid, row[1], row[2], row[3]))
-                    if price_batch:
-                        new_cursor.executemany('''
-                            INSERT INTO price_history (product_id, date, price, currency)
-                            VALUES (?, ?, ?, ?)
-                        ''', price_batch)
+                    while True:
+                        price_batch = []
+                        rows = source_cursor.fetchmany(copy_batch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            new_pid = id_map.get(row[0])
+                            if new_pid:
+                                price_batch.append((new_pid, row[1], row[2], row[3]))
+                        if price_batch:
+                            new_cursor.executemany('''
+                                INSERT INTO price_history (product_id, date, price, currency)
+                                VALUES (?, ?, ?, ?)
+                            ''', price_batch)
 
                     # Bulk copy performance history
-                    new_cursor.execute(f'''
+                    source_cursor.execute('''
                         SELECT product_id, date, sales, views, conversion_rate, revenue
-                        FROM {attach_alias}.performance_history
+                        FROM performance_history
                     ''')
-                    perf_batch = []
-                    for row in new_cursor.fetchall():
-                        new_pid = id_map.get(row[0])
-                        if new_pid:
-                            perf_batch.append((new_pid, row[1], row[2], row[3], row[4], row[5]))
-                    if perf_batch:
-                        new_cursor.executemany('''
-                            INSERT INTO performance_history
-                            (product_id, date, sales, views, conversion_rate, revenue)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', perf_batch)
+                    while True:
+                        perf_batch = []
+                        rows = source_cursor.fetchmany(copy_batch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            new_pid = id_map.get(row[0])
+                            if new_pid:
+                                perf_batch.append((new_pid, row[1], row[2], row[3], row[4], row[5]))
+                        if perf_batch:
+                            new_cursor.executemany('''
+                                INSERT INTO performance_history
+                                (product_id, date, sales, views, conversion_rate, revenue)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            ''', perf_batch)
 
                     # Copy image files (still need file-by-file for dedup)
-                    new_cursor.execute(f'''
-                        SELECT id, image_path FROM {attach_alias}.products
+                    source_cursor.execute('''
+                        SELECT id, image_path
+                        FROM products
                         WHERE image_path IS NOT NULL
                     ''')
-                    for row in new_cursor.fetchall():
-                        old_image_path = row[1]
-                        new_pid = id_map.get(row[0])
-                        if old_image_path and os.path.exists(old_image_path) and new_pid:
-                            filename = os.path.basename(old_image_path)
-                            new_image_path = os.path.join(new_uploads_dir, filename)
+                    while True:
+                        rows = source_cursor.fetchmany(copy_batch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            old_image_path = row[1]
+                            new_pid = id_map.get(row[0])
+                            if old_image_path and os.path.exists(old_image_path) and new_pid:
+                                filename = os.path.basename(old_image_path)
+                                new_image_path = os.path.join(new_uploads_dir, filename)
 
-                            counter = 1
-                            while os.path.exists(new_image_path):
-                                name, ext = os.path.splitext(filename)
-                                new_image_path = os.path.join(
-                                    new_uploads_dir, f"{name}_{counter}{ext}"
+                                counter = 1
+                                while os.path.exists(new_image_path):
+                                    name, ext = os.path.splitext(filename)
+                                    new_image_path = os.path.join(
+                                        new_uploads_dir, f"{name}_{counter}{ext}"
+                                    )
+                                    counter += 1
+
+                                shutil.copy2(old_image_path, new_image_path)
+
+                                # Update the image_path in the new DB
+                                new_cursor.execute(
+                                    'UPDATE products SET image_path = ? WHERE id = ?',
+                                    (new_image_path, new_pid)
                                 )
-                                counter += 1
-
-                            shutil.copy2(old_image_path, new_image_path)
-
-                            # Update the image_path in the new DB
-                            new_cursor.execute(
-                                'UPDATE products SET image_path = ? WHERE id = ?',
-                                (new_image_path, new_pid)
-                            )
 
                     total_products += snapshot_product_count
-
-                finally:
-                    new_cursor.execute(f"DETACH DATABASE {attach_alias}")
 
             # Update product count in metadata
             new_cursor.execute('''

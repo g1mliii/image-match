@@ -70,6 +70,32 @@ python scripts/init_claude.py
 
 **Output:** `.claude/context.md` - Single consolidated context file (~20KB)
 
+### `package_client.py`
+Creates the client testing ZIP in a cross-platform way on Windows, macOS, or Linux.
+
+**Usage:**
+```bash
+python scripts/package_client.py
+```
+
+**What it writes:**
+- `CatalogMatch_Client_YYYYMMDD_HHMMSS.zip`
+- `CatalogMatch_Client.zip`
+
+**What it includes:**
+- Windows launch/setup files: `RUN.bat`, `SETUP.bat`, `start_server.bat`
+- macOS/Linux launcher: `start_server.sh`
+- Current shipped database/config files from the repo, including:
+  - `backend/product_matching.db`
+  - `backend/catalogs/default-catalog.db`
+  - `backend/config/active_catalogs.json`
+
+**What it excludes:**
+- `.git/`, `node_modules/`, virtualenvs, caches, build outputs
+- Existing client ZIP artifacts
+- SQLite sidecar files like `*.db-wal` and `*.db-shm`
+- Finder/Explorer junk like `.DS_Store`
+
 ## When to Use These Scripts
 
 ### After Installation

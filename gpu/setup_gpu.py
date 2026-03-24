@@ -3,7 +3,7 @@ GPU Setup for Product Matching System
 Automatically installs PyTorch + GPU drivers (NVIDIA/AMD/Apple Silicon)
 
 Based on:
-- AMD ROCm: https://rocm.docs.amd.com/projects/install-on-windows/en/latest/
+- AMD ROCm: Bundled with AMD Adrenaline driver (26.1.1+)
 - PyTorch: https://pytorch.org/get-started/locally/
 """
 
@@ -12,6 +12,12 @@ import sys
 import os
 import platform
 import urllib.request
+
+
+# Use the current Python interpreter for all subprocess calls so that
+# pip/python commands target the correct environment (venv or system).
+_PYTHON = sys.executable
+_PIP = f'"{_PYTHON}" -m pip'
 
 
 def run_cmd(cmd):
@@ -102,14 +108,16 @@ def install_dependencies():
 
     # Upgrade pip first
     print("\n[INFO] Upgrading pip to latest version...")
-    run_cmd("python -m pip install --upgrade pip")
+    run_cmd(f"{_PIP} install --upgrade pip")
 
     # Use consolidated requirements.txt in project root
-    req_file = "../requirements.txt"
+    # Resolve relative to this script's location so it works regardless of CWD
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    req_file = os.path.join(script_dir, "..", "requirements.txt")
 
     if os.path.exists(req_file):
         print(f"\n[INFO] Installing from {req_file}...")
-        success, stdout, stderr = run_cmd(f"pip install -r {req_file}")
+        success, stdout, stderr = run_cmd(f'{_PIP} install -r "{req_file}"')
         if success:
             print(f"[OK] Installed dependencies from {req_file}")
         else:
@@ -130,7 +138,7 @@ def install_pytorch(gpu_type):
     print("="*80)
 
     # Check if PyTorch is already installed (e.g., via AMD Adrenaline)
-    pytorch_check = run_cmd("pip show torch")
+    pytorch_check = run_cmd(f"{_PIP} show torch")
     if pytorch_check[0]:
         existing_version = pytorch_check[1]
         if 'rocmsdk' in existing_version or 'rocm' in existing_version:
@@ -139,7 +147,7 @@ def install_pytorch(gpu_type):
 
             # Verify sentence-transformers compatibility
             print("\n[INFO] Verifying sentence-transformers compatibility...")
-            success_st, _, stderr_st = run_cmd('pip install "sentence-transformers>=2.7.0,<3.0.0"')
+            success_st, _, stderr_st = run_cmd(f'{_PIP} install "sentence-transformers>=2.7.0,<3.0.0"')
 
             if success_st:
                 print("[OK] sentence-transformers < 3.0.0 installed")
@@ -150,64 +158,41 @@ def install_pytorch(gpu_type):
 
     # Uninstall existing
     print("\n[1/3] Removing existing PyTorch...")
-    run_cmd("pip uninstall torch torchvision torchaudio -y")
+    run_cmd(f"{_PIP} uninstall torch torchvision torchaudio -y")
 
     # Install based on GPU type
     print(f"\n[2/3] Installing PyTorch for {gpu_type.upper()}...")
 
     if gpu_type == 'nvidia':
-        cmd = "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+        cmd = f"{_PIP} install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
     elif gpu_type == 'amd':
         if platform.system() == "Linux":
-            cmd = "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2"
+            cmd = f"{_PIP} install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2"
         else:  # Windows
             # AMD ROCm PyTorch for Windows requires Python 3.12
             # NOTE: This check is redundant (main() already checked) but kept as safety net
             if sys.version_info.minor == 12:
-                # Official AMD ROCm wheels for Windows (Python 3.12 only)
-                print("\n[INFO] PyTorch for AMD ROCm on Windows should be installed via AMD Adrenaline driver (26.1.1+)")
-                print("[INFO] This ensures optimal compatibility and automatic updates")
-                print("\n[ALTERNATIVE] Manual installation available:")
-                print("[INFO] Installing AMD ROCm PyTorch for Windows (Python 3.12)")
-                print("[INFO] This may take several minutes (~780MB download)...")
-
-                # Install PyTorch with ROCm 6.4.4 (stable) or 7.x (latest)
-                # Note: ROCm 6.4.4 is more stable and doesn't affect graphics drivers
-                success1, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torch-2.8.0%2Brocm6.4.4-cp312-cp312-win_amd64.whl")
-                success2, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchvision-0.23.1%2Brocm6.4.4-cp312-cp312-win_amd64.whl")
-                success3, _, _ = run_cmd("pip install --no-cache-dir https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchaudio-2.8.0%2Brocm6.4.4-cp312-cp312-win_amd64.whl")
-
-                if success1 and success2 and success3:
-                    print("[OK] AMD ROCm PyTorch installed")
-
-                    # CRITICAL: Install sentence-transformers < 3.0.0 for AMD ROCm compatibility
-                    print("\n[INFO] Installing sentence-transformers < 3.0.0 (required for AMD ROCm)...")
-                    success_st, _, stderr_st = run_cmd('pip install "sentence-transformers>=2.7.0,<3.0.0"')
-
-                    if success_st:
-                        print("[OK] sentence-transformers < 3.0.0 installed")
-                    else:
-                        print(f"[WARNING] Failed to install sentence-transformers: {stderr_st}")
-                        print("[WARNING] AMD ROCm may not work correctly without sentence-transformers < 3.0.0")
-
-                    return True
-                else:
-                    print("[ERROR] Failed to install AMD ROCm PyTorch")
-                    return False
+                # AMD Adrenaline driver (26.1.1+) should have already installed PyTorch+ROCm.
+                # If we got here, it means ROCm was detected but PyTorch wasn't already caught
+                # by the early-return check above. Try the official PyTorch ROCm index.
+                print("\n[INFO] Installing PyTorch with ROCm support for AMD GPU...")
+                print("[INFO] If this fails, install AMD Adrenaline driver (26.1.1+) which")
+                print("       bundles PyTorch+ROCm automatically.")
+                cmd = f"{_PIP} install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2"
             else:
                 # This should never happen (main() already checked), but handle it anyway
                 print(f"\n[ERROR] AMD ROCm PyTorch requires Python 3.12, but you have Python {sys.version_info.major}.{sys.version_info.minor}")
                 print("[ERROR] This should have been caught earlier. Please report this bug.")
                 print("[INFO] Installing CPU version of PyTorch as fallback...")
-                cmd = "pip install torch torchvision torchaudio"
+                cmd = f"{_PIP} install torch torchvision torchaudio"
     elif gpu_type == 'apple':
-        cmd = "pip install torch torchvision torchaudio"
+        cmd = f"{_PIP} install torch torchvision torchaudio"
     elif gpu_type == 'intel':
         # Intel GPU - install PyTorch first, then Intel extension
         print("\n[INFO] Installing PyTorch for Intel GPU...")
-        cmd = "pip install torch torchvision torchaudio"
+        cmd = f"{_PIP} install torch torchvision torchaudio"
         success, stdout, stderr = run_cmd(cmd)
-        
+
         if success:
             print("[OK] PyTorch installed")
             print("\n[INFO] Installing Intel Extension for PyTorch...")
@@ -222,7 +207,7 @@ def install_pytorch(gpu_type):
             intel_installed = False
             for pkg in intel_packages:
                 print(f"[INFO] Trying package: {pkg}")
-                intel_cmd = f"pip install {pkg}"
+                intel_cmd = f'{_PIP} install {pkg}'
                 intel_success, intel_stdout, intel_stderr = run_cmd(intel_cmd)
 
                 if intel_success:
@@ -247,7 +232,7 @@ def install_pytorch(gpu_type):
             print(f"[ERROR] PyTorch installation failed: {stderr}")
             return False
     else:  # CPU
-        cmd = "pip install torch torchvision torchaudio"
+        cmd = f"{_PIP} install torch torchvision torchaudio"
     
     success, stdout, stderr = run_cmd(cmd)
     
@@ -265,130 +250,85 @@ def install_pytorch(gpu_type):
 
 
 def check_rocm_installed():
-    """Check if ROCm is already installed"""
+    """Check if ROCm is already installed (via Adrenaline driver or standalone HIP SDK)"""
+    # Check for ROCm installed via AMD Adrenaline driver (26.1.1+)
+    # Adrenaline installs PyTorch with ROCm bundled directly into the Python environment
+    pytorch_check = run_cmd(f"{_PIP} show torch")
+    if pytorch_check[0]:
+        version_info = pytorch_check[1]
+        if 'rocm' in version_info.lower():
+            return True, "AMD Adrenaline (PyTorch with ROCm bundled)"
+
+    # Check for standalone HIP SDK paths (legacy)
     rocm_paths = [
         "C:\\Program Files\\AMD\\ROCm",
         "C:\\Program Files\\AMD\\ROCm\\bin",
     ]
-    
+
     for path in rocm_paths:
         if os.path.exists(path):
             return True, path
-    
-    # Check for HIP DLLs
-    hip_dlls = ["amdhip64_6.dll", "amd_comgr_2.dll"]
+
+    # Check for HIP DLLs on PATH (installed by either Adrenaline or HIP SDK)
+    hip_dlls = ["amdhip64_6.dll", "amdhip64_7.dll", "amd_comgr_2.dll"]
     system_path = os.environ.get('PATH', '').split(';')
-    
+
     for dll in hip_dlls:
         for path in system_path:
             dll_path = os.path.join(path, dll)
             if os.path.exists(dll_path):
                 return True, path
-    
+
     return False, None
 
 
-def download_rocm_installer():
-    """Attempt to download ROCm installer automatically"""
-    print("\n[INFO] Attempting to download HIP SDK installer...")
-    
-    # Latest ROCm 6.x installer URL (update as needed)
-    installer_url = "https://github.com/ROCm/rocm-install-on-windows/releases/latest"
-    
-    try:
-        import webbrowser
-        print(f"[INFO] Opening download page: {installer_url}")
-        webbrowser.open(installer_url)
-        return True
-    except Exception as e:
-        print(f"[WARNING] Could not open browser: {e}")
-        print(f"[INFO] Please manually visit: {installer_url}")
-        return False
-
-
 def install_rocm_windows():
-    """Guide user through ROCm installation for Windows"""
+    """Guide user through ROCm installation for Windows via AMD Adrenaline driver"""
     print("\n" + "="*80)
-    print("AMD GPU Support Setup - PyTorch + ROCm Installation")
+    print("AMD GPU Support Setup - ROCm via AMD Adrenaline Driver")
     print("="*80)
 
     # Check if already installed
     is_installed, install_path = check_rocm_installed()
     if is_installed:
-        print(f"\n[OK] ROCm appears to be installed at: {install_path}")
-        response = input("\nReinstall anyway? (y/n): ")
+        print(f"\n[OK] ROCm already available: {install_path}")
+        response = input("\nView setup instructions anyway? (y/n): ")
         if response.lower() != 'y':
-            print("[INFO] Skipping ROCm installation")
+            print("[INFO] Skipping ROCm setup")
             return
 
-    print("\nYour AMD GPU needs ROCm + PyTorch to work with this application.")
+    print("\nYour AMD GPU needs ROCm + PyTorch for GPU acceleration.")
     print("\n" + "="*80)
-    print("RECOMMENDED: Install via AMD Adrenaline (Easiest)")
+    print("Install AMD Adrenaline Driver (26.1.1 or later)")
     print("="*80)
-    print("\nAMD Adrenaline driver 26.1.1+ bundles PyTorch automatically:")
-    print("1. Download AMD Adrenaline driver (26.1.1 or later)")
-    print("   https://www.amd.com/en/support/amd-radeon-software")
-    print("2. Run the installer and follow setup")
-    print("3. PyTorch will be automatically installed with ROCm bundled")
-    print("4. Run this script again to verify and install dependencies")
+    print("\nAMD Adrenaline driver bundles PyTorch + ROCm automatically.")
+    print("This is the easiest and recommended way to get GPU acceleration.\n")
+    print("Steps:")
+    print("  1. Download AMD Adrenaline from:")
+    print("     https://www.amd.com/en/support/amd-radeon-software")
+    print("  2. Run the installer (version 26.1.1 or later required)")
+    print("  3. Follow the setup wizard - ROCm is included automatically")
+    print("  4. Restart your computer after installation")
+    print("  5. Run this script again to verify and install remaining dependencies")
 
-    print("\n" + "="*80)
-    print("ALTERNATIVE: Manual HIP SDK Installation")
-    print("="*80)
-    print("\nOfficial AMD ROCm Documentation:")
-    print("https://rocm.docs.amd.com/projects/install-on-windows/en/latest/")
-
-    print("\n" + "-"*80)
-    print("Manual Installation Steps:")
-    print("-"*80)
-
-    print("\n1. Download the HIP SDK installer:")
-    print("   https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html")
-    print("   OR")
-    print("   https://github.com/ROCm/rocm-install-on-windows/releases")
-    print("   - Choose ROCm 6.4.4 (stable, recommended) or ROCm 7.1.1 (latest)")
-    print("   - Accept license agreement")
-    
-    print("\n2. Run the installer as Administrator")
-    print("   - Extracts to C:\\AMD temporarily")
-    
-    print("\n3. Choose components:")
-    print("   ✓ HIP Core (Required)")
-    print("   ✓ Libraries (Required)")
-    print("   ✓ Runtime Compiler (Required)")
-    print("   ✓ Ray Tracing (Optional)")
-    print("   ✓ VS plugin (Optional)")
-    print("   - Select Full/Partial/None for each")
-    
-    print("\n4. Optional: Install AMD Display Driver")
-    print("   - Full, Minimal, or Driver-only")
-    print("   - Restart required after driver install")
-    
-    print("\n5. Finish installation and wait for completion")
-    
-    print("\n6. Restart your computer")
-    
-    print("\n7. Verify installation:")
-    print("   python check_gpu.py")
-    
     print("\n" + "-"*80)
     print("Important Notes:")
     print("-"*80)
-    print("• ROCm 7.1.1 (Nov 2024): PyTorch 2.9, SDPA improvements")
-    print("• ROCm 6.4.4: PyTorch 2.8, stable and well-tested (RECOMMENDED)")
-    print("• ROCm 7.x is NOT backward-compatible with 6.x")
-    print("• New DLLs: amdhip64_7.dll (7.x) or amdhip64_6.dll (6.x)")
-    print("• Supported: Windows 10/11, Server 2022")
-    print("• Limitations: No training, Python 3.12 only, no torch.distributed")
-    print("• WARNING: ROCm may downgrade your graphics driver (affects gaming)")
-    print("• AMD GPU required only to run apps (not for SDK install)")
+    print("  - Adrenaline 26.1.1+ installs PyTorch with ROCm bundled")
+    print("  - Python 3.12 is required for AMD ROCm compatibility")
+    print("  - No separate HIP SDK download needed (it was required before)")
+    print("  - Supported: Windows 10/11 with AMD Radeon GPUs")
+    print("  - Limitation: sentence-transformers must be < 3.0.0 (no torch.distributed)")
     print("-"*80)
-    
-    # Automatically open download page
-    print("\n[INFO] Opening download page in browser...")
-    download_rocm_installer()
-    
-    print("\n[INFO] After installing HIP SDK and restarting, run this script again to verify.")
+
+    try:
+        import webbrowser
+        print("\n[INFO] Opening AMD Adrenaline download page...")
+        webbrowser.open("https://www.amd.com/en/support/amd-radeon-software")
+    except Exception:
+        print("\n[INFO] Visit: https://www.amd.com/en/support/amd-radeon-software")
+
+    print("\n[INFO] After installing Adrenaline and restarting, run this script again.")
 
 
 def verify_gpu():
@@ -411,7 +351,7 @@ else:
     print(f"Mode: CPU")
 """
     
-    success, stdout, stderr = run_cmd(f'python -c "{verify_script}"')
+    success, stdout, stderr = run_cmd(f'"{_PYTHON}" -c "{verify_script}"')
     
     if success:
         print("\n" + stdout)
@@ -439,7 +379,7 @@ def check_python_version():
     if minor != 12:
         print(f"\n[ERROR] Python 3.12 is required, but you're using Python {major}.{minor}")
         print("\n[WHY?] Python 3.12 ensures compatibility with:")
-        print("  • AMD ROCm GPU support (Windows)")
+        print("  • AMD ROCm GPU support via Adrenaline driver (Windows)")
         print("  • NVIDIA CUDA GPU support")
         print("  • Apple Silicon MPS support")
         print("  • Consistent behavior across all platforms")
@@ -516,16 +456,18 @@ def main():
     elif gpu_type == 'apple':
         print("[OK] Apple Silicon GPU ready (no drivers needed)")
     
-    # AMD Windows - check ROCm before PyTorch
+    # AMD Windows - check ROCm (installed via Adrenaline driver)
     if gpu_type == 'amd' and platform.system() == "Windows":
         is_installed, install_path = check_rocm_installed()
-        
+
         if not is_installed:
+            print("\n[WARNING] AMD GPU detected but ROCm/PyTorch not found.")
+            print("[INFO] ROCm is bundled with AMD Adrenaline driver (26.1.1+).")
             install_rocm_windows()
-            print("\n[INFO] Please install ROCm and restart, then run this script again.")
+            print("\n[INFO] Please install AMD Adrenaline driver and restart, then run this script again.")
             return True
         else:
-            print(f"\n[OK] ROCm detected at: {install_path}")
+            print(f"\n[OK] ROCm detected: {install_path}")
     
     # Install PyTorch
     if not install_pytorch(gpu_type):
@@ -543,7 +485,7 @@ def main():
     try:
         print("\n[INFO] Pre-downloading CLIP model to cache...")
         download_script = os.path.join(os.path.dirname(__file__), "..", "scripts", "download_clip_model.py")
-        success, stdout, stderr = run_cmd(f"python {download_script}")
+        success, stdout, stderr = run_cmd(f'"{_PYTHON}" "{download_script}"')
         if success:
             print("[OK] CLIP model downloaded and cached")
         else:
@@ -561,7 +503,7 @@ def main():
     try:
         print("\n[INFO] Testing GPU performance...")
         benchmark_path = os.path.join(os.path.dirname(__file__), "benchmark_gpu.py")
-        run_cmd(f"python {benchmark_path}")
+        run_cmd(f'"{_PYTHON}" "{benchmark_path}"')
     except Exception as e:
         print(f"[WARNING] Benchmark failed: {e}")
     

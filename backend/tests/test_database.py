@@ -204,38 +204,41 @@ def test_feature_operations(product_id):
 def test_category_features():
     """Test retrieving all features by category"""
     print("\n=== Testing Category Feature Retrieval ===")
-    
+
+    # Use a unique category name to avoid interference from other tests
+    test_category = "dinnerware_test_category_features"
+
     # Create multiple products with features - some with category, some without
     product_ids = []
     for i in range(3):
         # First two have category, third one doesn't
-        category = "dinnerware" if i < 2 else None
+        category = test_category if i < 2 else None
         pid = insert_product(
-            image_path=f"/path/to/image{i}.jpg",
+            image_path=f"/path/to/image_catfeat{i}.jpg",
             category=category,
-            product_name=f"Test Product {i}" if i < 2 else None,
+            product_name=f"Test Product CatFeat {i}" if i < 2 else None,
             is_historical=True
         )
         product_ids.append(pid)
-        
+
         # Add features
         color = np.random.rand(256).astype(np.float32)
         shape = np.random.rand(7).astype(np.float32)
         texture = np.random.rand(256).astype(np.float32)
         insert_features(pid, color, shape, texture)
-    
+
     print(f"✓ Created {len(product_ids)} products with features (1 without category)")
-    
+
     # Retrieve all features for category (excluding uncategorized)
-    category_features = get_all_features_by_category("dinnerware", is_historical=True)
+    category_features = get_all_features_by_category(test_category, is_historical=True)
     assert len(category_features) == 2, "Should retrieve only categorized features"
-    print(f"✓ Retrieved {len(category_features)} feature sets for 'dinnerware' category")
-    
+    print(f"✓ Retrieved {len(category_features)} feature sets for '{test_category}' category")
+
     # Retrieve including uncategorized
-    all_features = get_all_features_by_category("dinnerware", is_historical=True, include_uncategorized=True)
+    all_features = get_all_features_by_category(test_category, is_historical=True, include_uncategorized=True)
     assert len(all_features) >= 3, "Should retrieve all features including uncategorized"
     print(f"✓ Retrieved {len(all_features)} feature sets including uncategorized products")
-    
+
     # Retrieve all features regardless of category
     all_products_features = get_all_features_by_category(category=None, is_historical=True)
     assert len(all_products_features) >= 3, "Should retrieve all features"

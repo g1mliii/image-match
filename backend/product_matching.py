@@ -32,7 +32,7 @@ from config import is_debug_mode
 from database import (
     get_product_by_id,
     get_features_by_product_id,
-    get_all_features_by_category,
+    iter_all_features_by_category,
     insert_match,
     get_products_by_category
 )
@@ -46,6 +46,8 @@ from similarity import (
 
 # Get logger (will inherit UTF-8 configuration from root logger in app.py)
 logger = logging.getLogger(__name__)
+
+_BRUTE_FORCE_FEATURE_BATCH_SIZE = 250
 
 # Import CLIP functions (required)
 try:
@@ -605,22 +607,23 @@ def find_matches(
     # - If FAISS index is available (CLIP mode), avoid loading all candidate feature blobs.
     # - Otherwise, load candidates from DB for brute-force matching.
     search_category = normalized_category if not match_against_all else None
-    candidate_features: Optional[List[Tuple[int, Dict[str, Any]]]] = None
     candidate_count = 0
     faiss_manager = None
     faiss_index_available = False
 
-    def _load_candidate_features_for_bruteforce() -> List[Tuple[int, Dict[str, Any]]]:
+    def _iter_candidate_feature_batches_for_bruteforce():
         if match_against_all:
-            return get_all_features_by_category(
+            return iter_all_features_by_category(
                 category=None,
                 is_historical=True,
-                include_uncategorized=True
+                include_uncategorized=True,
+                batch_size=_BRUTE_FORCE_FEATURE_BATCH_SIZE
             )
-        return get_all_features_by_category(
+        return iter_all_features_by_category(
             category=normalized_category,
             is_historical=True,
-            include_uncategorized=include_uncategorized
+            include_uncategorized=include_uncategorized,
+            batch_size=_BRUTE_FORCE_FEATURE_BATCH_SIZE
         )
 
     if use_clip:
@@ -646,16 +649,9 @@ def find_matches(
     else:
         if is_debug_mode():
             logger.debug(
-                f"Fetching historical products for brute force matching (category: {normalized_category}, "
-                f"match_all: {match_against_all})"
+                f"Using streamed brute force matching (category: {normalized_category}, "
+                f"match_all: {match_against_all}, batch_size: {_BRUTE_FORCE_FEATURE_BATCH_SIZE})"
             )
-        candidate_features = _load_candidate_features_for_bruteforce()
-        candidate_count = len(candidate_features)
-        if candidate_count == 0:
-            logger.warning("No historical products found for matching")
-            raise EmptyCatalogError(normalized_category if not match_against_all else None)
-        if is_debug_mode():
-            logger.debug(f"Found {candidate_count} candidate products")
     
     # Step 6: Compute similarities with FAISS acceleration (if available)
     matches = []
@@ -757,195 +753,196 @@ def find_matches(
     # Fallback to brute force if FAISS not used
     if not faiss_used:
         logger.info("Using brute force similarity computation")
-
-        if candidate_features is None:
-            candidate_features = _load_candidate_features_for_bruteforce()
-            candidate_count = len(candidate_features)
-            if candidate_count == 0:
-                raise EmptyCatalogError(normalized_category if not match_against_all else None)
-
-        # BATCH LOOKUP: Preload all candidate product data in one query (replaces N individual queries)
         from database import get_products_by_ids
-        _brute_candidate_ids = list(set(cid for cid, _ in candidate_features if cid != product_id))
-        _brute_products_map = get_products_by_ids(_brute_candidate_ids) if _brute_candidate_ids else {}
-        del _brute_candidate_ids  # Free temporary list
 
         # Deduplicate candidates (database might return same ID multiple times)
         seen_candidate_ids = set()
-        
-        for candidate_id, candidate_feature_dict in candidate_features:
-            # Skip matching against self
-            if candidate_id == product_id:
-                continue
-            
-            # Skip duplicates
-            if candidate_id in seen_candidate_ids:
-                continue
-            seen_candidate_ids.add(candidate_id)
-            
-            try:
-                # Validate candidate features exist
-                if not candidate_feature_dict:
-                    logger.warning(f"Product {candidate_id} has no features, skipping")
-                    warnings_list.append(f"Product {candidate_id} has no features")
-                    failed_count += 1
-                    data_quality_issues['missing_features'] += 1
-                    errors_list.append({
-                        'product_id': candidate_id,
-                        'error': 'Missing features',
-                        'error_code': 'MISSING_FEATURES'
-                    })
-                    if not skip_invalid_products:
-                        raise MissingFeaturesError(candidate_id)
+
+        for candidate_batch in _iter_candidate_feature_batches_for_bruteforce():
+            batch_candidates = []
+            batch_candidate_ids = []
+
+            for candidate_id, candidate_feature_dict in candidate_batch:
+                if candidate_id == product_id or candidate_id in seen_candidate_ids:
                     continue
-                
-                # Validate candidate feature arrays
-                from matching_utils import validate_candidate_features_quick
-                
-                if not validate_candidate_features_quick(candidate_feature_dict):
-                    warnings_list.append(f"Product {candidate_id} has corrupted features")
-                    failed_count += 1
-                    data_quality_issues['corrupted_features'] += 1
-                    errors_list.append({
-                        'product_id': candidate_id,
-                        'error': 'Corrupted or invalid features',
-                        'error_code': 'CORRUPTED_FEATURES'
-                    })
-                    if not skip_invalid_products:
-                        raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
-                    continue
-                
-                # Compute similarity with error handling
+                seen_candidate_ids.add(candidate_id)
+                batch_candidates.append((candidate_id, candidate_feature_dict))
+                batch_candidate_ids.append(candidate_id)
+
+            if not batch_candidates:
+                continue
+
+            candidate_count += len(batch_candidates)
+            brute_products_map = get_products_by_ids(batch_candidate_ids)
+
+            for candidate_id, candidate_feature_dict in batch_candidates:
                 try:
-                    if use_clip:
-                        # CLIP mode: use cosine similarity on embeddings
-                        # CLIP embeddings are stored in color_features column with embedding_type='clip'
-                        if candidate_feature_dict.get('embedding_type') == 'clip':
-                            candidate_embedding = candidate_feature_dict['color_features']
-                        elif 'clip_embedding' in candidate_feature_dict:
-                            # Support explicit clip_embedding key (future enhancement)
-                            candidate_embedding = candidate_feature_dict['clip_embedding']
+                    # Validate candidate features exist
+                    if not candidate_feature_dict:
+                        logger.warning(f"Product {candidate_id} has no features, skipping")
+                        warnings_list.append(f"Product {candidate_id} has no features")
+                        failed_count += 1
+                        data_quality_issues['missing_features'] += 1
+                        errors_list.append({
+                            'product_id': candidate_id,
+                            'error': 'Missing features',
+                            'error_code': 'MISSING_FEATURES'
+                        })
+                        if not skip_invalid_products:
+                            raise MissingFeaturesError(candidate_id)
+                        continue
+
+                    # Validate candidate feature arrays
+                    from matching_utils import validate_candidate_features_quick
+
+                    if not validate_candidate_features_quick(candidate_feature_dict):
+                        warnings_list.append(f"Product {candidate_id} has corrupted features")
+                        failed_count += 1
+                        data_quality_issues['corrupted_features'] += 1
+                        errors_list.append({
+                            'product_id': candidate_id,
+                            'error': 'Corrupted or invalid features',
+                            'error_code': 'CORRUPTED_FEATURES'
+                        })
+                        if not skip_invalid_products:
+                            raise InvalidFeatureError(f"Product {candidate_id} has corrupted features")
+                        continue
+
+                    # Compute similarity with error handling
+                    try:
+                        if use_clip:
+                            # CLIP mode: use cosine similarity on embeddings
+                            # CLIP embeddings are stored in color_features column with embedding_type='clip'
+                            if candidate_feature_dict.get('embedding_type') == 'clip':
+                                candidate_embedding = candidate_feature_dict['color_features']
+                            elif 'clip_embedding' in candidate_feature_dict:
+                                # Support explicit clip_embedding key (future enhancement)
+                                candidate_embedding = candidate_feature_dict['clip_embedding']
+                            else:
+                                logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
+                                warnings_list.append(f"Product {candidate_id} missing CLIP embedding")
+                                data_quality_issues['missing_features'] += 1
+                                failed_count += 1
+                                if not skip_invalid_products:
+                                    raise MissingFeaturesError(candidate_id)
+                                continue
+
+                            # Validate candidate embedding
+                            if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
+                                logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array)")
+                                warnings_list.append(f"Product {candidate_id} has invalid CLIP embedding")
+                                data_quality_issues['corrupted_features'] += 1
+                                failed_count += 1
+                                if not skip_invalid_products:
+                                    raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
+                                continue
+
+                            # Compute CLIP similarity
+                            similarity_score = compute_clip_similarity(query_embedding, candidate_embedding)
+
+                            # Create similarities dict compatible with legacy format
+                            similarities = {
+                                'combined_similarity': similarity_score,
+                                'color_similarity': similarity_score,  # For database storage compatibility
+                                'shape_similarity': similarity_score,
+                                'texture_similarity': similarity_score
+                            }
                         else:
-                            logger.warning(f"Product {candidate_id} missing CLIP embedding, skipping")
-                            warnings_list.append(f"Product {candidate_id} missing CLIP embedding")
-                            data_quality_issues['missing_features'] += 1
-                            failed_count += 1
-                            if not skip_invalid_products:
-                                raise MissingFeaturesError(candidate_id)
-                            continue
-                        
-                        # Validate candidate embedding
-                        if not isinstance(candidate_embedding, np.ndarray) or len(candidate_embedding) != 512:
-                            logger.warning(f"Product {candidate_id} has invalid CLIP embedding (expected 512-dim array)")
-                            warnings_list.append(f"Product {candidate_id} has invalid CLIP embedding")
-                            data_quality_issues['corrupted_features'] += 1
-                            failed_count += 1
-                            if not skip_invalid_products:
-                                raise InvalidFeatureError(f"Product {candidate_id} has invalid CLIP embedding")
-                            continue
-                        
-                        # Compute CLIP similarity
-                        similarity_score = compute_clip_similarity(query_embedding, candidate_embedding)
-                        
-                        # Create similarities dict compatible with legacy format
-                        similarities = {
-                            'combined_similarity': similarity_score,
-                            'color_similarity': similarity_score,  # For database storage compatibility
-                            'shape_similarity': similarity_score,
-                            'texture_similarity': similarity_score
-                        }
-                    else:
-                        # Legacy mode: use traditional features
-                        similarities = compute_all_similarities(
-                            query_features,
-                            candidate_feature_dict,
-                            color_weight=color_weight,
-                            shape_weight=shape_weight,
-                            texture_weight=texture_weight
-                        )
-                except (InvalidFeatureError, FeatureDimensionError) as e:
-                    logger.warning(f"Similarity computation failed for product {candidate_id}: {e.message}")
-                    warnings_list.append(f"Product {candidate_id}: {e.message}")
-                    failed_count += 1
-                    data_quality_issues['computation_errors'] += 1
-                    errors_list.append({
-                        'product_id': candidate_id,
-                        'error': e.message,
-                        'error_code': e.error_code,
-                        'suggestion': e.suggestion
-                    })
+                            # Legacy mode: use traditional features
+                            similarities = compute_all_similarities(
+                                query_features,
+                                candidate_feature_dict,
+                                color_weight=color_weight,
+                                shape_weight=shape_weight,
+                                texture_weight=texture_weight
+                            )
+                    except (InvalidFeatureError, FeatureDimensionError) as e:
+                        logger.warning(f"Similarity computation failed for product {candidate_id}: {e.message}")
+                        warnings_list.append(f"Product {candidate_id}: {e.message}")
+                        failed_count += 1
+                        data_quality_issues['computation_errors'] += 1
+                        errors_list.append({
+                            'product_id': candidate_id,
+                            'error': e.message,
+                            'error_code': e.error_code,
+                            'suggestion': e.suggestion
+                        })
+                        if not skip_invalid_products:
+                            raise
+                        continue
+                    except Exception as e:
+                        # Handle CLIP-specific errors
+                        logger.warning(f"Similarity computation failed for product {candidate_id}: {e}")
+                        warnings_list.append(f"Product {candidate_id}: {str(e)}")
+                        failed_count += 1
+                        data_quality_issues['computation_errors'] += 1
+                        errors_list.append({
+                            'product_id': candidate_id,
+                            'error': str(e),
+                            'error_code': 'SIMILARITY_ERROR'
+                        })
+                        if not skip_invalid_products:
+                            raise
+                        continue
+
+                    # Get candidate product details from the current batch (no N+1 query)
+                    candidate_product = brute_products_map.get(candidate_id)
+
+                    if not candidate_product:
+                        logger.warning(f"Product {candidate_id} not found in database, skipping")
+                        warnings_list.append(f"Product {candidate_id} not found in database")
+                        failed_count += 1
+                        errors_list.append({
+                            'product_id': candidate_id,
+                            'error': 'Product not found',
+                            'error_code': 'PRODUCT_NOT_FOUND'
+                        })
+                        if not skip_invalid_products:
+                            raise ProductNotFoundError(candidate_id)
+                        continue
+
+                    # Handle missing metadata gracefully
+                    from matching_utils import track_missing_metadata, create_match_result
+
+                    missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
+
+                    if missing_fields:
+                        logger.debug(f"Product {candidate_id} missing metadata: {missing_fields}")
+
+                    # Create match result
+                    match_result = create_match_result(
+                        candidate_id,
+                        candidate_product,
+                        similarities,
+                        missing_fields
+                    )
+
+                    matches.append(match_result)
+                    successful_count += 1
+
+                except (InvalidFeatureError, FeatureDimensionError, ProductNotFoundError, MissingFeaturesError):
+                    # These are already logged above, just re-raise if not skipping
                     if not skip_invalid_products:
                         raise
-                    continue
+
                 except Exception as e:
-                    # Handle CLIP-specific errors
-                    logger.warning(f"Similarity computation failed for product {candidate_id}: {e}")
-                    warnings_list.append(f"Product {candidate_id}: {str(e)}")
+                    # Handle unexpected errors
+                    logger.error(f"Unexpected error processing product {candidate_id}: {e}", exc_info=True)
+                    warnings_list.append(f"Product {candidate_id}: Unexpected error - {str(e)}")
                     failed_count += 1
                     data_quality_issues['computation_errors'] += 1
                     errors_list.append({
                         'product_id': candidate_id,
                         'error': str(e),
-                        'error_code': 'SIMILARITY_ERROR'
+                        'error_code': 'UNKNOWN_ERROR',
+                        'suggestion': 'Check product data integrity and try re-extracting features'
                     })
                     if not skip_invalid_products:
                         raise
-                    continue
-                
-                # Get candidate product details from pre-fetched batch (no N+1 query)
-                candidate_product = _brute_products_map.get(candidate_id)
 
-                if not candidate_product:
-                    logger.warning(f"Product {candidate_id} not found in database, skipping")
-                    warnings_list.append(f"Product {candidate_id} not found in database")
-                    failed_count += 1
-                    errors_list.append({
-                        'product_id': candidate_id,
-                        'error': 'Product not found',
-                        'error_code': 'PRODUCT_NOT_FOUND'
-                    })
-                    if not skip_invalid_products:
-                        raise ProductNotFoundError(candidate_id)
-                    continue
-                
-                # Handle missing metadata gracefully
-                from matching_utils import track_missing_metadata, create_match_result
-                
-                missing_fields = track_missing_metadata(candidate_product, data_quality_issues)
-                
-                if missing_fields:
-                    logger.debug(f"Product {candidate_id} missing metadata: {missing_fields}")
-                
-                # Create match result
-                match_result = create_match_result(
-                    candidate_id,
-                    candidate_product,
-                    similarities,
-                    missing_fields
-                )
-                
-                matches.append(match_result)
-                successful_count += 1
-                
-            except (InvalidFeatureError, FeatureDimensionError, ProductNotFoundError, MissingFeaturesError) as e:
-                # These are already logged above, just re-raise if not skipping
-                if not skip_invalid_products:
-                    raise
-                
-            except Exception as e:
-                # Handle unexpected errors
-                logger.error(f"Unexpected error processing product {candidate_id}: {e}", exc_info=True)
-                warnings_list.append(f"Product {candidate_id}: Unexpected error - {str(e)}")
-                failed_count += 1
-                data_quality_issues['computation_errors'] += 1
-                errors_list.append({
-                    'product_id': candidate_id,
-                    'error': str(e),
-                    'error_code': 'UNKNOWN_ERROR',
-                    'suggestion': 'Check product data integrity and try re-extracting features'
-                })
-                if not skip_invalid_products:
-                    raise
+        if candidate_count == 0:
+            logger.warning("No historical products found for matching")
+            raise EmptyCatalogError(normalized_category if not match_against_all else None)
     
     # Step 7: Check if we have any successful matches
     if successful_count == 0:
