@@ -37,7 +37,18 @@
       "Read(//c/Users/subai/Desktop/**)",
       "Bash(mkdir:*)",
       "Bash(test_env/Scripts/python.exe:*)",
-      "Bash(test_env/Scripts/pip.exe install:*)"
+      "Bash(test_env/Scripts/pip.exe install:*)",
+      "Bash(/tmp/seed_test_venv/Scripts/python.exe scripts/create_seed_db.py --output /tmp/seed_test_venv/test_seed.db --verify)",
+      "Bash(.venv_test/Scripts/python.exe --version)",
+      "Bash(.venv_test/Scripts/python.exe gpu/setup_gpu.py)",
+      "Bash(.venv_test/Scripts/python.exe scripts/create_seed_db.py --verify)",
+      "Bash(cp backend/seed/product_matching.db backend/product_matching.db)",
+      "Bash(.venv_test/Scripts/python.exe gpu/verify_setup.py)",
+      "Bash(rm -f backend/product_matching.db.bak)",
+      "Bash(rm -rf .venv_test)",
+      "Bash(cp backend/product_matching.db backend/product_matching.db.bak)",
+      "Bash(.venv_test/Scripts/python.exe main.py)",
+      "Bash(CUDA_VISIBLE_DEVICES=\"\" python main.py)"
     ]
   },
   "enableAllProjectMcpServers": true,

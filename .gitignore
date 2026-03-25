@@ -55,6 +55,7 @@ yarn-error.log*
 # Environment
 .env
 .env.local
+.venv*/
 venv/
 env/
 

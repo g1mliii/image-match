@@ -1137,96 +1137,156 @@ def _extract_clip_embedding_worker_indexed(args):
         return result
 
 
+def _load_single_image(args):
+    """Load and preprocess a single image for CLIP (thread-safe helper).
+
+    Returns:
+        Tuple of (global_index, pil_image_or_None, image_path, error_or_None)
+    """
+    import cv2 as _cv2
+
+    global_idx, image_path, fast_preprocess, preprocess_max_dim = args
+    try:
+        img_array = safe_imread(image_path, flags=1)
+
+        if fast_preprocess and preprocess_max_dim and preprocess_max_dim > 0:
+            h, w = img_array.shape[:2]
+            if max(h, w) > preprocess_max_dim:
+                scale = preprocess_max_dim / float(max(h, w))
+                img_array = _cv2.resize(
+                    img_array,
+                    (max(1, int(w * scale)), max(1, int(h * scale))),
+                    interpolation=_cv2.INTER_AREA,
+                )
+
+        img_rgb = _cv2.cvtColor(img_array, _cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(img_rgb)
+        return (global_idx, pil_image, image_path, None)
+
+    except (InvalidImageFormatError, CorruptedImageError, ImageTooSmallError, ImageProcessingFailedError) as e:
+        return (global_idx, None, image_path, e.message)
+    except Exception as e:
+        return (global_idx, None, image_path, str(e))
+
+
 def _batch_extract_clip_embeddings_multiprocessing(
     image_paths: List[str],
     model_name: str = 'clip-ViT-B-32',
     skip_errors: bool = True,
     use_amp: bool = False,
-    max_workers: int = None
+    max_workers: int = None,
+    fast_preprocess: bool = False,
+    preprocess_max_dim: Optional[int] = 768,
 ) -> List[Tuple[str, Optional[np.ndarray], Optional[str]]]:
-    """Extract CLIP embeddings using multiprocessing (CPU mode only)
-    
-    This function uses ProcessPoolExecutor to parallelize CPU-based CLIP extraction.
-    Each worker process loads its own model instance to avoid sharing issues.
-    
-    PERFORMANCE CHARACTERISTICS:
-    - Significant overhead: Each worker loads ~350MB CLIP model (~2-5s per worker)
-    - Beneficial for large batches (50+ images) where processing time > overhead
-    - For small batches (< 50 images), sequential processing may be faster
-    - Each process needs ~2GB RAM for model
-    - Speedup depends on: CPU cores, batch size, and model loading time
-    
-    WHEN TO USE:
-    - Large batches (50+ images) on CPU
-    - Multi-core systems (4+ cores)
-    - When total processing time > model loading overhead
-    
+    """Extract CLIP embeddings using threaded I/O + single-model inference (CPU mode).
+
+    Previous implementation used ProcessPoolExecutor where each worker loaded its
+    own ~350MB CLIP model.  On Windows this caused workers to be killed by the OS
+    when many processes spawned simultaneously (5+ GB RAM spike).
+
+    New approach:
+    - ThreadPoolExecutor loads/preprocesses images in parallel (I/O bound, safe).
+    - A single CLIP model instance (already loaded in main process) encodes all
+      images in batches — no duplicate model loading.
+    - Speedup comes from overlapping disk I/O with inference.
+
     Args:
         image_paths: List of image file paths
         model_name: CLIP model name
         skip_errors: If True, skip failed images and continue
         use_amp: Use Automatic Mixed Precision (not recommended for CPU)
-        max_workers: Number of worker processes (default: cpu_count - 1)
-    
+        max_workers: Number of I/O threads (default: min(cpu_count, 8))
+        fast_preprocess: Downscale large images before encoding
+        preprocess_max_dim: Max dimension for fast_preprocess
+
     Returns:
         List of tuples: (image_path, embedding or None, error_message or None)
     """
     import multiprocessing
-    from concurrent.futures import ProcessPoolExecutor, as_completed
-    
-    # Determine number of workers
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     if max_workers is None:
-        cpu_count = multiprocessing.cpu_count()
-        max_workers = max(1, cpu_count - 1)  # Leave one core free
-    
-    logger.info(f"Using {max_workers} worker processes for CPU-based CLIP extraction")
-    
-    # Prepare arguments for workers with indices to preserve order
-    normalize = True  # Always normalize for faster similarity computation
-    worker_args = [(idx, path, model_name, normalize, use_amp) for idx, path in enumerate(image_paths)]
-    
-    results = {}  # Use dict with index as key to preserve order
-    
-    try:
-        # Use ProcessPoolExecutor for CPU-intensive work
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks with index tracking
-            future_to_idx = {
-                executor.submit(_extract_clip_embedding_worker_indexed, args): args[0]
-                for args in worker_args
-            }
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_idx):
-                try:
-                    idx, result = future.result()
-                    logger.debug(f"Received result for index {idx}: path={result[0]}, success={result[1] is not None}")
-                    results[idx] = result
-                except Exception as e:
-                    idx = future_to_idx[future]
-                    image_path = image_paths[idx]
-                    error_msg = f"Process failed: {str(e)}"
-                    logger.error(f"Failed to process {image_path}: {error_msg}")
-                    results[idx] = (image_path, None, error_msg)
-                    
-                    if not skip_errors:
-                        raise
-    
-    except Exception as e:
-        logger.error(f"Multiprocessing batch extraction failed: {e}")
-        
-        if not skip_errors:
-            raise CLIPModelError(
-                f"Multiprocessing batch extraction failed: {str(e)}",
-                "Check system resources and try reducing number of workers."
-            )
-    
-    # Sort results by index to match input order
-    sorted_results = [results.get(i, (image_paths[i], None, "Not processed")) for i in range(len(image_paths))]
-    
+        max_workers = min(multiprocessing.cpu_count(), 8)
+
+    logger.info(
+        f"[CLIP-CPU-BATCH] Loading {len(image_paths)} images with {max_workers} "
+        f"I/O threads, then encoding with single CLIP model"
+    )
+
+    # --- Phase 1: parallel image loading (threads) ---
+    load_args = [
+        (idx, path, fast_preprocess, preprocess_max_dim)
+        for idx, path in enumerate(image_paths)
+    ]
+
+    loaded_images = {}   # idx -> PIL Image
+    results = {}         # idx -> (path, embedding|None, error|None)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_load_single_image, a): a[0] for a in load_args}
+        for future in as_completed(futures):
+            global_idx, pil_img, path, error = future.result()
+            if pil_img is not None:
+                loaded_images[global_idx] = pil_img
+            else:
+                results[global_idx] = (path, None, error)
+                if not skip_errors:
+                    raise CLIPModelError(f"Image load failed: {error}", path)
+
+    logger.info(
+        f"[CLIP-CPU-BATCH] Loaded {len(loaded_images)} images "
+        f"({len(results)} failed to load)"
+    )
+
+    # --- Phase 2: single-model batch inference ---
+    model, device = get_clip_model(model_name)
+
+    # Sort loaded images by index for deterministic batching
+    sorted_indices = sorted(loaded_images.keys())
+    batch_size = 16  # CPU-friendly batch size
+
+    import torch as _torch
+
+    for batch_start in range(0, len(sorted_indices), batch_size):
+        batch_indices = sorted_indices[batch_start:batch_start + batch_size]
+        batch_pil = [loaded_images[idx] for idx in batch_indices]
+
+        try:
+            with _torch.no_grad():
+                embeddings = model.encode(
+                    batch_pil,
+                    batch_size=len(batch_pil),
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                )
+
+            for j, idx in enumerate(batch_indices):
+                emb = embeddings[j] if embeddings is not None else None
+                if emb is not None:
+                    results[idx] = (image_paths[idx], np.array(emb, dtype=np.float32), None)
+                else:
+                    results[idx] = (image_paths[idx], None, "Encoding returned None")
+
+        except Exception as e:
+            error_msg = f"Batch encoding failed: {e}"
+            logger.error(f"[CLIP-CPU-BATCH] {error_msg}")
+            for idx in batch_indices:
+                results[idx] = (image_paths[idx], None, error_msg)
+            if not skip_errors:
+                raise
+
+    # Ensure every input has a result, sorted by original order
+    sorted_results = [
+        results.get(i, (image_paths[i], None, "Not processed"))
+        for i in range(len(image_paths))
+    ]
+
     success_count = sum(1 for _, emb, _ in sorted_results if emb is not None)
-    logger.info(f"Multiprocessing extraction complete: {success_count}/{len(image_paths)} successful ({success_count/len(image_paths)*100:.1f}%)")
-    
+    logger.info(
+        f"[CLIP-CPU-BATCH] Complete: {success_count}/{len(image_paths)} "
+        f"successful ({success_count / max(len(image_paths), 1) * 100:.1f}%)"
+    )
+
     return sorted_results
 
 
@@ -1293,14 +1353,16 @@ def batch_extract_clip_embeddings(image_paths: List[str],
         logger.warning("Multiprocessing requested but device is GPU. Disabling multiprocessing to avoid CUDA context issues.")
         use_multiprocessing = False
     
-    # CPU multiprocessing path
+    # CPU threaded I/O + single-model batch inference path
     if use_multiprocessing:
-        logger.info(f"Using multiprocessing for CPU-based extraction ({len(image_paths)} images)")
+        logger.info(f"Using threaded I/O + batch inference for CPU extraction ({len(image_paths)} images)")
         return _batch_extract_clip_embeddings_multiprocessing(
             image_paths,
             model_name=model_name,
             skip_errors=skip_errors,
-            use_amp=use_amp
+            use_amp=use_amp,
+            fast_preprocess=fast_preprocess,
+            preprocess_max_dim=preprocess_max_dim,
         )
     
     # Optimize batch size based on device and VRAM
