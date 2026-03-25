@@ -15,6 +15,7 @@ import fnmatch
 import os
 import shutil
 import stat
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,9 @@ EXCLUDED_DIR_NAMES = {
     "__MACOSX",
 }
 
+# Also exclude any directory whose name starts with ".venv" (e.g., .venv_test).
+_EXCLUDED_DIR_PREFIXES = (".venv",)
+
 EXCLUDED_DIR_PATHS = {
     "backend/uploads",
 }
@@ -56,9 +60,17 @@ EXCLUDED_FILE_GLOBS = {
     "*.db-shm",
     "*.db-wal",
     "*.db-journal",
+    "*.db.backup",
+    "*.db.bak",
     "*.log",
     "CatalogMatch_Client.zip",
     "CatalogMatch_Client_*.zip",
+}
+
+# Database files that should NOT be shipped (user data / snapshots).
+# The seed DB at backend/product_matching.db IS shipped.
+EXCLUDED_FILE_PATHS = {
+    "backend/product_matching.db.backup",
 }
 
 
@@ -130,11 +142,15 @@ def normalized_rel_path(path: Path, root: Path) -> str:
 def should_exclude_dir(rel_path: str, name: str) -> bool:
     if name in EXCLUDED_DIR_NAMES:
         return True
+    if any(name.startswith(prefix) for prefix in _EXCLUDED_DIR_PREFIXES):
+        return True
     return rel_path in EXCLUDED_DIR_PATHS
 
 
 def should_exclude_file(rel_path: str, name: str) -> bool:
     if name in EXCLUDED_FILE_NAMES:
+        return True
+    if rel_path in EXCLUDED_FILE_PATHS:
         return True
     return any(fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_path, pattern) for pattern in EXCLUDED_FILE_GLOBS)
 
@@ -195,12 +211,47 @@ def print_summary(plan: PackagePlan, files: list[Path]) -> None:
         print(f"  - {rel_path}: {state}")
 
 
+def generate_seed_db(source_root: Path) -> None:
+    """Generate a fresh seed database before packaging.
+
+    Runs ``scripts/create_seed_db.py`` to produce an empty, schema-initialized
+    ``backend/product_matching.db`` so the ZIP ships a clean, portable DB
+    with no user data or stale file paths.
+    """
+    import subprocess
+
+    db_path = source_root / "backend" / "product_matching.db"
+    seed_script = source_root / "scripts" / "create_seed_db.py"
+
+    if not seed_script.exists():
+        print(f"[WARNING] Seed script not found: {seed_script}")
+        print("          Shipping existing DB as-is.")
+        return
+
+    print(f"Generating fresh seed database -> {db_path}")
+    result = subprocess.run(
+        [sys.executable, str(seed_script), "--output", str(db_path), "--verify"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"[ERROR] Seed DB generation failed:\n{result.stderr}")
+        raise SystemExit(1)
+
+    print(result.stdout.strip())
+    print()
+
+
 def main() -> int:
     args = parse_args()
     plan = build_plan(args)
 
     if not plan.source_root.exists():
         raise SystemExit(f"Project root does not exist: {plan.source_root}")
+
+    # Generate a clean seed DB so we never ship user data.
+    if not args.dry_run:
+        generate_seed_db(plan.source_root)
 
     files = list(iter_files(plan.source_root))
     print_summary(plan, files)
