@@ -48,7 +48,12 @@
       "Bash(rm -rf .venv_test)",
       "Bash(cp backend/product_matching.db backend/product_matching.db.bak)",
       "Bash(.venv_test/Scripts/python.exe main.py)",
-      "Bash(CUDA_VISIBLE_DEVICES=\"\" python main.py)"
+      "Bash(CUDA_VISIBLE_DEVICES=\"\" python main.py)",
+      "Bash(mkdir -p /tmp/zip_test)",
+      "Bash(rm -rf *)",
+      "Bash(unzip -q \"/c/Users/subai/Desktop/image match/CatalogMatch_Client.zip\")",
+      "Bash(.venv/Scripts/python.exe --version)",
+      "Bash(.venv/Scripts/python.exe gpu/setup_gpu.py)"
     ]
   },
   "enableAllProjectMcpServers": true,

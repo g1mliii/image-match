@@ -86,6 +86,13 @@ except ImportError:
 import warnings
 warnings.filterwarnings('ignore', message='.*slow image processor.*')
 
+# Fix transformers CLIPProcessor deepcopy bug (affects 4.44+).
+# transformers.processing_utils.from_args_and_dict() calls logger.info(f"Processor {processor}")
+# which triggers __repr__ → to_json_string → copy.deepcopy → infinite loop on CLIPProcessor.
+# Raising the log level for that module prevents the __repr__ from ever being called.
+import logging as _logging
+_logging.getLogger('transformers.processing_utils').setLevel(_logging.WARNING)
+
 # Set cache directory BEFORE any model loading to ensure consistency
 # This must be set at module level before sentence_transformers is used
 _CLIP_CACHE_DIR = Path.home() / '.cache' / 'clip-models'
@@ -93,6 +100,7 @@ _CLIP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ['SENTENCE_TRANSFORMERS_HOME'] = str(_CLIP_CACHE_DIR)
 os.environ['HF_HOME'] = str(_CLIP_CACHE_DIR)  # Also set HuggingFace cache
 os.environ['TRANSFORMERS_CACHE'] = str(_CLIP_CACHE_DIR)  # And transformers cache
+
 
 # Global model cache (singleton pattern)
 _clip_model = None
@@ -630,10 +638,10 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
         try:
             # Load model (will download if not cached)
             model = SentenceTransformer(model_name)
-            
+
             if progress_callback:
                 progress_callback("Model loaded, moving to device...", 80)
-            
+
             # Try to move to device with GPU fallback to CPU
             try:
                 # Move model to device (this will fail if GPU is not working)

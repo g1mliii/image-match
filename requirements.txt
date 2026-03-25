@@ -52,9 +52,9 @@ torch>=2.0.0
 # Tested with ROCm 6.4.4 and 7.1.1 (PyTorch 2.9) - restriction still applies
 # DO NOT UPGRADE to 3.0+ or AMD GPU support will break!
 sentence-transformers>=2.7.0,<3.0.0
-# Pin transformers to a known-good version for sentence-transformers 2.7.0.
-# Newer transformers builds can require torch APIs that are missing from
-# some CPU/ROCm wheels resolved during setup, which breaks CLIP import.
+# Pin transformers to a known-good range for sentence-transformers 2.7.0.
+# 4.46.0+ has a deepcopy bug in CLIPProcessor that causes an infinite loop
+# during model load (hangs forever on SentenceTransformer('clip-ViT-B-32')).
 transformers==4.46.1
 
 # Intel GPU Acceleration (optional - for Intel Arc/Iris GPUs)
