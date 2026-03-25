@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 # Try to import PyTorch and related libraries
 try:
     import torch
+    # AMD ROCm builds ship a stub torch.distributed that is missing standard
+    # functions (e.g. is_initialized).  sentence-transformers 3.2+ calls
+    # torch.distributed.is_initialized() during device detection, so we
+    # patch the missing function to always return False (we never use
+    # distributed training).
+    if not hasattr(torch.distributed, 'is_initialized'):
+        torch.distributed.is_initialized = lambda: False
     from sentence_transformers import SentenceTransformer
     from PIL import Image
     TORCH_AVAILABLE = True
@@ -52,6 +59,14 @@ try:
 except ImportError:
     INTEL_EXTENSION_AVAILABLE = False
     ipex = None
+
+# Try to import OpenVINO (optional - for faster CPU inference on Intel CPUs)
+try:
+    import openvino
+    OPENVINO_AVAILABLE = True
+    logger.info("OpenVINO detected - optimized CPU inference available")
+except ImportError:
+    OPENVINO_AVAILABLE = False
 
 # Import error handling from existing module
 try:
@@ -636,17 +651,32 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
                 progress_callback(f"Downloading model (~{AVAILABLE_MODELS.get(model_name, {}).get('model_size_mb', 350)} MB)...", 30)
         
         try:
-            # Load model (will download if not cached)
-            model = SentenceTransformer(model_name)
+            # Use OpenVINO backend for CPU mode (2-4x faster on Intel CPUs)
+            use_openvino = device == 'cpu' and OPENVINO_AVAILABLE
+
+            if use_openvino:
+                logger.info(f"Loading CLIP model with OpenVINO backend (optimized CPU inference)")
+                try:
+                    model = SentenceTransformer(model_name, backend="openvino")
+                    logger.info(f"CLIP model loaded successfully with OpenVINO backend")
+                except Exception as ov_error:
+                    logger.warning(f"OpenVINO backend failed: {ov_error}, falling back to PyTorch")
+                    model = SentenceTransformer(model_name)
+                    use_openvino = False
+            else:
+                # Load model with default PyTorch backend
+                model = SentenceTransformer(model_name)
 
             if progress_callback:
                 progress_callback("Model loaded, moving to device...", 80)
 
             # Try to move to device with GPU fallback to CPU
+            # (skip for OpenVINO — it manages its own device)
             try:
-                # Move model to device (this will fail if GPU is not working)
-                model = model.to(device)
-                
+                if not use_openvino:
+                    # Move model to device (this will fail if GPU is not working)
+                    model = model.to(device)
+
                 # Optimize for Intel GPU if available
                 if device.startswith('xpu') and INTEL_EXTENSION_AVAILABLE:
                     try:
@@ -655,7 +685,7 @@ def get_clip_model(model_name: str = 'clip-ViT-B-32',
                     except Exception as opt_error:
                         logger.warning(f"Intel optimization failed: {opt_error}, continuing without optimization")
                         logger.info(f"CLIP model loaded successfully on {device}")
-                else:
+                elif not use_openvino:
                     logger.info(f"CLIP model loaded successfully on {device}")
             except Exception as gpu_error:
                 # GPU failed, fallback to CPU

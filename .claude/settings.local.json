@@ -53,7 +53,8 @@
       "Bash(rm -rf *)",
       "Bash(unzip -q \"/c/Users/subai/Desktop/image match/CatalogMatch_Client.zip\")",
       "Bash(.venv/Scripts/python.exe --version)",
-      "Bash(.venv/Scripts/python.exe gpu/setup_gpu.py)"
+      "Bash(.venv/Scripts/python.exe gpu/setup_gpu.py)",
+      "Bash(pip index:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -13,7 +13,7 @@
 # - AMD ROCm (Windows): Requires Python 3.12 ✓
 #   * ROCm 7.1.1 (Nov 2024): PyTorch 2.9, SDPA improvements, AOTriton 0.11b
 #   * ROCm 6.4.4: PyTorch 2.8, stable and well-tested
-#   * Both versions work with sentence-transformers < 3.0.0 restriction
+#   * Both versions work with sentence-transformers 3.2+
 # - NVIDIA CUDA: Works with Python 3.12 ✓
 # - Apple Silicon (macOS): Works with Python 3.12 ✓
 # - CPU fallback: Works with Python 3.12 ✓
@@ -47,15 +47,11 @@ pywebview>=4.4.0
 torch>=2.0.0
 
 # CLIP Model for Visual Matching
-# CRITICAL: sentence-transformers MUST BE < 3.0.0 for AMD ROCm compatibility
-# Version 3.0+ requires torch.distributed.is_initialized() which is missing in ROCm Windows builds
-# Tested with ROCm 6.4.4 and 7.1.1 (PyTorch 2.9) - restriction still applies
-# DO NOT UPGRADE to 3.0+ or AMD GPU support will break!
-sentence-transformers>=2.7.0,<3.0.0
-# Pin transformers to a known-good range for sentence-transformers 2.7.0.
-# 4.46.0+ has a deepcopy bug in CLIPProcessor that causes an infinite loop
-# during model load (hangs forever on SentenceTransformer('clip-ViT-B-32')).
-transformers==4.46.1
+# sentence-transformers 3.2+ adds ONNX and OpenVINO backends (backend= param).
+# AMD ROCm Windows builds ship a stub torch.distributed missing is_initialized();
+# we monkey-patch this in image_processing_clip.py so 3.2+ works on all platforms.
+sentence-transformers>=3.2.0
+transformers>=4.41.0
 
 # Intel GPU Acceleration (optional - for Intel Arc/Iris GPUs)
 # Uncomment to enable Intel GPU support:
@@ -64,6 +60,12 @@ transformers==4.46.1
 # Works on: Intel Arc, Intel Iris Xe, Intel UHD Graphics (11th gen+)
 # Installation: pip install intel-extension-for-pytorch
 # Note: Automatically detected and used if installed, gracefully falls back to CPU if not
+
+# OpenVINO CPU Acceleration (optional - for faster CPU-only inference)
+# Provides 2-4x speedup over PyTorch CPU on all x86 CPUs (Intel and AMD)
+# Especially useful for users without a discrete GPU
+# Installation: pip install sentence-transformers[openvino]
+# Note: Automatically detected and used in CPU mode if installed
 
 # Fast Similarity Search (for large catalogs 1000+ products)
 # FAISS provides 50-100x speedup for similarity search on CLIP embeddings

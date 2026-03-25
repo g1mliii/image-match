@@ -266,11 +266,29 @@ def install_pytorch(gpu_type):
         print("[OK] PyTorch installed (CPU fallback mode)")
     else:
         print("[OK] PyTorch installed")
-    
+
     # Install other dependencies
     print("\n[3/3] Installing other dependencies...")
     install_dependencies()
-    
+
+    # Install OpenVINO for CPU mode (2-4x faster inference on Intel CPUs)
+    # Also benefits non-Intel CPUs with optimized operators
+    if gpu_type == 'cpu' or used_fallback:
+        print("\n" + "="*80)
+        print("Installing OpenVINO (CPU Acceleration)")
+        print("="*80)
+        print("\n[INFO] OpenVINO provides 2-4x faster inference on CPU")
+        print("[INFO] Works on all x86 CPUs (Intel and AMD)")
+
+        ov_cmd = f'{_PIP} install "sentence-transformers[openvino]"'
+        ov_success, _, ov_stderr = run_cmd(ov_cmd)
+
+        if ov_success:
+            print("[OK] OpenVINO installed - CPU inference will be accelerated")
+        else:
+            print(f"[WARNING] OpenVINO installation failed: {ov_stderr}")
+            print("[INFO] App will still work with standard PyTorch CPU mode")
+
     return True
 
 
