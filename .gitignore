@@ -81,8 +81,6 @@ google site creation/
 
 # Node modules (if any)
 node_modules/
-package-lock.json
-package.json
 
 # IDE settings
 .vscode/
